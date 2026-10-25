@@ -88,7 +88,7 @@ Before you start, check [Requirements](#requirements) and [Disk space](#disk-spa
 1. **Clone the repository.** The scripts do not clone it for you.
 
    ```powershell
-   git clone https://github.com/AnonymousExecutor/tsukire-pc-port.git
+   git clone https://github.com/Broomstick-Girl-Magical-Amber/tsukire-pc-port.git
    cd tsukire-pc-port
    ```
 
@@ -126,6 +126,43 @@ Before you start, check [Requirements](#requirements) and [Disk space](#disk-spa
    ```
    The final `.exe` is `<root>/framework/build/tsukihime/tsukihime.exe` (Japanese) or `<root>/framework/build/tsukihime_global/tsukihime_global.exe` (global).
 
+
+## Rebuild on Linux and play with Proton
+
+The Linux scripts are thin wrappers that bring PowerShell 7 and run the same scripts as Windows, so the options are the same (`-Check`, `-From`, `-To`, `-Edition`, ...). Call them with `bash`.
+
+```bash
+# Install if you don't have it
+sudo apt install curl tar coreutils
+
+# Skip this if you already cloned the repo
+git clone https://github.com/Broomstick-Girl-Magical-Amber/tsukire-pc-port.git && cd tsukire-pc-port
+
+# Install the requirements. It takes about 20 minutes or more on slower PCs.
+# It asks for sudo once (system packages) and asks you to accept the Microsoft license for the Windows CRT/SDK (xwin).
+
+# Note: You must be in the root folder to run this script (tsukire-pc-port)
+bash tools/linux/install_requirements_linux.sh
+
+# Put your keys and your dump (.nsp or .xci) in place
+mkdir -p data && cp /path/to/prod.keys data/prod.keys
+cp /path/to/your-dump.xci .
+
+# Recompile one edition: -Edition japan or -Edition global (about 20 minutes or more on slower PCs)
+
+# Note: You must be in the root folder to run this script (tsukire-pc-port)
+bash tools/linux/recomp_linux.sh -Edition japan
+```
+
+Step 9 cross-compiles the **same Windows `.exe`** with `clang-cl` + `lld-link` against the Windows CRT/SDK fetched by `xwin`; it ends up in `framework/build/tsukihime/` or `framework/build/tsukihime_global/` exactly as on Windows. Long runs use `systemd-inhibit` when it works, so the machine does not suspend in the middle.
+
+**Playing with Proton**
+
+1. In Steam, choose Add a Non-Steam Game and select the `.exe` from `framework/build/tsukihime/` (Japanese) or `framework/build/tsukihime_global/` (global).
+2. In the game's *Properties > Compatibility*, force **Proton Experimental**.
+3. Launch it. No options are needed on real hardware (tested with the global edition). The data folder is resolved relative to the `.exe`, so nothing has to be moved.
+
+Without a GPU (a VM with `llvmpipe`) set `NX_GPU_HANG_MS` in the launch options, for example `NX_GPU_HANG_MS=120000 %command%`. Without it the screen stays black for a few seconds and the game closes: the default watchdog gives the GPU 2 seconds.
 
 
 ### `install_requirements.ps1` options
@@ -171,43 +208,6 @@ Before you start, check [Requirements](#requirements) and [Disk space](#disk-spa
 Each step checks its own result and is skipped if it is already done and verified. If a step fails, it undoes what it did and prints `Resume with -From N`. From step 3 on, neither the dump nor the keys are needed. Anything replaced is kept as `*.old`; delete those by hand when you want. The scripts never touch `user\` (your saves), `language.txt` or `input.ini`.
 
 Both scripts write their output under `data\` and `framework\`, and `install_requirements.ps1` keeps a log in `_prepare\`. None of those folders is tracked by git.
-
-## Rebuild on Linux and play with Proton
-
-The Linux scripts are thin wrappers that bring PowerShell 7 and run the same scripts as Windows, so the options are the same (`-Check`, `-From`, `-To`, `-Edition`, ...). Call them with `bash`.
-
-```bash
-# Install if you don't have it
-sudo apt install curl tar coreutils
-
-# Skip this if you already cloned the repo
-git clone https://github.com/AnonymousExecutor/tsukire-pc-port.git && cd tsukire-pc-port
-
-# Install the requirements. It takes about 20 minutes or more on slower PCs.
-# It asks for sudo once (system packages) and asks you to accept the Microsoft license for the Windows CRT/SDK (xwin).
-
-# Note: You must be in the root folder to run this script (tsukire-pc-port)
-bash tools/linux/install_requirements_linux.sh
-
-# Put your keys and your dump (.nsp or .xci) in place
-mkdir -p data && cp /path/to/prod.keys data/prod.keys
-cp /path/to/your-dump.xci .
-
-# Recompile one edition: -Edition japan or -Edition global (about 20 minutes or more on slower PCs)
-
-# Note: You must be in the root folder to run this script (tsukire-pc-port)
-bash tools/linux/recomp_linux.sh -Edition japan
-```
-
-Step 9 cross-compiles the **same Windows `.exe`** with `clang-cl` + `lld-link` against the Windows CRT/SDK fetched by `xwin`; it ends up in `framework/build/tsukihime/` or `framework/build/tsukihime_global/` exactly as on Windows. Long runs use `systemd-inhibit` when it works, so the machine does not suspend in the middle.
-
-**Playing with Proton**
-
-1. In Steam, choose Add a Non-Steam Game and select the `.exe` from `framework/build/tsukihime/` (Japanese) or `framework/build/tsukihime_global/` (global).
-2. In the game's *Properties > Compatibility*, force **Proton Experimental**.
-3. Launch it. No options are needed on real hardware (tested with the global edition). The data folder is resolved relative to the `.exe`, so nothing has to be moved.
-
-Without a GPU (a VM with `llvmpipe`) set `NX_GPU_HANG_MS` in the launch options, for example `NX_GPU_HANG_MS=120000 %command%`. Without it the screen stays black for a few seconds and the game closes: the default watchdog gives the GPU 2 seconds.
 
 ## Requirements
 
