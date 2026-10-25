@@ -1,0 +1,39 @@
+; input.ini.fsn - keyboard and mouse layout made similar to Fate/stay night (Tsukihime, both editions).
+; Copy it as input.ini next to the exe, or into the data root of each edition (data\tsuki and data\tsuki_global),
+; or point NX_INPUT_INI at this file. There is no [mando] section: the controller keeps its default mapping.
+; Format and list of key names: input.ini.example. A section that is present replaces all the defaults of that device.
+; Note: Up opens the mini menu above the text (it does not rewind); rewind is R or the mouse wheel up.
+
+[teclado]
+A      = Space, Enter
+UP     = Up
+DOWN   = Down
+LEFT   = Left
+RIGHT  = Right
+L      = A
+ZL     = R
+R      = F
+ZR     = Ctrl
+Y      = Escape, S, L, C
+X      = Tab
+B      = Backspace
+SUP    = PageUp
+SDOWN  = PageDown
+
+[mouse]
+; Left click = touch (advances, taps the UI). Right = system menu, middle = dialog menu (X),
+; wheel down = next, wheel up = previous. To go back in a submenu with the mouse, change the right button to B.
+; If you prefer the usual wheel (item by item in lists and the flowchart, no effect in the text):
+; RSUP = RuedaArriba / RSDOWN = RuedaAbajo.
+
+; Right (Don't change it)
+Y      = Derecho
+
+; Middle (Don't change it)
+X      = Medio
+
+; ScrollDown (Don't change it)
+DOWN   = RuedaAbajo
+
+; ScrollUp (Don't change it)
+ZL     = RuedaArriba

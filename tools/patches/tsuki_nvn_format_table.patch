@@ -1,0 +1,72 @@
+diff --git a/runtime/include/nx/game.h b/runtime/include/nx/game.h
+index e04f0ce..1eae1d7 100644
+--- a/runtime/include/nx/game.h
++++ b/runtime/include/nx/game.h
+@@ -15,6 +15,10 @@ struct Info {
+     // main.npdm META +0x14. Non-zero enables nn::os virtual address memory (VammManager, SDK 16) over the alias
+     // region; svcGetInfo(SystemResourceSizeTotal) reports it.
+     uint64_t system_resource_size = 0;
++    // NVN driver's format table in sdk (nvn_texture_layout.cpp): its offset and entry count depend on the SDK
++    // version. 0 = the Super Mario Bros. Wonder values (SDK 16.2: 0xd34198, 0xd0 entries).
++    uint64_t nvn_format_table = 0;
++    uint32_t nvn_format_count = 0;
+ };
+ extern const Info kInfo;
+ 
+diff --git a/runtime/src/nvn/nvn_texture_layout.cpp b/runtime/src/nvn/nvn_texture_layout.cpp
+index 99383fc..51f2908 100644
+--- a/runtime/src/nvn/nvn_texture_layout.cpp
++++ b/runtime/src/nvn/nvn_texture_layout.cpp
+@@ -10,13 +10,15 @@
+ // sizes must not come out smaller than the real driver's.
+ #include <algorithm>
+ 
++#include <nx/game.h>
++
+ #include "nvn.h"
+ 
+ namespace nx::nvn {
+ 
+ namespace {
+ 
+-constexpr uint64_t kFormatTable = 0xd34198;  // in sdk (SDK 16.2)
++constexpr uint64_t kFormatTable = 0xd34198;  // in sdk (SDK 16.2); other SDKs: game::kInfo.nvn_format_table
+ constexpr uint32_t kFormatCount = 0xd0;
+ 
+ struct FormatInfo {
+@@ -24,14 +26,31 @@ struct FormatInfo {
+ };
+ 
+ FormatInfo format_info(uint32_t format) {
+-    static uint64_t sdk = [] {
++    struct Table {
++        uint64_t base = 0;  // 0: no usable table (the defaults below are used)
++        uint32_t count = 0;
++    };
++    static Table table = [] {
++        Table t;
+         uint64_t loader = find_symbol("nvnBootstrapLoader");
+         const LoadedModule* m = module_at(loader);
+-        return m ? m->base : 0;
++        if (!m) return t;
++        uint64_t off = game::kInfo.nvn_format_table ? game::kInfo.nvn_format_table : kFormatTable;
++        uint32_t count = game::kInfo.nvn_format_count ? game::kInfo.nvn_format_count : kFormatCount;
++        // The table must lie inside the module: a wrong offset (another SDK version) must not read unmapped memory.
++        if (off + uint64_t(count) * 0x30 > m->size) {
++            log("nvn: format table sdk+%#llx (%u entries) is outside sdk (size %#llx): set nvn_format_table in "
++                "games/<game>/game.cpp; using 1x1 blocks of 4 bytes for every format",
++                (unsigned long long)off, count, (unsigned long long)m->size);
++            return t;
++        }
++        t.base = m->base + off;
++        t.count = count;
++        return t;
+     }();
+     FormatInfo f;
+-    if (!sdk || format >= kFormatCount) return f;
+-    const uint32_t* e = reinterpret_cast<const uint32_t*>(sdk + kFormatTable + uint64_t(format) * 0x30);
++    if (!table.base || format >= table.count) return f;
++    const uint32_t* e = reinterpret_cast<const uint32_t*>(table.base + uint64_t(format) * 0x30);
+     uint32_t bw = e[2] & 0xFF, bh = (e[2] >> 8) & 0xFF, bytes = e[4] & 0xFF;
+     if (bw && bh && bytes) f = {bw, bh, bytes};
+     return f;

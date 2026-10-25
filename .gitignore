@@ -1,0 +1,98 @@
+# Root .gitignore of the repo (allowlist): only our own code (tools, resources and framework).
+#
+# Allowlist: EVERYTHING is left out except what is named below with "!". This way a new folder (data, dumps,
+# diagnostics, sandbox...) never gets in by accident. To version something new, add it here on purpose.
+#
+# framework\ is a fork of SuperMarioWonderRecomp (MIT) and lives inside this repo; what is already versioned stays tracked.
+# Never versioned: data\ (dumps, romfs, exefs, gen\, analysis\, spirv\, fonts, saves), dumps\, keys.
+
+# ---- everything out by default ----
+/*
+
+# ---- what does get in ----
+
+# input.ini.example (FSN-style example): only this file inside framework\
+!/framework/
+/framework/*
+!/framework/games/
+/framework/games/*
+!/framework/games/tsukihime_common/
+/framework/games/tsukihime_common/*
+!/framework/games/tsukihime_common/input.ini.example
+
+!/.gitignore
+!/.gitattributes
+!/LICENSE
+!/NOTICE.md
+!/README.md
+
+# tools\: only scripts and patches (not nstool.exe or Python cache)
+!/tools/
+/tools/*
+!/tools/*.ps1
+!/tools/*.py
+# subfolders by purpose: internal (called by recomp), patches (apply_*.py, already applied in
+# framework\), dev (analysis), tests
+!/tools/internal/
+!/tools/patches/
+!/tools/dev/
+!/tools/tests/
+# nsextract (C#, LibHac): only the sources are tracked (not bin\ or obj\)
+!/tools/nsextract/
+/tools/nsextract/*
+!/tools/nsextract/nsextract.csproj
+!/tools/nsextract/Program.cs
+# tools\linux\: building from Linux (.sh wrappers, CMake toolchain)
+!/tools/linux/
+/tools/linux/*
+!/tools/linux/*.sh
+!/tools/linux/*.cmake
+!/tools/linux/*.ps1
+!/tools/linux/*.py
+# personal (paths of one PC): never in the repo
+/tools/dev.local.ps1
+
+# ---- safety net (also applies inside what is allowed) ----
+# keys, dumps and Switch containers
+*.keys
+*.xci
+*.xci.rar
+*.xcz
+*.nsp
+*.nsz
+*.nca
+*.tik
+*.cert
+*.rar
+*.zip
+# game data and derived files (romfs, flattened exefs, shaders, video, audio, fonts)
+*.bin
+*.spv
+*.bnsh
+*.bntx
+*.bfsar
+*.bffnt
+*.bfttf
+*.mrg
+*.hed
+*.nam
+*.mp4
+*.opus
+*.ttf
+*.otf
+*.tga
+# Python, logs
+__pycache__/
+*.pyc
+*.log
+# AP_GITIGNORE_REQ: the venv is created from this file (install_requirements.ps1)
+!/tools/requirements.txt
+
+
+# ---- shared font (Noto Sans JP, OFL): exception to *.ttf ----
+!/resources/
+/resources/*
+!/resources/fonts/
+/resources/fonts/*
+!/resources/fonts/shared_0.ttf
+!/resources/fonts/*.txt

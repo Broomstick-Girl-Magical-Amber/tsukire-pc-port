@@ -1,0 +1,3 @@
+# Fixed line endings per type: .sh files must be LF or bash fails on Linux.
+# (.ps1 files are not touched here: they stay as they are in the repo.)
+*.sh text eol=lf
