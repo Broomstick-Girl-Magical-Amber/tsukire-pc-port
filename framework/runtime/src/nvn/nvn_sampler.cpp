@@ -1,0 +1,119 @@
+// NVN sampler states as Vulkan samplers (split from nvn_pipeline.cpp).
+#include <algorithm>
+#include <cstdlib>
+#include <cstring>
+#include <unordered_map>
+
+#include "nvn_pipeline.h"
+
+namespace nx::nvn {
+
+using namespace nx::vk;
+
+namespace {
+
+VkSamplerAddressMode vk_wrap(uint32_t w) {  // NVN: 0 clamp, 1 repeat, 2 mirror clamp, 3 mirror clamp to edge,
+    switch (w) {                            // 4 mirror clamp to border, 5 clamp to border, 6 mirrored repeat, 7 edge
+        case 1: return VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        case 2:
+        case 3:
+        case 4: return VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE;
+        case 5: return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+        case 6: return VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;
+        default: return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    }
+}
+
+}  // namespace
+
+// ---- samplers -------------------------------------------------------------------------------------------------------
+
+VkSampler sampler_for(const SamplerInfo& s, bool shadow) {
+    // Asked per texture binding of every draw: the key is the state's bytes and the flag (what the std::string key
+    // of before held, compared the same way), hashed; no allocation on a hit.
+    using Key = ByteKey<sizeof(SamplerInfo) + 1>;
+    static std::unordered_map<Key, VkSampler, ByteKeyHash> cache;
+    Key key;
+    std::memcpy(key.b, &s, sizeof s);
+    key.b[sizeof s] = shadow ? '1' : '0';
+    auto& v = cache[key];
+    if (v) return v;
+    VkSamplerCreateInfo ci{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+    // NVN min filter: 0 nearest, 1 linear, 2 nearest mip nearest, 3 linear mip nearest, 4 nearest mip linear,
+    // 5 linear mip linear; mag: 0 nearest, 1 linear.
+    uint32_t m = s.min_filter;
+    ci.minFilter = (m == 1 || m == 3 || m == 5) ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
+    ci.magFilter = s.mag_filter == 1 ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
+    ci.mipmapMode = (m == 4 || m == 5) ? VK_SAMPLER_MIPMAP_MODE_LINEAR : VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    ci.addressModeU = vk_wrap(s.wrap[0]);
+    ci.addressModeV = vk_wrap(s.wrap[1]);
+    ci.addressModeW = vk_wrap(s.wrap[2]);
+    ci.mipLodBias = s.lod_bias;
+    // Games pass lod_min -1000 ("no limit"); Metal wants lodMinClamp >= 0, and a negative one made the glyph
+    // sampler return 0 (all text invisible).
+    ci.minLod = m <= 1 ? 0.0f : std::max(0.0f, s.lod_min);
+    ci.maxLod = m <= 1 ? 0.25f : std::max(ci.minLod, s.lod_max);  // no mipmapping: level 0 only
+    ci.anisotropyEnable = s.max_anisotropy > 1.0f;
+    ci.maxAnisotropy = std::min(s.max_anisotropy, 16.0f);
+    ci.compareEnable = shadow;
+    ci.compareOp = shadow ? vk_compare(s.compare_func) : VK_COMPARE_OP_ALWAYS;
+    bool white = s.border[3] > 0.5f && s.border[0] > 0.5f;
+    ci.borderColor = white ? VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE
+                     : s.border[3] > 0.5f ? VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK
+                                          : VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
+    p_vkCreateSampler(vk_device(), &ci, nullptr, &v);
+    return v;
+}
+
+// ---- pitch-linear texture contents (moved from nvn_pipeline.cpp) ------------------------------------------------
+
+// Four independent lanes: one multiply chain ran at ~1 byte per cycle (Wonder's 16 MB glyph cache: ~5 ms).
+uint64_t hash_memory(const uint8_t* p, uint64_t size) {
+    uint64_t h[4] = {0x9E3779B97F4A7C15ull, 1, 2, 3}, n = size / 32;
+    const uint64_t* w = reinterpret_cast<const uint64_t*>(p);
+    for (uint64_t k = 0; k < n; k++)
+        for (int l = 0; l < 4; l++) h[l] = (h[l] ^ w[4 * k + l]) * 0x100000001B3ull + (h[l] >> 29);
+    uint64_t r = h[0] ^ h[1] * 3 ^ h[2] * 5 ^ h[3] * 7;
+    for (uint64_t k = n * 4; k < size / 8; k++) r = (r ^ w[k]) * 0x100000001B3ull + (r >> 29);
+    return r;
+}
+
+// A pitch-linear texture the GPU does not write: did the CPU change it since the last upload?
+void check_linear_content(Texture& t) {
+    // Every 4th presented frame at most (every 4th submit was about every frame, ~1 ms); a new glyph shows 3 frames late.
+    uint64_t frame = g_frame.load(std::memory_order_relaxed) + 1;
+    static const uint64_t hash_small = [] {
+        const char* e = std::getenv("NX_HASH_SMALL");
+        return e ? std::strtoull(e, nullptr, 10) : 0;
+    }();
+    bool small = hash_small && t.storage_size <= hash_small;
+    if ((!t.stride && !small) || !t.memory || !t.image || t.image->rendered ||
+        (t.hashed_submit && t.hashed_submit + (t.watched ? 1 : 4) > frame))
+        return;
+    t.hashed_submit = frame;
+    // 1 MB and more (the glyph cache): page protection says whether the CPU wrote it, every frame, at no cost.
+    if (t.stride && t.storage_size >= (1u << 20)) {
+        if (!t.watched && !t.content_hash) t.watched = plat::write_watch_add(t.memory, t.storage_size);
+        if (t.watched) {
+            uint64_t lo, hi;
+            if (plat::write_watch_take(t.memory, &lo, &hi) && t.content_hash) {
+                t.mark_dirty(lo, hi);
+                static uint64_t n = 0;
+                if (++n == 1 || n % 100 == 0) log("nvn: watched texture written by the CPU (%llu times)", (unsigned long long)n);
+            }
+            t.content_hash = 1;  // the first take only arms the watch (the image was just uploaded)
+            return;
+        }
+    }
+    uint64_t h = hash_memory(reinterpret_cast<const uint8_t*>(t.memory), t.storage_size);
+    if (t.content_hash && h != t.content_hash) {
+        t.mark_dirty(0, UINT64_MAX);
+        static int logged = 0;
+        if (!t.stride && logged++ < 100)
+            log("nvn: block-linear texture %llux%u f%x (%llu bytes) changed by the CPU", (unsigned long long)t.width,
+                t.height, t.format, (unsigned long long)t.storage_size);
+    }
+    t.content_hash = h;
+}
+
+}  // namespace nx::nvn
