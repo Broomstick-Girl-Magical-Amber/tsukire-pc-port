@@ -165,49 +165,24 @@ Step 9 cross-compiles the **same Windows `.exe`** with `clang-cl` + `lld-link` a
 Without a GPU (a VM with `llvmpipe`) set `NX_GPU_HANG_MS` in the launch options, for example `NX_GPU_HANG_MS=120000 %command%`. Without it the screen stays black for a few seconds and the game closes: the default watchdog gives the GPU 2 seconds.
 
 
-### `install_requirements.ps1` options
+### Some `install_requirements.ps1` options
 
 | Option | Meaning |
 |---|---|
 | `-Check` | Only verify; install, download and create nothing. Exit code 1 if something is missing. |
 | `-From N` / `-To N` | Run steps N to M (0 to 11). |
 | `-Edition global\|japan\|both` | Which edition(s) to size the space check and summary for (default `both`). |
-| `-NonInteractive` | Never ask questions; fail instead. |
 | `-Vcpkg <folder>` | vcpkg location (default `C:\dev\vcpkg`; `~/dev/vcpkg` on Linux). |
-| `-NstoolFrom <nstool.exe>` | Use a given `nstool.exe` (still checked against the pinned SHA-256). |
 
-### `recomp_tsukihime.ps1` options
+### Some `recomp_tsukihime.ps1` options
 
 | Option | Meaning |
 |---|---|
 | `-Edition japan\|global` | **Required.** Edition to recompile. |
 | `-From N` / `-To N` | Run steps N to M (0 to 10). |
-| `-Replace` | Redo extraction and recompilation even if they are already done. |
 | `-InputFile <path>` | Use this `.xci` / `.nsp` instead of looking in the repository root. |
 | `-Keys <path>` | Keys file. It must be inside `data\` (default `data\prod.keys`). |
 | `-Fonts <file or folder>` | Optional. The font is already in the repo (`resources\fonts`); use this only to supply another `shared_0.ttf`. |
-| `-Root <folder>` | Use another copy of the repository. |
-| `-ForceBuildId` | Continue even if the build ID of `main` is not the supported one (only warns). Not recommended: patches and offsets are measured for the supported binaries. |
-
-### The steps of `recomp_tsukihime.ps1`
-
-| # | Step | What it does |
-|---|---|---|
-| 0 | precheck | Tools, patch markers in the framework, keys, free space. |
-| 1 | identify | Reads the container header (NSP or XCI) and the CNMT: program ID, Application type, base version v0, program NCA. |
-| 2 | extract | Program NCA to `exefs` and `romfs`; deletes the encrypted intermediate files when done. |
-| 3 | verify | Checks the program ID and the build ID of `main`. Always runs first when you resume after step 3. |
-| 4 | structure | Japanese: checks `games\tsukihime`. Global: runs `create_tsukihime_global.ps1` (idempotent). |
-| 5 | analysis | `nso2bin.py` writes `analysis\main.bin` and `sdk.bin`. |
-| 6 | recomp | Regenerates the recompiled C++ for `main` and `sdk` into `gen\` (the previous one is kept as `gen.old`). |
-| 7 | fonts | Copies `shared_0.ttf` to `data\<edition>\fonts`. |
-| 8 | shaders | Translates the shaders that have no `.spv` yet, offline. |
-| 9 | build | `cmake` configure and build. |
-| 10 | summary | Prints what was produced. |
-
-Each step checks its own result and is skipped if it is already done and verified. If a step fails, it undoes what it did and prints `Resume with -From N`. From step 3 on, neither the dump nor the keys are needed. Anything replaced is kept as `*.old`; delete those by hand when you want. The scripts never touch `user\` (your saves), `language.txt` or `input.ini`.
-
-Both scripts write their output under `data\` and `framework\`, and `install_requirements.ps1` keeps a log in `_prepare\`. None of those folders is tracked by git.
 
 ## Requirements
 
