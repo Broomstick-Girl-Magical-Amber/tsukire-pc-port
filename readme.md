@@ -83,7 +83,7 @@ Some heroines and scenes. Hisui comes first by arbitrary choice.
 
 ## Rebuild from scratch on Windows
 
-Before you start, check [Requirements](#requirements) and [Disk space](#disk-space) below.
+**Before you start, check [Requirements](#requirements) below.**
 
 1. **Clone the repository.** The scripts do not clone it for you.
 
@@ -217,34 +217,6 @@ You provide:
 - Your own `prod.keys`.
 - On the working drive (`data\` + `build\`) you need about **22 GB for `japan edition`, 24 GB for `global edition` and 46 GB for both**. I recommend having 60 GB free. Keep the dumps on another drive if you can (use `-InputFile` to point to them). If they are on the same drive, add their size, because the scripts never delete them.
 
-### Windows
-
-- Windows 10 1809 (build 17763) or later, x64. Windows PowerShell 5.1 (included with Windows) is enough.
-- For playing: a GPU with Vulkan 1.3 (see above). Building does not need a GPU.
-- Internet access and `winget` (if winget is missing, the script installs it for the current user; this part is untested).
-- `tools\install_requirements.ps1` installs everything else, asking for administrator permission **once** for the system-wide tools:
-
-| Tool | Version the script installs | Accepted if already present |
-|---|---|---|
-| LLVM (clang-cl) | 23.1.3 | 23.x |
-| CMake | 4.4.4 | 4.x |
-| .NET SDK | 10.0.401 | 10.0.x |
-| Vulkan SDK (for `spirv-val`) | 1.4.363.0 | 1.3.250 or later |
-| Python | 3.12.10 (per user) | 3.12.x |
-| Ninja | 1.13.2 | 1.11 or later |
-| vcpkg | pinned commit | same commit |
-
-  It also builds the libraries with vcpkg (`ffmpeg`, `opus`, `libjpeg-turbo`, `libpng`, `zlib`, `sdl3`; `x64-windows`, Release only by default), creates a Python virtual environment with the exact versions of `tools\requirements.txt`, downloads `nstool` 1.9.2 (SHA-256 verified) and fetches and builds the shader translator (see [Credits](#credits-and-licenses)). Building `ffmpeg` is the longest part: about 30 to 60 minutes, and more on slower PCs.
-
-### Linux
-
-- x86_64. Tested on Ubuntu 26.04.1 in a VM (Debian-based systems use `apt`).
-- **A freshly installed Ubuntu 26.04 does not include `curl`.** Install it before running anything, because the wrapper needs it to download PowerShell:
-
-- `tools/linux/install_requirements_linux.sh` downloads PowerShell 7.6.7 (SHA-256 verified) into the tools folder (`~/.local/tsuki-tools` by default; set `NX_TOOLS_DIR` to change it; the path must not contain spaces) and then runs the same `install_requirements.ps1` as Windows.
-- Step 1 installs the missing system packages with a single `sudo`, **asking first**: `git curl tar xz unzip zip make gcc g++ pkg-config nasm python3`.
-- Step 2 installs LLVM, CMake, Ninja, `xwin`, Python 3.12, .NET SDK 10 and the Vulkan SDK as tarballs with fixed SHA-256, plus the Windows CRT/SDK through `xwin`. **You accept Microsoft's license** when `xwin` asks.
-- To play: Steam with Proton Experimental, and a GPU with Vulkan 1.3.
 
 ## Playing
 
