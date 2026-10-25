@@ -1,11 +1,13 @@
 # tsukire-pc-port
+
+> **This is a fan project. It is unofficial and has no affiliation with TYPE-MOON or any other rights holder of Tsukihime.**
+
 <p align="center">
    <img src="./media/intro.gif" width="80%" />
 </p>
 
 An unofficial PC port of *Tsukihime -A piece of blue glass moon-*, the remake of the original novel (I hope Red Garden/Far Side routes comes out soon), from Nintendo Switch, made by statically recompiling the game's own executable. It supports two editions, the Japanese one and the global one. On Windows you build the `.exe` yourself; on Linux the same `.exe` is cross-compiled and played with Proton (or Wine).
 
-> **This is a fan project. It is unofficial and has no affiliation with TYPE-MOON or any other rights holder of Tsukihime.**
 
 This repository contains **no game, no dumps, no keys, no firmware and no files derived from the game** (the only exceptions are the screenshots in `media/` and the executable's icon; see [Credits and licenses](#credits-and-licenses)). You must provide your own legally obtained copy of the game and your own keys (`prod.keys`). There are no instructions here for getting either.
 
