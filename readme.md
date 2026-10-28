@@ -25,6 +25,8 @@ This project is a fork of [SuperMarioWonderRecomp](https://github.com/BelmanteGu
 
 - Automatic installation and build scripts for both Windows and Linux. You must provide your own game dump and keys: put them where the scripts look for them (`data/prod.keys` and the `.xci`/`.nsp` in the repository root) and the output is the `.exe`. See [Rebuild from scratch on Windows](#rebuild-from-scratch-on-windows) or [Rebuild on Linux and play with Proton](#rebuild-on-linux-and-play-with-proton) for more information.
 
+- Updates and community patches in .nsp format: drop them in updates\ and recompile. Only the changed files are extracted to mods\<edition>\, and the game is recompiled from the patch’s own executable when it has one. Tested with translation patches on the Japanese edition. See [Updates and patches](#updates-and-patches).
+
 - Save data is stored in `<root>/data/tsuki/user/save` for the Japanese edition and `<root>/data/tsuki_global/user/save` for the global edition. The `data/<edition>` folder is created by the recompilation process, and the `user/save` folder appears once the game runs and saves. Back it up before updating or rebuilding. Saves from an emulator or from a Nintendo Switch save data dump can be imported and were tested to work.
 
 - Tested on real hardware with Windows 10, Windows 11 and an Ubuntu Live ISO (Intel, AMD and NVIDIA GPUs), and on virtual machines with Windows 10 and an installed Ubuntu (both editions).
@@ -126,6 +128,9 @@ Some heroines and scenes. Hisui comes first by arbitrary choice.
    ```
    The final `.exe` is `<root>/framework/build/tsukihime/tsukihime.exe` (Japanese) or `<root>/framework/build/tsukihime_global/tsukihime_global.exe` (global).
 
+   Community patches and updates are also supported. See [Updates and patches](#updates-and-patches-experimental) for more details.
+
+
 
 ## Rebuild on Linux and play with Proton
 
@@ -153,6 +158,8 @@ cp /path/to/your-dump.xci .
 # Note: You must be in the root folder to run this script (tsukire-pc-port)
 bash tools/linux/recomp_linux.sh -Edition japan
 ```
+
+Community patches and updates are also supported. See [Updates and patches](#updates-and-patches-experimental) for more details, but not tested in Linux.
 
 Step 9 cross-compiles the **same Windows `.exe`** with `clang-cl` + `lld-link` against the Windows CRT/SDK fetched by `xwin`; it ends up in `framework/build/tsukihime/` or `framework/build/tsukihime_global/` exactly as on Windows. Long runs use `systemd-inhibit` when it works, so the machine does not suspend in the middle.
 
@@ -183,12 +190,26 @@ Without a GPU (a VM with `llvmpipe`) set `NX_GPU_HANG_MS` in the launch options,
 | `-InputFile <path>` | Use this `.xci` / `.nsp` instead of looking in the repository root. |
 | `-Keys <path>` | Keys file. It must be inside `data\` (default `data\prod.keys`). |
 | `-Fonts <file or folder>` | Optional. The font is already in the repo (`resources\fonts`); use this only to supply another `shared_0.ttf`. |
+| `-NoUpdates` | Build the base game only and do not read `updates\`. |
+
+## Updates and patches
+
+General support for official updates and community patches distributed as an installable `.nsp`. Tested so far only with translation patches for the Japanese edition. No updates or patches are distributed here.
+
+1. Create an `updates` folder in the repository root and copy the `.nsp` into it, as downloaded. Both editions can share the folder: each recompilation takes only the ones for its edition. A name starting with `_` is ignored.
+2. Run the recompilation again for that edition (`recomp_tsukihime.ps1 -Edition japan` or `global`, or `recomp_linux.sh` on Linux). Keep your base dump available the first time: an index of the base game is built once from it, and later updates no longer need it.
+3. Step 3 extracts only what the update changes. The changed game files go to `mods\<edition>\<name>\`. If the update brings its own executable, the game is recompiled from it. When it finishes, the `.nsp` can be deleted.
+
+- For turning one off, rename its folder in `mods\<edition>\` to `_<name>` and recompile. Delete the folder to remove it.
+- Loose mods (replacement files, no `.nsp`) can be copied to `mods\<edition>\<any name>\romfs\` without recompiling. Folders load in alphabetical order and the last one wins.
+- Two active updates with different executables cannot be combined, and an update that changes a module other than the main executable is rejected.
+- `-NoUpdates` builds the base game and ignores `updates\`.
 
 ## Requirements
 
 You provide:
 
-- A legal dump of the game, **base version v0 (1.0.0) only**, as `.xci` or `.nsp`, one per edition. The container format does not matter: either edition works in either format. An `.nsp` that bundles an update, a standalone update, or a dump that is already an updated version is rejected. (An `.xci` with an update partition is fine: only its base game is read.) Step 3 of `recomp_tsukihime.ps1` also refuses a binary other than the one the port was measured against.
+- A legal dump of the game, **base version v0 (1.0.0) only**, as `.xci` or `.nsp`, one per edition. The container format does not matter: either edition works in either format. An `.nsp` that bundles an update, or a dump that is already an updated version, is rejected as the base game (standalone updates and patches go in `updates\`, see [Updates and patches](#updates-and-patches)). (An `.xci` with an update partition is fine: only its base game is read.) Step 3 of `recomp_tsukihime.ps1` also refuses a binary other than the one the port was measured against.
 - Your own `prod.keys`.
 - On the working drive (`data\` + `build\`) you need about **22 GB for `japan edition`, 24 GB for `global edition` and 46 GB for both**. I recommend having 60 GB free. Keep the dumps on another drive if you can (use `-InputFile` to point to them). If they are on the same drive, add their size, because the scripts never delete them.
 
