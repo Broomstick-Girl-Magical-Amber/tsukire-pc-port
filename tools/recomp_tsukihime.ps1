@@ -14,7 +14,7 @@
 #   1 identify       CNMT of the Meta NCA: program ID, Application type, version v0, program NCA. The container is
 #                    recognized by its header (PFS0 = NSP, HEAD = XCI), not by the extension or the edition.
 #   2 extract        program NCA -> exefs + romfs (in _recomp\, moved at the end); deletes the intermediate NCA
-#   3 verify         program ID of main.npdm and build ID of main (+0x40) against the measured ones
+#   3 verify         program ID of main.npdm and build ID of main (+0x40) against the measured ones; then updates\ (below)
 #   4 structure      japan: games\tsukihime; global: create_tsukihime_global.ps1 (idempotent)
 #   5 analysis       tools\nso2bin.py -> analysis\main.bin and sdk.bin
 #   6 recomp         regen_tsuki*.ps1 main, sdk -> gen\ (the previous gen\ is kept as gen.old)
@@ -32,6 +32,17 @@
 # Linux (PowerShell 7, via tools/linux/recomp_linux.sh): same steps; step 9 cross-compiles the SAME Windows exe
 # (clang-cl + lld-link + llvm-rc against the xwin CRT/SDK; tools/linux/clangcl-xwin.cmake) to play it with
 # Proton. The tools are installed by tools/linux/install_requirements_linux.sh. Nothing changes on Windows.
+# Updates and mods: every <root>\updates\*.nsp (updates or patches, e.g. a translation; a name starting with _ is
+# skipped) of this edition is processed after step 3 by tools\internal\mods_nsp.py, without the base dump: the base
+# romfs is rebuilt from extract\romfs plus <data>\romfs_index.bin, made ONCE from the dump the first time there is an
+# .nsp (afterwards the dump is not needed). Its exefs goes to <data>\updates\<name>\ (only for the recompilation) and
+# the romfs files that differ from the base go to <root>\mods\<edition>\<name>\romfs. The exe reads every folder of
+# <root>\mods\<edition>\ (name order, the last one wins; _ skips it) before its own romfs (apply_romfs_mods.py), so
+# mods can also be copied there by hand, without recompiling. Once processed, the .nsp can be deleted: an update stays
+# while its folder mods\<edition>\<name> exists (rename it to _<name> to disable it, delete it to remove it; then
+# recompile). If an update changes main, steps 5-6 recompile main from it and its layer gets requires_main.txt (the
+# exe skips it if it was built from another main). Two active updates with different mains cannot be combined; any
+# other exefs module changed is refused. -NoUpdates: base main, updates\ not read (romfs-only layers still load).
 # Portable data root: game.cpp has "../../../data/<edition>" and the runtime (apply_data_root_exe.py, NX_DATA_ROOT_EXE
 # in game.cmake) resolves it from the exe folder: a full copy of the port works in any folder or PC,
 # with a double click and without NX_DATA_ROOT (which still takes priority if set).
@@ -47,6 +58,7 @@ param(
     [switch]$Replace,
     [switch]$NoNsExtract,
     [switch]$ForceBuildId,
+    [switch]$NoUpdates,
     [ValidateRange(2, 600)][int]$ProgressSeconds = 30
 )
 
@@ -126,6 +138,8 @@ $Markers = @(
     @('both', 'framework\runtime\src\nvn\nvn_vk.cpp', 'AP_GPU_HANG', 'apply_gpu_hang.py', $false),
     @('both', 'framework\runtime\src\nvn\nvn_frames.cpp', 'AP_GPU_HANG', 'apply_gpu_hang.py', $false),
     @('both', 'framework\runtime\src\nvn\nvn_vk.cpp', 'AP_VK_REQ', 'apply_vk_requirements.py', $false),
+    @('both', 'framework\runtime\src\hle_fs.cpp', 'AP_ROMFS_MODS', 'apply_romfs_mods.py', $false),
+    @('both', 'framework\games\tsukihime_common\tsukihime_common.cmake', 'AP_ROMFS_MODS', 'apply_romfs_mods.py', $false),
     @('japan', 'framework\games\tsukihime\game.cmake', 'tsukihime_common/tsukihime_common.cmake', 'games\tsukihime_common (shared code, in the repo)', $false),
     @('japan', 'framework\games\tsukihime\game.cmake', 'NX_DEFAULT_ORIGIN_LOWER_LEFT', 'apply_origin_default.py', $false),
     @('japan', 'framework\games\tsukihime\game.cmake', 'NX_FIXED_ASPECT', 'apply_aspect.py', $false),
@@ -133,11 +147,12 @@ $Markers = @(
     @('japan', 'framework\games\tsukihime\game.cmake', 'NX_DATA_ROOT_EXE', 'apply_data_root_exe.py', $false),
     @('japan', 'framework\games\tsukihime\game.cpp', '"../../../data/tsuki",', 'apply_data_root_exe.py', $false),
     @('japan', 'tools\internal\regen_tsuki.ps1', 'NX_RECOMP_JT_LSR', 'original regen_tsuki.ps1', $false),
+    @('japan', 'tools\internal\regen_tsuki.ps1', 'NX_RECOMP_JT_MOV', 'regen_tsuki.ps1 of the updates\ change (tools\internal)', $false),
     @('japan', 'framework\games\tsukihime\game.cmake', 'AP_VK_REQ', 'apply_vk_requirements.py', $false),
     @('global', 'framework\games\tsukihime_global\game.cmake', 'AP_VK_REQ', 'apply_vk_requirements.py', $true),
     @('global', 'framework\recomp\emit.py', '_JT_FUERA = ', 'apply_jt_outside.py', $false),
     @('global', 'framework\recomp\nso.py', '_RELR = ', 'apply_relr.py', $false),
-    @('global', 'framework\recomp\analysis.py', '_JT_MOV = ', 'apply_jt_mov.py', $false),
+    @('both', 'framework\recomp\analysis.py', '_JT_MOV = ', 'apply_jt_mov.py', $false),
     @('global', 'framework\runtime\src\main.cpp', 'AP_DT_INIT', 'apply_dt_init.py', $false),
     @('global', 'framework\games\tsukihime_global\game.cmake', 'tsukihime_common/tsukihime_common.cmake', 'create_tsukihime_global.ps1', $true),
     @('global', 'framework\games\tsukihime_global\game.cmake', 'AP_DT_INIT', 'apply_dt_init.py', $true),
@@ -189,6 +204,11 @@ function EnsureNsExtract {
     catch { $script:NsBroken = $true; Warn "nsextract was not built ($($_.Exception.Message)): using nstool (-NoNsExtract to skip this)" }
 }
 $Regen = Under $Tools "internal\$($V.Regen)"
+$UpdatesIn = InRoot 'updates'                       # the .nsp the user drops (both editions)
+$UpdData = Under $Data 'updates'                    # their exefs (main) and processing data
+$ModsOut = InRoot "mods\$Edition"                   # romfs layers the exe reads (by hand, or from updates\)
+$RomfsIndex = Under $Data 'romfs_index.bin'
+$ModsPy = Under $Tools 'internal\mods_nsp.py'
 $Create = Under $Tools 'internal\create_tsukihime_global.ps1'
 # Build environment: the personal dev.local.ps1 (ignored, not in a fresh clone) or, if there is none, the
 # portable dev_env.ps1 that is in the repo (tools\).
@@ -398,6 +418,17 @@ function FindInputs {
     return , $ok
 }
 
+# The keys do not leave data\: only their path is passed to nstool, nsextract and mods_nsp.py.
+function CheckKeys {
+    $k = [IO.Path]::GetFullPath($Keys)
+    $allowed = [IO.Path]::GetFullPath((InRoot 'data')) + $Sep
+    if (-not $k.StartsWith($allowed, [StringComparison]::OrdinalIgnoreCase)) {
+        Fail "the keys must be in $allowed (data\ of the root), not in $k"
+    }
+    if (-not (Test-Path -LiteralPath $k -PathType Leaf)) { Fail "$k does not exist (copy your keys there)" }
+    $script:Keys = $k
+}
+
 function LoadDevLocal { Push-Location; try { . $DevLocal } finally { Pop-Location } }
 
 function Step0 {
@@ -445,14 +476,7 @@ function Step0 {
     } elseif ($From -le 2 -and $To -ge 1) {
         $script:Candidates = @(FindInputs)
         EnsureNsExtract
-        # The keys do not leave data\: only their path is passed to nstool.
-        $k = [IO.Path]::GetFullPath($Keys)
-        $allowed = [IO.Path]::GetFullPath((InRoot 'data')) + $Sep
-        if (-not $k.StartsWith($allowed, [StringComparison]::OrdinalIgnoreCase)) {
-            Fail "the keys must be in $allowed (data\ of the root), not in $k"
-        }
-        if (-not (Test-Path -LiteralPath $k -PathType Leaf)) { Fail "$k does not exist (copy your keys there)" }
-        $script:Keys = $k
+        CheckKeys
         foreach ($c in $script:Candidates) { Info "input $c ($('{0:N0}' -f (Get-Item -LiteralPath $c).Length) bytes, $(ContainerType $c))" }
         Info 'keys present (not read)'
     }
@@ -723,6 +747,151 @@ function Step3 {
     }
     Info "main.npdm $(Hex16 $pid_); build ID $bid OK"
     $Summary['Build ID'] = $bid
+    StepUpdates
+}
+
+# ---------------------------------------------------------------------------------------------- updates
+$script:UpdateMain = $null     # main NSO of the updates (path), $null = the base one
+$script:UpdateMainFrom = ''
+
+# Identity of a processed .nsp: name, size, date, and the version of mods_nsp.py (a new one processes them again).
+function ModStamp([IO.FileInfo]$f) { "$($f.Name)|$($f.Length)|$($f.LastWriteTimeUtc.Ticks)|$((Get-Item -LiteralPath $ModsPy).LastWriteTimeUtc.Ticks)" }
+
+# romfs_index.bin: made once from the dump (the .xci/.nsp of the root, or -InputFile).
+function EnsureRomfsIndex {
+    if (Test-Path -LiteralPath $RomfsIndex) { return }
+    Info 'romfs_index.bin is missing: it is made once from your dump (afterwards the dump is not needed for updates)'
+    $cands = @(FindInputs)
+    foreach ($c in $cands) {
+        Info "index from $c"
+        & $Python $ModsPy index --keys $Keys --input $c --program-id (Hex16 $V.ProgramId) --base-romfs (Under $Data 'extract\romfs') --out $RomfsIndex
+        if ($LASTEXITCODE -eq 0) { return }
+        if ($LASTEXITCODE -ne 3) { Fail "mods_nsp.py index failed (code $LASTEXITCODE)" }
+    }
+    Fail "none of the .xci/.nsp of $Root is the $Edition edition: romfs_index.bin cannot be made (put your dump there once)"
+}
+
+# The NSO main compiles from: the one of the updates or the base one. Its SHA-256 goes to analysis\main_source.txt
+# (read by the exe to skip layers of another main) and gen\main_source.txt (step 6 regenerates when it changes).
+function MainSource { if ($script:UpdateMain) { $script:UpdateMain } else { Under $Data 'exefs\main' } }
+function GenStamp { $f = Under $Data 'gen\main_source.txt'; if (Test-Path -LiteralPath $f) { (ReadText $f).Trim() } else { '' } }
+
+# Layers of mods\<edition> the exe will load with this main (same rule as apply_romfs_mods.py), for step 8.
+function ActiveShaderDirs {
+    $out = @()
+    if (-not (Test-Path -LiteralPath $ModsOut -PathType Container)) { return , $out }
+    $want = Sha256 (MainSource)
+    foreach ($d in @(Get-ChildItem -LiteralPath $ModsOut -Directory | Sort-Object Name)) {
+        if ($d.Name.StartsWith('_') -or $d.Name.StartsWith('.')) { continue }
+        $req = Under $d.FullName 'requires_main.txt'
+        if ((Test-Path -LiteralPath $req) -and (ReadText $req).Trim() -ne $want) { continue }
+        $sh = Under $d.FullName 'romfs\shader'
+        if (Test-Path -LiteralPath $sh -PathType Container) { $out += $sh }
+    }
+    return , $out
+}
+
+# A layer of mods\<edition> made from an update (from_update.txt); the others were copied by hand and are not touched.
+function IsUpdateLayer([string]$d) { Test-Path -LiteralPath (Under $d 'from_update.txt') }
+
+# An update is processed once (from the .nsp of updates\) and then lives in <data>\updates\<name> (exefs, mod.json)
+# plus its layer mods\<edition>\<name>; the .nsp is no longer needed. The layer folder is the switch: _<name> disables
+# it, deleting it removes the update (its data is deleted at the next run).
+function StepUpdates {
+    $nsps = @()
+    if ($NoUpdates) { Info "-NoUpdates: base main; $UpdatesIn is not read (layers without their own main still load)" }
+    elseif (Test-Path -LiteralPath $UpdatesIn -PathType Container) {
+        $nsps = @(Get-ChildItem -LiteralPath $UpdatesIn -File -Filter '*.nsp' | Sort-Object Name)
+        foreach ($f in @($nsps | Where-Object { $_.Name.StartsWith('_') })) { Info "updates\$($f.Name): skipped (starts with _)" }
+        $nsps = @($nsps | Where-Object { -not $_.Name.StartsWith('_') })
+    }
+    if ($nsps.Count) {
+        Info "updates: $($nsps.Count) .nsp in $UpdatesIn"
+        $r = RunCapture $Python @('-c', 'import Crypto, lz4.block')
+        if ($r.Code -ne 0) { Fail 'the project python does not have pycryptodome (tools\install_requirements.ps1 -From 6 installs tools\requirements.txt)' }
+        CheckKeys
+        New-Item -ItemType Directory -Path $UpdData -Force | Out-Null
+        foreach ($f in $nsps) {
+            $name = [IO.Path]::GetFileNameWithoutExtension($f.Name) -replace '[^A-Za-z0-9._()\[\] +-]', '_'
+            $dst = Under $UpdData $name
+            $layer = Under $ModsOut $name
+            $src = Under $dst 'source.txt'
+            $stamp = ModStamp $f
+            if (IsUpdateLayer (Under $ModsOut "_$name")) { Info "$($f.Name): disabled (mods\$Edition\_$name): not processed"; continue }
+            $done = (Test-Path -LiteralPath (Under $dst 'mod.json')) -and (Test-Path -LiteralPath $src) -and (ReadText $src).Trim() -eq $stamp -and (IsUpdateLayer $layer)
+            if ($done) { Info "$($f.Name): already processed (you can delete the .nsp)"; continue }
+            if ((Test-Path -LiteralPath $dst) -and -not (Test-Path -LiteralPath $src)) { Fail "$dst exists and was not made by this script: move it away" }
+            if ((Test-Path -LiteralPath $layer) -and -not (IsUpdateLayer $layer)) { Fail "$layer exists and is not the romfs of an update (a mod copied by hand with the same name): rename one of them" }
+            EnsureRomfsIndex
+            $tmp = Under $UpdData "_new_$name"
+            if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Recurse -Force }
+            $free = FreeOn $UpdData
+            if ($free -lt $f.Length + 1GB) { Fail "~$(GB ($f.Length + 1GB)) free are needed on the drive of $UpdData and there are $(GB $free)" }
+            Info "$($f.Name): extracting what differs from the base (reads the whole patch)"
+            $t0 = Get-Date
+            & $Python $ModsPy mod --keys $Keys --nsp $f.FullName --program-id (Hex16 $V.ProgramId) --index $RomfsIndex `
+                --base-romfs (Under $Data 'extract\romfs') --base-exefs (Under $Data 'exefs') --out $tmp
+            $code = $LASTEXITCODE
+            if ($code -ne 0 -and (Test-Path -LiteralPath $tmp)) { Remove-Item -LiteralPath $tmp -Recurse -Force }
+            if ($code -eq 3) { Info "$($f.Name): it is not for the $Edition edition (skipped)"; continue }
+            if ($code -ne 0) { Fail "mods_nsp.py failed with $($f.Name) (code $code)" }
+            $j = (ReadText (Under $tmp 'mod.json')) | ConvertFrom-Json
+            # Layer mods\<edition>\<name> (always, even without romfs changes: it is the switch of the update).
+            if (Test-Path -LiteralPath $layer) { Remove-Item -LiteralPath $layer -Recurse -Force }
+            New-Item -ItemType Directory -Path $layer -Force | Out-Null
+            $romTmp = Under $tmp 'romfs'
+            if (Test-Path -LiteralPath $romTmp) { Move-Item -LiteralPath $romTmp -Destination (Under $layer 'romfs') }   # same drive as the root: a rename
+            else { New-Item -ItemType Directory -Path (Under $layer 'romfs') | Out-Null }
+            [IO.File]::WriteAllText((Under $layer 'from_update.txt'), ("romfs of the update $($f.Name) ($Edition edition), made by recomp_tsukihime.ps1. " +
+                "To disable the update rename this folder to _$name; to remove it delete the folder. Then recompile.`r`n"))
+            if (@($j.exefs_different) -contains 'main') { [IO.File]::WriteAllText((Under $layer 'requires_main.txt'), (Sha256 (Under $tmp 'exefs\main')) + "`r`n") }
+            [IO.File]::WriteAllText((Under $tmp 'source.txt'), $stamp + "`r`n")
+            if (Test-Path -LiteralPath $dst) { Remove-Item -LiteralPath $dst -Recurse -Force }
+            Move-Item -LiteralPath $tmp -Destination $dst
+            Info ('{0}: processed in {1:mm\:ss} (the .nsp can be deleted now)' -f $f.Name, ((Get-Date) - $t0))
+        }
+    }
+    # Active updates: the processed ones whose layer is in mods\<edition>. _<name> = disabled (kept); no layer = removed.
+    $active = @()
+    if (Test-Path -LiteralPath $UpdData) {
+        foreach ($d in @(Get-ChildItem -LiteralPath $UpdData -Directory | Sort-Object Name)) {
+            if ($d.Name.StartsWith('_new_')) { Remove-Item -LiteralPath $d.FullName -Recurse -Force; continue }   # a run that was cut
+            if (-not ((Test-Path -LiteralPath (Under $d.FullName 'source.txt')) -and (Test-Path -LiteralPath (Under $d.FullName 'mod.json')))) { continue }
+            if (IsUpdateLayer (Under $ModsOut $d.Name)) { $active += $d.Name; continue }
+            if (IsUpdateLayer (Under $ModsOut "_$($d.Name)")) { Info "updates: $($d.Name) disabled (mods\$Edition\_$($d.Name))"; continue }
+            Remove-Item -LiteralPath $d.FullName -Recurse -Force
+            Info "updates: $($d.Name) removed (its folder mods\$Edition\$($d.Name) is gone)"
+        }
+    }
+    if ($NoUpdates) { $active = @() }
+    $mains = @()
+    foreach ($name in $active) {
+        $dst = Under $UpdData $name
+        $j = (ReadText (Under $dst 'mod.json')) | ConvertFrom-Json
+        $diff = @($j.exefs_different)
+        $other = @($diff | Where-Object { $_ -ne 'main' })
+        if ($other.Count) { Fail "$($j.nsp) changes $($other -join ', ') besides main: not supported (kInfo and the recompiler patches are measured for the base sdk)" }
+        if ($diff -contains 'main') { $mains += [pscustomobject]@{ Sha = [string]$j.main_sha256; Nsp = [string]$j.nsp; Path = (Under $dst 'exefs\main') } }
+        Info ("update {0} active: romfs changed {1}, new {2} (mods\{3}\{4}); main {5}" -f $j.nsp, $j.changed, $j.new, $Edition, $name, $(if ($diff -contains 'main') { 'own (recompiled)' } else { 'the base one' }))
+        $removed = @($j.removed)
+        if ($removed.Count) { Info "   $($removed.Count) base files are not in the update (they stay visible): $(($removed | Select-Object -First 3) -join ', ')" }
+    }
+    $distinct = @($mains | ForEach-Object { $_.Sha } | Sort-Object -Unique)
+    if ($distinct.Count -gt 1) {
+        Fail ("these active updates carry different main and cannot be combined (disable all but one: rename its folder in mods\$Edition to _<name>):`n  " +
+              (($mains | ForEach-Object { "$($_.Nsp): main $($_.Sha.Substring(0, 16))" }) -join "`n  "))
+    }
+    $script:UpdateMain = if ($mains.Count) { $mains[0].Path } else { $null }
+    $script:UpdateMainFrom = ($mains | ForEach-Object { $_.Nsp }) -join ', '
+    $Summary['Updates'] = if ($active.Count) { "$($active -join ', '); main: $(if ($script:UpdateMain) { "of $($script:UpdateMainFrom)" } else { 'the base one' })" } else { 'none active' }
+    $layers = @(); if (Test-Path -LiteralPath $ModsOut) { $layers = @(Get-ChildItem -LiteralPath $ModsOut -Directory | Where-Object { -not $_.Name.StartsWith('_') -and -not $_.Name.StartsWith('.') } | Sort-Object Name | ForEach-Object { $_.Name }) }
+    $Summary['Mods'] = if ($layers.Count) { "mods\$Edition`: $($layers -join ', ')" } else { "none in mods\$Edition" }
+    # Resuming after step 5 with another main would build an exe that does not match analysis\main.bin.
+    if ($From -gt 5 -and (GenComplete)) {
+        $have = GenStamp
+        $want = Sha256 (MainSource)
+        if (($have -and $have -ne $want) -or (-not $have -and $script:UpdateMain)) { Fail "main changes with the updates: resume from step 5 (-From 5) or lower" }
+    }
 }
 
 function Step4 {
@@ -744,29 +913,47 @@ function Step5 {
     NewStage
     foreach ($m in 'main', 'sdk') {
         $tmp = Under $Stage "$m.bin"; $dst = Under $an "$m.bin"
-        $r = RunCapture $Python @($Nso2bin, (Under $exefs $m), $tmp)
+        $nso = if ($m -eq 'main') { MainSource } else { Under $exefs $m }
+        if ($nso -ne (Under $exefs $m)) { Info "main from the updates ($script:UpdateMainFrom)" }
+        $r = RunCapture $Python @($Nso2bin, $nso, $tmp)
         if ($r.Code -ne 0) { Fail "nso2bin $m failed: $($r.Output -join ' | ')" }
         $h = Sha256 $tmp
         if ((Test-Path -LiteralPath $dst) -and (Sha256 $dst) -eq $h) { Info "analysis\$m.bin already up to date ($($h.Substring(0, 16)))"; continue }
+        if ($m -eq 'main' -and (Test-Path -LiteralPath "$dst.old")) {   # switching main (updates\): the .old is regenerable
+            Remove-Item -LiteralPath "$dst.old" -Force; Info 'the previous analysis\main.bin.old was removed (it is regenerable)'
+        }
         $a = SetAside $dst
         Move-Item -LiteralPath $tmp -Destination $dst
         Info "analysis\$m.bin written ($($h.Substring(0, 16)))"
         if ($a) { Warn "the previous one was kept in $a" }
     }
+    [IO.File]::WriteAllText((Under $an 'main_source.txt'), (Sha256 (MainSource)) + "`r`n")   # read by the exe (apply_romfs_mods.py)
     RemoveStage
 }
 
 function Step6 {
     $gen = Under $Data 'gen'
-    if ((GenComplete) -and -not $Replace) {
+    # gen\main_source.txt: SHA-256 of the NSO main was generated from. Without it (made before updates\ existed): the base one.
+    $want = Sha256 (MainSource)
+    $have = GenStamp
+    $stale = ($have -and $have -ne $want) -or (-not $have -and $script:UpdateMain)
+    if ((GenComplete) -and -not $Replace -and -not $stale) {
+        if (-not $have) { [IO.File]::WriteAllText((Under $gen 'main_source.txt'), $want + "`r`n") }
         Info "gen\ already generated (main $(FunctionCount main) functions, sdk $(FunctionCount sdk)); -Replace to regenerate"
         return
+    }
+    if ($stale) {
+        Info "main changed ($(if ($script:UpdateMain) { "the one of $script:UpdateMainFrom" } else { 'back to the base one' })): regenerating gen\"
+        if (Test-Path -LiteralPath "$gen.old") { Remove-Item -LiteralPath "$gen.old" -Recurse -Force; Info 'the previous gen.old was removed (it is regenerable)' }
     }
     $regenToRun = $Regen
     $previous = SetAside $gen
     try {
-        & $regenToRun -Modules @('main', 'sdk') -Root $Root
+        $ra = @{ Modules = @('main', 'sdk'); Root = $Root }
+        if ($script:UpdateMain) { $ra['MainNso'] = $script:UpdateMain }
+        & $regenToRun @ra
         if (-not (GenComplete)) { Fail "$($V.Regen) finished but gen\ is incomplete" }
+        [IO.File]::WriteAllText((Under $gen 'main_source.txt'), $want + "`r`n")
     } catch {
         if (Test-Path -LiteralPath $gen) { Remove-Item -LiteralPath $gen -Recurse -Force }
         if ($previous) { Move-Item -LiteralPath $previous -Destination $gen; Warn 'gen\ restored to how it was' }
@@ -807,6 +994,7 @@ function Step7 {
 
 function CountShaders([string]$out) {
     $a = @('--maxwell', $Maxwell, '--romfs-shader', (Under $Data 'extract\romfs\shader'), '--main-bin', (Under $Data 'analysis\main.bin'), '--spirv', (Under $Data 'spirv'))
+    foreach ($d in (ActiveShaderDirs)) { $a += @('--romfs-shader', $d) }   # shaders that mods\<edition> adds or changes
     if ($out) { $a += @('--out', $out) }
     $r = RunCapture $Python (@($ShadersPy) + $a)
     if ($r.Code -ne 0) { Fail "tsuki_shaders_offline.py failed: $(($r.Output | Select-Object -Last 3) -join ' | ')" }
