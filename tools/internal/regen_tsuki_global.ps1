@@ -8,7 +8,8 @@
 #   NX_RECOMP_JT_MOV=1  jump tables with the bound in a register (apply_jt_mov.py; crash main+9708c)
 # After: cmake --build build\tsukihime_global
 # Paths relative to the script: <root>\tools\internal\regen_tsuki_global.ps1 -> the root is two folders up (or -Root <folder>).
-param([string[]]$Modules = @('main'), [string]$Root = '')
+# -MainNso <file>: recompiles main from that NSO instead of <data>\exefs\main (the main of a patch in mods\, recomp_tsukihime.ps1).
+param([string[]]$Modules = @('main'), [string]$Root = '', [string]$MainNso = '')
 
 $ErrorActionPreference = 'Stop'
 if (-not $Root) { $Root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot) }   # <root>\tools\internal\ -> <root>
@@ -57,7 +58,9 @@ try {
     foreach ($m in $Modules) {
         if (-not $Bases.ContainsKey($m)) { throw "unknown module: $m (known: $($Bases.Keys -join ', '))" }
         Write-Host "== recomp $m (base $($Bases[$m]), NX_RECOMP_JT_LSR=1)"
-        & $Python -m recomp (Join-Path $ExeFS $m) (Join-Path $Gen $m) --name $m --base $Bases[$m]
+        $src = if ($m -eq 'main' -and $MainNso) { [IO.Path]::GetFullPath($MainNso) } else { Join-Path $ExeFS $m }
+        if ($src -ne (Join-Path $ExeFS $m)) { Write-Host "   main from $src" }
+        & $Python -m recomp $src (Join-Path $Gen $m) --name $m --base $Bases[$m]
         if ($LASTEXITCODE -ne 0) { throw "recomp $m failed ($LASTEXITCODE)" }
     }
 } finally {

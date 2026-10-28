@@ -1,7 +1,8 @@
 """tsuki_shaders_offline.py - Tsukihime shaders without running the game (used by recomp_tsukihime.ps1).
 
 Gathers every Maxwell code block the game can pass to nvnProgramSetShaders:
-  - romfs\\shader\\*.bnsh: with tools\\maxwell\\containers.py of the framework (BNSH -> variations -> stages)
+  - romfs\\shader\\*.bnsh: with tools\\maxwell\\containers.py of the framework (BNSH -> variations -> stages); --romfs-shader
+    can be given several times (the base romfs and the layers of mods\\, recomp_tsukihime.ps1): blocks are joined by hash
   - the programs embedded in main: with tools\\maxwell\\exefs_shaders.find over analysis\\main.bin
 and names them like the runtime does (nvn_shaders.cpp): sha1(code[0:ctrl+0x704])[:16].
 
@@ -10,7 +11,7 @@ identical byte for byte; control identical in 65; in 4 from main exefs_shaders p
 the same fields the translator reads (+0x6f8..+0x70c, +0x748..+0x758), so the .spv is the same.
 
 Usage:
-  python tsuki_shaders_offline.py --maxwell <framework\\tools\\maxwell> --romfs-shader <dir> --main-bin <main.bin>
+  python tsuki_shaders_offline.py --maxwell <framework\\tools\\maxwell> --romfs-shader <dir> [--romfs-shader <dir> ...] --main-bin <main.bin>
          --spirv <data\\spirv> [--out <dir>]
 Without --out it only counts. With --out it writes into <out>\\romfs and <out>\\main the blocks WITHOUT a .spv in --spirv
 (code_<hash>.bin, ctrl_<hash>.bin, 13-column manifest.tsv like containers.py) for spirv_harness --batch.
@@ -32,15 +33,15 @@ def u32(d, o):
     return int.from_bytes(d[o:o + 4], "little")
 
 
-def blocks(maxwell, romfs_shader, main_bin):
+def blocks(maxwell, romfs_shaders, main_bin):
     sys.path.insert(0, maxwell)
     import containers as C        # noqa: E402  (from the framework, read only)
     import exefs_shaders as E     # noqa: E402
 
     out = {}  # hash -> (origin, id, stage, code, control)
-    files = sorted(f for f in glob.glob(os.path.join(romfs_shader, "*")) if os.path.isfile(f))
+    files = [f for d in romfs_shaders for f in sorted(glob.glob(os.path.join(d, "*"))) if os.path.isfile(f)]
     if not files:
-        sys.exit(f"ERROR: there are no files in {romfs_shader}")
+        sys.exit(f"ERROR: there are no files in {', '.join(romfs_shaders)}")
     for f in files:
         d = C.read_file(f)
         c = C.open_blob(d, 0, len(d), os.path.basename(f))
@@ -75,7 +76,7 @@ def blocks(maxwell, romfs_shader, main_bin):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--maxwell", required=True)
-    ap.add_argument("--romfs-shader", required=True)
+    ap.add_argument("--romfs-shader", required=True, action="append")
     ap.add_argument("--main-bin", required=True)
     ap.add_argument("--spirv", required=True)
     ap.add_argument("--out")

@@ -6,6 +6,10 @@
 #include <cerrno>
 #include <cstdio>
 #include <filesystem>
+#include <algorithm>  // AP_ROMFS_MODS
+#include <cstdlib>
+#include <fstream>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -109,6 +113,140 @@ std::string utf8(const fs::path& p) {
 
 std::string cstr(uint64_t p) { return p ? std::string(reinterpret_cast<const char*>(p)) : std::string(); }
 
+// AP_ROMFS_MODS (apply_romfs_mods.py): romfs layers. With NX_ROMFS_MODS (games/tsukihime_common) the rom: mount and
+// read_game_file look first in every folder of <root>/mods/<edition> that has a romfs/ (NX_MODS_DIR overrides the
+// folder), in name order: the LAST one first. Skipped: names starting with '_' or '.', and layers whose
+// requires_main.txt (romfs of an update with its own main, recomp_tsukihime.ps1) is not the main of this build
+// (<data root>/analysis/main_source.txt). Folder listings of rom: join base and layers. Without layers: as before.
+#ifdef NX_ROMFS_MODS
+struct RomLayers {
+    fs::path base;               // extract/romfs (the mount path of MountRom)
+    std::vector<fs::path> dirs;  // <mods>/<layer>/romfs, in name order (the last one wins)
+};
+
+std::string read_trimmed(const fs::path& p) {
+    std::ifstream in(p, std::ios::binary);
+    std::string s((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    size_t a = s.find_first_not_of(" \t\r\n"), b = s.find_last_not_of(" \t\r\n");
+    return a == std::string::npos ? std::string() : s.substr(a, b - a + 1);
+}
+
+std::string lower(std::string s) {
+    for (char& ch : s) ch = char(std::tolower(static_cast<unsigned char>(ch)));
+    return s;
+}
+
+fs::path mods_dir() {
+    if (const char* e = std::getenv("NX_MODS_DIR"); e && *e) return fs::u8path(e);
+#ifdef NX_ROMFS_MODS_EDITION
+    return (data_root() / ".." / ".." / "mods" / NX_ROMFS_MODS_EDITION).lexically_normal();  // <root>/mods/<edition>
+#else
+    return data_root() / "mods";
+#endif
+}
+
+const RomLayers& rom_layers() {
+    static const RomLayers r = [] {
+        RomLayers l;
+        l.base = data_root() / "extract" / "romfs";
+        fs::path dir = mods_dir();
+        std::error_code ec;
+        std::vector<std::pair<std::string, fs::path>> found;
+        for (auto it = fs::directory_iterator(dir, ec); !ec && it != fs::directory_iterator(); it.increment(ec)) {
+            std::error_code ec2;
+            if (!it->is_directory(ec2)) continue;
+            std::string name = utf8(it->path().filename());
+            if (name.empty() || name[0] == '_' || name[0] == '.') continue;
+            if (!fs::is_directory(it->path() / "romfs", ec2)) {
+                log("fs: mods: %s has no romfs folder: ignored", name.c_str());
+                continue;
+            }
+            found.emplace_back(name, it->path());
+        }
+        if (found.empty()) return l;
+        std::sort(found.begin(), found.end(), [](const auto& x, const auto& y) { return lower(x.first) < lower(y.first); });
+        std::string main_src = lower(read_trimmed(data_root() / "analysis" / "main_source.txt"));
+        log("fs: mods folder %s", utf8(dir).c_str());
+        for (auto& [name, p] : found) {
+            std::error_code ec2;
+            fs::path req = p / "requires_main.txt";
+            if (fs::exists(req, ec2)) {
+                std::string want = lower(read_trimmed(req));
+                if (want != main_src) {
+                    log("fs: mods: %s skipped: it is the romfs of an update whose main (%.16s) is not the one of this build "
+                        "(%.16s); recompile with recomp_tsukihime.ps1 to use it", name.c_str(), want.c_str(),
+                        main_src.empty() ? "base" : main_src.c_str());
+                    continue;
+                }
+            }
+            l.dirs.push_back(p / "romfs");
+            log("fs: romfs layer %zu: %s", l.dirs.size(), name.c_str());
+        }
+        return l;
+    }();
+    return r;
+}
+
+// Where a romfs path is served from when a layer has it: the file of the last layer that has it or, if the base does
+// not have the path, a folder of a layer. Empty: the base one.
+fs::path rom_layer_path(const std::string& rest, const fs::path& base_path) {
+    const RomLayers& l = rom_layers();
+    if (l.dirs.empty() || rest.empty()) return {};
+    std::error_code ec;
+    fs::path rel = fs::u8path(rest);
+    for (auto it = l.dirs.rbegin(); it != l.dirs.rend(); ++it) {
+        fs::path q = *it / rel;
+        if (fs::is_regular_file(q, ec)) {
+            if (trace_fs()) log("fs: %s from the layer %s", rest.c_str(), utf8(it->parent_path().filename()).c_str());
+            return q;
+        }
+    }
+    if (fs::exists(base_path, ec)) return {};
+    for (auto it = l.dirs.rbegin(); it != l.dirs.rend(); ++it) {
+        fs::path q = *it / rel;
+        if (fs::is_directory(q, ec)) return q;
+    }
+    return {};
+}
+
+// OpenDirectory on rom:: adds the entries of the same folder in each layer (a layer's file replaces the one with the
+// same name, case-insensitive).
+void rom_merge_dirs(const std::string& guest, const fs::path& opened, int mode, std::vector<fs::directory_entry>& out) {
+    const RomLayers& l = rom_layers();
+    if (l.dirs.empty()) return;
+    auto colon = guest.find(':');
+    if (colon == std::string::npos) return;
+    auto m = g_mounts.find(guest.substr(0, colon));
+    if (m == g_mounts.end() || m->second != l.base) return;
+    std::string rest = guest.substr(colon + 1);
+    while (!rest.empty() && (rest[0] == '/' || rest[0] == '\\')) rest.erase(0, 1);
+    auto key = [](const fs::path& p) {
+        std::string k = utf8(p.filename());
+        for (char& ch : k) ch = char(std::tolower(static_cast<unsigned char>(ch)));
+        return k;
+    };
+    std::error_code ec;
+    for (const fs::path& layer : l.dirs) {
+        fs::path d = rest.empty() ? layer : layer / fs::u8path(rest);
+        if (d == opened || !fs::is_directory(d, ec)) continue;
+        for (auto& e : fs::directory_iterator(d, ec)) {
+            bool dir = e.is_directory();
+            if (!((dir && (mode & 1)) || (!dir && (mode & 2)))) continue;
+            std::string k = key(e.path());
+            bool found = false;
+            for (auto& o : out) {
+                if (key(o.path()) == k) {
+                    if (!dir) o = e;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) out.push_back(e);
+        }
+    }
+}
+#endif
+
 // "mount:/a/b" -> host path; empty when the mount is unknown.
 fs::path resolve(const std::string& guest) {
     auto colon = guest.find(':');
@@ -117,7 +255,14 @@ fs::path resolve(const std::string& guest) {
     if (it == g_mounts.end()) return {};
     std::string rest = guest.substr(colon + 1);
     while (!rest.empty() && (rest[0] == '/' || rest[0] == '\\')) rest.erase(0, 1);
-    return it->second / fs::u8path(rest);
+    fs::path base = it->second / fs::u8path(rest);
+#ifdef NX_ROMFS_MODS
+    if (it->second == rom_layers().base) {  // AP_ROMFS_MODS: a layer's file first
+        fs::path q = rom_layer_path(rest, base);
+        if (!q.empty()) return q;
+    }
+#endif
+    return base;
 }
 
 void mount(const std::string& name, const fs::path& p) {
@@ -371,6 +516,9 @@ void OpenDirectory(CPU& c) {  // (DirectoryHandle* out, path, int mode: 1 dirs, 
         bool dir = e.is_directory();
         if ((dir && (mode & 1)) || (!dir && (mode & 2))) d.entries.push_back(e);
     }
+#ifdef NX_ROMFS_MODS
+    rom_merge_dirs(cstr(c.x[1]), p, mode, d.entries);  // AP_ROMFS_MODS
+#endif
     uint64_t h = g_next++;
     g_dirs[h] = std::move(d);
     st<uint64_t>(c.x[0], h);
@@ -519,7 +667,16 @@ void add_virtual_file(const std::string& path, std::string data) {
 }
 
 std::string read_game_file(const std::string& relative_to_romfs) {
-    FILE* f = plat::fopen_utf8(utf8(data_root() / "extract" / "romfs" / fs::u8path(relative_to_romfs)), "rb");
+    fs::path src = data_root() / "extract" / "romfs" / fs::u8path(relative_to_romfs);
+#ifdef NX_ROMFS_MODS
+    {  // AP_ROMFS_MODS: the videos of hle_movie also come from the layers
+        std::string rest = relative_to_romfs;
+        while (!rest.empty() && (rest[0] == '/' || rest[0] == '\\')) rest.erase(0, 1);
+        fs::path q = rom_layer_path(rest, src);
+        if (!q.empty()) src = q;
+    }
+#endif
+    FILE* f = plat::fopen_utf8(utf8(src), "rb");
     if (!f) return {};
     std::string s;
     char buf[65536];

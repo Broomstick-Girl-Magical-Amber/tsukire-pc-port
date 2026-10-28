@@ -7,6 +7,15 @@ set(NX_TSUKI_COMMON "${CMAKE_CURRENT_LIST_DIR}")
 file(GLOB NX_TSUKI_COMMON_SOURCES CONFIGURE_DEPENDS "${NX_TSUKI_COMMON}/*.cpp")
 target_sources(${NX_GAME} PRIVATE ${NX_TSUKI_COMMON_SOURCES})
 target_include_directories(${NX_GAME} PRIVATE "${NX_TSUKI_COMMON}")  # movie_core.h, input_tsuki.h
+# AP_PACKAGED_LAYOUT (apply_packaged_layout.py): block height of packaged (BNTX) textures from the game, not guessed
+target_compile_definitions(${NX_GAME} PRIVATE NX_PACKAGED_LAYOUT_HLE)
+# AP_ROMFS_MODS (apply_romfs_mods.py): romfs layers of <root>/mods/<edition>: mods copied by hand and the romfs of
+# the updates of <root>/updates (recomp_tsukihime.ps1)
+if(NX_GAME STREQUAL "tsukihime_global")
+    target_compile_definitions(${NX_GAME} PRIVATE NX_ROMFS_MODS NX_ROMFS_MODS_EDITION="global")
+else()
+    target_compile_definitions(${NX_GAME} PRIVATE NX_ROMFS_MODS NX_ROMFS_MODS_EDITION="japan")
+endif()
 
 # FFmpeg (vcpkg, x64-windows) para el HLE de movie::.
 find_package(FFMPEG REQUIRED)

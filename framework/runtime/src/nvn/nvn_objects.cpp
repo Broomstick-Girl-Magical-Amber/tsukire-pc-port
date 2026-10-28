@@ -7,6 +7,7 @@
 #include <cstring>
 #include <deque>
 #include <set>
+#include <unordered_map>  // AP_PACKAGED_LAYOUT
 
 #include "nvn.h"
 #include "nvn_ultrawide.h"
@@ -251,6 +252,42 @@ void BufferInvalidateMappedRange(CPU&) {}
 
 // ---- textures ---------------------------------------------------------------------------------------------------
 
+#ifdef NX_PACKAGED_LAYOUT_HLE
+// AP_PACKAGED_LAYOUT (apply_packaged_layout.py): the layout nn::gfx gives for a packaged (BNTX) texture, kept per
+// builder. The driver's getter only says "packaged" (1), so without this the block height is a fit (below), and a
+// texture tiled with another one (the 1432x328 BC7 of Tsukihime's translation patch: 16 GOBs, the fit says 8) comes
+// out in vertical stripes. BRTI +0x34: bits 0..2 = log2 of the block height in GOBs (docs/nvn/TILING.md).
+std::mutex g_packaged_lock;
+std::unordered_map<uint64_t, uint64_t> g_packaged_layout;  // builder -> the 8 layout bytes
+
+void TextureBuilderSetPackagedTextureLayout(CPU& c) {  // (NVNtextureBuilder*, const NVNpackagedTextureLayout*)
+    uint64_t builder = c.x[0], layout = c.x[1];
+    uint64_t v = layout >= kModuleBase && layout < kKernelBase + kKernelSize ? ld<uint64_t>(layout) : 0;
+    {
+        std::lock_guard lk(g_packaged_lock);
+        if (v) g_packaged_layout[builder] = v;
+        else g_packaged_layout.erase(builder);
+    }
+    driver(c, "nvnTextureBuilderSetPackagedTextureLayout", {builder, layout});
+}
+
+// Block height in GOBs from the layout given for `builder`; 0 if none (or NX_PACKAGED_LAYOUT=fit).
+uint32_t packaged_block_height(uint64_t builder, uint64_t& raw) {
+    static const bool fit_only = [] {
+        const char* e = std::getenv("NX_PACKAGED_LAYOUT");
+        return e && std::strcmp(e, "fit") == 0;
+    }();
+    raw = 0;
+    if (fit_only) return 0;
+    std::lock_guard lk(g_packaged_lock);
+    auto it = g_packaged_layout.find(builder);
+    if (it == g_packaged_layout.end()) return 0;
+    raw = it->second;
+    uint32_t log2 = uint32_t(raw & 7);
+    return log2 <= 4 ? 1u << log2 : 0;
+}
+#endif
+
 // NX_TRACE_TEXTURES=1 (or =<frame>: from that presented frame on) logs texture inits, finalizations and pool
 // registrations.
 bool trace_textures() {
@@ -317,6 +354,20 @@ void TextureInitialize(CPU& c) {  // NVNboolean (NVNtexture*, const NVNtextureBu
         uint32_t rows = (t.height + bh - 1) / bh, h = 1;
         while (h * 32 < rows * 3 && h < 16) h <<= 1;
         t.block_height_gobs = h;
+#ifdef NX_PACKAGED_LAYOUT_HLE
+        {   // AP_PACKAGED_LAYOUT: the game's own block height when it gave one
+            uint64_t raw = 0;
+            uint32_t given = packaged_block_height(builder, raw);
+            static std::atomic<uint32_t> differ{0}, without{0};
+            if (given && given != h && differ++ < 40)
+                log("nvn: packaged layout %016llx: texture %llx %ux%u format %#x uses block height %u (the fit said %u)",
+                    (unsigned long long)raw, (unsigned long long)guest, t.width, t.height, t.format, given, h);
+            if (!given && raw == 0 && without++ == 0)
+                log("nvn: a packaged texture without a layout from the game (%ux%u format %#x): block height fit %u",
+                    t.width, t.height, t.format, h);
+            if (given) t.block_height_gobs = given;
+        }
+#endif
     }
 
     // Swizzle: single-channel textures are often read through it (a font atlas in R8 read as alpha = R); without
@@ -655,6 +706,9 @@ NX_HLE("nvnMemoryPoolFinalize", MemoryPoolFinalize);
 NX_HLE("nvnMemoryPoolMap", MemoryPoolMap);
 NX_HLE("nvnMemoryPoolMapVirtual", MemoryPoolMapVirtual);
 NX_HLE("nvnTextureWriteTexels", TextureWriteTexels);
+#ifdef NX_PACKAGED_LAYOUT_HLE
+NX_HLE("nvnTextureBuilderSetPackagedTextureLayout", TextureBuilderSetPackagedTextureLayout);  // AP_PACKAGED_LAYOUT
+#endif
 NX_HLE("nvnTextureWriteTexelsStrided", TextureWriteTexelsStrided);
 NX_HLE("nvnTextureFlushTexels", TextureFlushTexels);
 NX_HLE("nvnMemoryPoolGetBufferAddress", MemoryPoolGetBufferAddress);

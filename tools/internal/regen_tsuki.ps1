@@ -5,9 +5,12 @@
 #
 # Recompiler options specific to Tsukihime (environment variables, only during this run):
 #   NX_RECOMP_JT_LSR=1  jump tables with an "lsr + cmp" check (apply_jt_lsr.py; crash main+9eba4)
+#   NX_RECOMP_JT_MOV=1  jump tables with the bound in a register (apply_jt_mov.py, made for the global): the base main has
+#                       none; the main of the updates of updates\ does (main+999e0, crash "call into the middle" main+99a2c)
 # After: cmake --build build\tsukihime
 # Paths relative to the script: <root>\tools\internal\regen_tsuki.ps1 -> the root is two folders up (or -Root <folder>).
-param([string[]]$Modules = @('main'), [string]$Root = '')
+# -MainNso <file>: recompiles main from that NSO instead of <data>\exefs\main (the main of a patch in mods\, recomp_tsukihime.ps1).
+param([string[]]$Modules = @('main'), [string]$Root = '', [string]$MainNso = '')
 
 $ErrorActionPreference = 'Stop'
 if (-not $Root) { $Root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot) }   # <root>\tools\internal\ -> <root>
@@ -30,19 +33,27 @@ if (Test-Path $cache) {
 if (-not (Select-String -Path (Join-Path $Framework 'recomp\analysis.py') -Pattern '_JT_LSR = ' -Quiet)) {
     throw 'recomp\analysis.py without apply_jt_lsr.py version 2: apply it first'
 }
+if (-not (Select-String -Path (Join-Path $Framework 'recomp\analysis.py') -Pattern '_JT_MOV = ' -Quiet)) {
+    throw 'recomp\analysis.py without apply_jt_mov.py: apply it first'
+}
 
 $prev = $env:NX_RECOMP_JT_LSR
 $env:NX_RECOMP_JT_LSR = '1'
+$prevJtMov = $env:NX_RECOMP_JT_MOV
+$env:NX_RECOMP_JT_MOV = '1'
 Push-Location $Framework
 try {
     foreach ($m in $Modules) {
         if (-not $Bases.ContainsKey($m)) { throw "unknown module: $m (known: $($Bases.Keys -join ', '))" }
-        Write-Host "== recomp $m (base $($Bases[$m]), NX_RECOMP_JT_LSR=1)"
-        & $Python -m recomp (Join-Path $ExeFS $m) (Join-Path $Gen $m) --name $m --base $Bases[$m]
+        Write-Host "== recomp $m (base $($Bases[$m]), NX_RECOMP_JT_LSR=1, NX_RECOMP_JT_MOV=1)"
+        $src = if ($m -eq 'main' -and $MainNso) { [IO.Path]::GetFullPath($MainNso) } else { Join-Path $ExeFS $m }
+        if ($src -ne (Join-Path $ExeFS $m)) { Write-Host "   main from $src" }
+        & $Python -m recomp $src (Join-Path $Gen $m) --name $m --base $Bases[$m]
         if ($LASTEXITCODE -ne 0) { throw "recomp $m failed ($LASTEXITCODE)" }
     }
 } finally {
     Pop-Location
     if ($null -eq $prev) { Remove-Item Env:NX_RECOMP_JT_LSR -ErrorAction SilentlyContinue } else { $env:NX_RECOMP_JT_LSR = $prev }
+    if ($null -eq $prevJtMov) { Remove-Item Env:NX_RECOMP_JT_MOV -ErrorAction SilentlyContinue } else { $env:NX_RECOMP_JT_MOV = $prevJtMov }
 }
 Write-Host 'Done. Now: cmake --build build\tsukihime'
