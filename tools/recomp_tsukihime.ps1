@@ -34,11 +34,12 @@
 # Proton. The tools are installed by tools/linux/install_requirements_linux.sh. Nothing changes on Windows.
 # Updates and mods: every <root>\updates\*.nsp (updates or patches, e.g. a translation; a name starting with _ is
 # skipped) of this edition is processed after step 3 by tools\internal\mods_nsp.py, without the base dump: the base
-# romfs is rebuilt from extract\romfs plus <data>\romfs_index.bin, made ONCE from the dump the first time there is an
-# .nsp (afterwards the dump is not needed). Its exefs goes to <data>\updates\<name>\ (only for the recompilation) and
-# the romfs files that differ from the base go to <root>\mods\<edition>\<name>\romfs. The exe reads every folder of
-# <root>\mods\<edition>\ (name order, the last one wins; _ skips it) before its own romfs (apply_romfs_mods.py), so
-# mods can also be copied there by hand, without recompiling. Once processed, the .nsp can be deleted: an update stays
+# romfs is rebuilt from extract\romfs plus <data>\romfs_index.bin, made ONCE from the dump: in step 2 whenever the dump
+# is at hand (so a later update never needs it), or else the first time there is an .nsp. Its exefs goes to
+# <data>\updates\<name>\ (only for the recompilation) and the romfs files that differ from the base go to
+# <root>\mods\<edition>\<name>\romfs. The exe reads every folder of <root>\mods\<edition>\ (name order, the last one
+# wins; _ skips it) before its own romfs (apply_romfs_mods.py), so mods can also be copied there by hand, without
+# recompiling. Once processed, the .nsp can be deleted: an update stays
 # while its folder mods\<edition>\<name> exists (rename it to _<name> to disable it, delete it to remove it; then
 # recompile). If an update changes main, steps 5-6 recompile main from it and its layer gets requires_main.txt (the
 # exe skips it if it was built from another main). Two active updates with different mains cannot be combined; any
@@ -676,6 +677,10 @@ function Step2 {
         Info "already extracted: $exefs and $romfs ($n files); -Replace to extract again"
         if ($n -ne $V.RomfsFiles) { Warn "romfs with $n files; today the $Edition edition has $($V.RomfsFiles)" }
         RemoveStage
+        if (-not (Test-Path -LiteralPath $RomfsIndex)) {
+            $dumps = @(); try { $dumps = @(FindInputs); CheckKeys } catch { $dumps = @() }   # no dump or no keys: later
+            if ($dumps.Count) { TryRomfsIndex $dumps }
+        }
         return
     }
     if ((Test-Path -LiteralPath $exefs) -and -not $Replace) { Fail "$exefs exists but the extraction is incomplete: check it or use -Replace" }
@@ -734,6 +739,7 @@ function Step2 {
     RemoveStage
     Info "extracted: $exefs and $romfs ($n files)"
     if ($n -ne $V.RomfsFiles) { Warn "romfs with $n files; today the $Edition edition has $($V.RomfsFiles)" }
+    TryRomfsIndex @($InputFile)
     foreach ($p in $previous) { Warn "the previous one was kept in $($p[1]) (delete it by hand whenever you want)" }
 }
 
@@ -771,6 +777,25 @@ function EnsureRomfsIndex {
         if ($LASTEXITCODE -ne 3) { Fail "mods_nsp.py index failed (code $LASTEXITCODE)" }
     }
     Fail "none of the .xci/.nsp of $Root is the $Edition edition: romfs_index.bin cannot be made (put your dump there once)"
+}
+
+# Step 2: while the dump is at hand the index is made, so a later update does not need the dump. It never fails the
+# step (EnsureRomfsIndex makes it later if this did not); an existing index is kept; a dump of the other edition
+# (mods_nsp.py code 3) is skipped.
+function TryRomfsIndex([string[]]$dumps) {
+    if (Test-Path -LiteralPath $RomfsIndex) { return }
+    $r = RunCapture $Python @('-c', 'import Crypto, lz4.block')
+    if ($r.Code -ne 0) { Warn 'romfs_index.bin not made (the project python lacks pycryptodome): an update will need the dump once'; return }
+    foreach ($d in $dumps) {
+        Info "making romfs_index.bin from $(Split-Path -Leaf $d) (afterwards updates do not need the dump)"
+        $t0 = Get-Date
+        & $Python $ModsPy index --keys $Keys --input $d --program-id (Hex16 $V.ProgramId) --base-romfs (Under $Data 'extract\romfs') --out $RomfsIndex
+        $code = $LASTEXITCODE
+        if ($code -eq 0) { Info ('romfs_index.bin made in {0:mm\:ss}' -f ((Get-Date) - $t0)); return }
+        if (Test-Path -LiteralPath $RomfsIndex) { Remove-Item -LiteralPath $RomfsIndex -Force }
+        if ($code -ne 3) { Warn "romfs_index.bin not made (mods_nsp.py index, code $code): an update will need the dump once"; return }
+    }
+    Warn "none of the dumps is the $Edition edition: romfs_index.bin not made (an update will need the dump once)"
 }
 
 # The NSO main compiles from: the one of the updates or the base one. Its SHA-256 goes to analysis\main_source.txt
