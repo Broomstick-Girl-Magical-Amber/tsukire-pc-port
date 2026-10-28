@@ -25,7 +25,7 @@ This project is a fork of [SuperMarioWonderRecomp](https://github.com/BelmanteGu
 
 - Automatic installation and build scripts for both Windows and Linux. You must provide your own game dump and keys: put them where the scripts look for them (`data/prod.keys` and the `.xci`/`.nsp` in the repository root) and the output is the `.exe`. See [Rebuild from scratch on Windows](#rebuild-from-scratch-on-windows) or [Rebuild on Linux and play with Proton](#rebuild-on-linux-and-play-with-proton) for more information.
 
-- Updates and community patches in .nsp format: drop them in updates\ and recompile. Only the changed files are extracted to mods\<edition>\, and the game is recompiled from the patch’s own executable when it has one. Tested with translation patches on the Japanese edition. See [Updates and patches](#updates-and-patches).
+- Community patches in .nsp format: drop them in updates\ and recompile. Only the changed files are extracted to mods\<edition>\, and the game is recompiled from the patch’s own executable when it has one. Tested with translation patches on the Japanese edition. See [Updates and patches](#updates-and-patches).
 
 - Save data is stored in `<root>/data/tsuki/user/save` for the Japanese edition and `<root>/data/tsuki_global/user/save` for the global edition. The `data/<edition>` folder is created by the recompilation process, and the `user/save` folder appears once the game runs and saves. Back it up before updating or rebuilding. Saves from an emulator or from a Nintendo Switch save data dump can be imported and were tested to work.
 
@@ -44,7 +44,6 @@ This project is a fork of [SuperMarioWonderRecomp](https://github.com/BelmanteGu
 **Known limitations**
 
 - You need a GPU and driver with **Vulkan 1.3** (including `dynamicRendering` and `synchronization2`). An older driver (for example Vulkan 1.2) crashes; **update your GPU drivers**. Without a GPU, software rendering (`llvmpipe`) works on Linux but is slow; a Windows virtual machine without a GPU showed a blank screen with audio.
-- Imported saves (from an emulator or a Switch save dump) load correctly, but their thumbnail for saved slots is missing until you save again.
 - Closing the window with the X button ends the process immediately, without waiting for the game to finish writing. Save from the in-game menu first. Once, a save started as a new game after such a close (cause not confirmed; it was restored from a copy), so a backup of your saves is cheap insurance.
 - Discord Rich Presence shows the wrong route only if you jump into the middle of a day of the other route, so the route cannot be detected (Eventually with some extra coding, can be detected)
 - The Linux build produces the same Windows `.exe`, which runs only under Proton or Wine. Plain Wine (without Proton) has broken audio: use Proton.
@@ -128,7 +127,7 @@ Some heroines and scenes. Hisui comes first by arbitrary choice.
    ```
    The final `.exe` is `<root>/framework/build/tsukihime/tsukihime.exe` (Japanese) or `<root>/framework/build/tsukihime_global/tsukihime_global.exe` (global).
 
-   Community patches and updates are also supported. See [Updates and patches](#updates-and-patches-experimental) for more details.
+   Community patches are also supported. See [Updates and patches](#updates-and-patches-experimental) for more details.
 
 
 
@@ -159,7 +158,7 @@ cp /path/to/your-dump.xci .
 bash tools/linux/recomp_linux.sh -Edition japan
 ```
 
-Community patches and updates are also supported. See [Updates and patches](#updates-and-patches-experimental) for more details, but not tested in Linux.
+Community patches are also supported. See [Updates and patches](#updates-and-patches-experimental) for more details, but not tested in Linux.
 
 Step 9 cross-compiles the **same Windows `.exe`** with `clang-cl` + `lld-link` against the Windows CRT/SDK fetched by `xwin`; it ends up in `framework/build/tsukihime/` or `framework/build/tsukihime_global/` exactly as on Windows. Long runs use `systemd-inhibit` when it works, so the machine does not suspend in the middle.
 
@@ -197,7 +196,7 @@ Without a GPU (a VM with `llvmpipe`) set `NX_GPU_HANG_MS` in the launch options,
 General support for official updates and community patches distributed as an installable `.nsp`. Tested so far only with translation patches for the Japanese edition. No updates or patches are distributed here.
 
 1. Create an `updates` folder in the repository root and copy the `.nsp` into it, as downloaded. Both editions can share the folder: each recompilation takes only the ones for its edition. A name starting with `_` is ignored.
-2. Run the recompilation again for that edition (`recomp_tsukihime.ps1 -Edition japan` or `global`, or `recomp_linux.sh` on Linux). Keep your base dump available the first time: an index of the base game is built once from it, and later updates no longer need it.
+2. Run the recompilation again for that edition (`recomp_tsukihime.ps1 -Edition japan` or `global`, or `recomp_linux.sh` on Linux). **Important: if you recompiled before update support existed and deleted your dump, put it back for this first update recompilation. After that you can delete it again.**
 3. Step 3 extracts only what the update changes. The changed game files go to `mods\<edition>\<name>\`. If the update brings its own executable, the game is recompiled from it. When it finishes, the `.nsp` can be deleted.
 
 - For turning one off, rename its folder in `mods\<edition>\` to `_<name>` and recompile. Delete the folder to remove it.
