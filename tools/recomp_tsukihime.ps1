@@ -140,6 +140,8 @@ $Markers = @(
     @('both', 'framework\runtime\src\nvn\nvn_vk.cpp', 'AP_VK_REQ', 'apply_vk_requirements.py', $false),
     @('both', 'framework\runtime\src\hle_fs.cpp', 'AP_ROMFS_MODS', 'apply_romfs_mods.py', $false),
     @('both', 'framework\games\tsukihime_common\tsukihime_common.cmake', 'AP_ROMFS_MODS', 'apply_romfs_mods.py', $false),
+    @('both', 'framework\runtime\src\nvn\nvn_objects.cpp', 'AP_PACKAGED_LAYOUT', 'apply_packaged_layout.py', $false),
+    @('both', 'framework\games\tsukihime_common\tsukihime_common.cmake', 'AP_PACKAGED_LAYOUT', 'apply_packaged_layout.py', $false),
     @('japan', 'framework\games\tsukihime\game.cmake', 'tsukihime_common/tsukihime_common.cmake', 'games\tsukihime_common (shared code, in the repo)', $false),
     @('japan', 'framework\games\tsukihime\game.cmake', 'NX_DEFAULT_ORIGIN_LOWER_LEFT', 'apply_origin_default.py', $false),
     @('japan', 'framework\games\tsukihime\game.cmake', 'NX_FIXED_ASPECT', 'apply_aspect.py', $false),
