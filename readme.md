@@ -21,7 +21,7 @@ This project is a fork of [SuperMarioWonderRecomp](https://github.com/BelmanteGu
 
 **Works**
 
-- The game is playable in both editions. Scenes from the middle of both the Arcueid and Ciel routes were tested in each edition, including playing the final scene. The games have not been played through in full, and not every scene was tested; of the "Teach Me, Ciel-sensei" sections, only some were tried.
+- The game is playable in both editions. Scenes from the middle of both the Arcueid and Ciel routes were tested in each edition, including playing the final scene. Both routes were also fast-forwarded from the prologue to their endings with no errors, but the game has not actually been played through in full, and a few scenes were not tested. All of the "Teach Me, Ciel-sensei" sections were tried.
 
 - Automatic installation and build scripts for both Windows and Linux. You must provide your own game dump and keys: put them where the scripts look for them (`data/prod.keys` and the `.xci`/`.nsp` in the repository root) and the output is the `.exe`. See [Rebuild from scratch on Windows](#rebuild-from-scratch-on-windows) or [Rebuild on Linux and play with Proton](#rebuild-on-linux-and-play-with-proton) for more information.
 
