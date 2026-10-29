@@ -20,6 +20,7 @@
 //   tambien los joysticks que SDL no reconoce como mando (se ignoran). NX_INPUT_TRACE=1: ademas GUID y ruta de cada
 //   mando y lo que tardo SDL_Init.
 #include "pad_sdl.h"
+#include "hud_glyphs.h"  // AP_HUD_GLYPHS
 
 #if defined(_WIN32)
 #ifndef NOMINMAX
@@ -135,11 +136,12 @@ public:
             break;
         case SDL_EVENT_GAMEPAD_ADDED: agregar(e.gdevice.which); break;
         case SDL_EVENT_GAMEPAD_REMOVED: quitar(e.gdevice.which); break;
-        case SDL_EVENT_GAMEPAD_BUTTON_DOWN: usar(e.gbutton.which); break;
+        case SDL_EVENT_GAMEPAD_BUTTON_DOWN: usar(e.gbutton.which), nota(e.gbutton.which); break;  // AP_HUD_GLYPHS
         case SDL_EVENT_GAMEPAD_AXIS_MOTION: {
             const int v = e.gaxis.value;
             const bool gat = e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER || e.gaxis.axis == SDL_GAMEPAD_AXIS_RIGHT_TRIGGER;
-            if (gat ? v > kGatilloActivo : (v > kStickActivo || v < -kStickActivo)) usar(e.gaxis.which);
+            if (gat ? v > kGatilloActivo : (v > kStickActivo || v < -kStickActivo))
+                usar(e.gaxis.which), nota(e.gaxis.which);  // AP_HUD_GLYPHS
             break;
         }
         default: break;
@@ -201,6 +203,27 @@ private:
             }
             return;
         }
+    }
+
+    // AP_HUD_GLYPHS: entrada real de este mando, para los iconos del HUD segun su tipo (por posicion; un mando
+    // generico o desconocido muestra los de Xbox).
+    void nota(SDL_JoystickID id) {
+#ifdef NX_HUD_GLYPHS
+        SDL_Gamepad* gp = buscar(id);
+        if (!gp) return;
+        switch (SDL_GetGamepadType(gp)) {
+        case SDL_GAMEPAD_TYPE_PS3:
+        case SDL_GAMEPAD_TYPE_PS4:
+        case SDL_GAMEPAD_TYPE_PS5: hud::note_input(hud::Device::kPs); break;
+        case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO:
+        case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_LEFT:
+        case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_RIGHT:
+        case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_PAIR: hud::note_input(hud::Device::kSwitch); break;
+        default: hud::note_input(hud::Device::kXbox); break;
+        }
+#else
+        (void)id;
+#endif
     }
 
     void usar(SDL_JoystickID id) {

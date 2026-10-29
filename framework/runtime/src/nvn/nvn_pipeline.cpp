@@ -539,6 +539,8 @@ bool sampled_ready(uint64_t texture) {
     if (t->dirty && !t->image->rendered) return g_not_ready[1]++, false;
     if (t->has_writes.load(std::memory_order_acquire)) return g_not_ready[2]++, false;  // no lock (nvn.h)
     const GpuImage& img = *t->image;
+    if (img.filter_tag && img.filter_generation != g_upload_filter_generation.load(std::memory_order_acquire))
+        return g_not_ready[1]++, false;  // AP_HUD_GLYPHS: new contents to take first (ensure_contents)
     bool ok = img.rendered ? img.layout == VK_IMAGE_LAYOUT_GENERAL
                            : img.uploaded && img.layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     if (!ok) g_not_ready[img.rendered ? 3 : !img.uploaded ? 4 : 5]++;
@@ -573,6 +575,24 @@ VkImageView attachment_view(GpuImage& img, uint32_t level, uint32_t layer, VkFor
     return v;
 }
 
+// AP_HUD_GLYPHS: a render target the game drew from a tagged texture takes the game's new contents (DerivedFilter).
+void rewrite_derived(VkCommandBuffer cb, GpuImage& img, uint64_t generation) {
+    img.filter_generation = generation;
+    DerivedFilter f = g_derived_filter.load(std::memory_order_acquire);
+    if (!f || img.layers != 1 || (img.format != VK_FORMAT_R8G8B8A8_SRGB && img.format != VK_FORMAT_R8G8B8A8_UNORM)) return;
+    std::vector<uint8_t> rgba;
+    if (!f(img.filter_tag, img.width, img.height, rgba) || rgba.size() != size_t(img.width) * img.height * 4) return;
+    VkImageLayout back = img.layout;
+    transition(cb, img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    Upload u = upload(rgba.data(), rgba.size(), 16);
+    VkBufferImageCopy r{};
+    r.bufferOffset = u.offset;
+    r.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    r.imageExtent = {img.width, img.height, 1};
+    p_vkCmdCopyBufferToImage(cb, u.buffer, img.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &r);
+    transition(cb, img, back != VK_IMAGE_LAYOUT_UNDEFINED ? back : VK_IMAGE_LAYOUT_GENERAL);
+}
+
 GpuImage* ensure_contents(VkCommandBuffer cb, uint64_t texture) {
     Texture* t = get<Texture>(texture);
     GpuImage* img = t ? image_of(texture) : nullptr;
@@ -582,6 +602,16 @@ GpuImage* ensure_contents(VkCommandBuffer cb, uint64_t texture) {
     if (dirty_hi <= dirty_lo) dirty_lo = 0, dirty_hi = UINT64_MAX;  // marked without a range: all of it
     static const bool reupload = std::getenv("NX_TEXELS_REUPLOAD") != nullptr;  // bisecting: the old way
     bool upload = !img->rendered && (!img->uploaded || (dirty && (!img->texels || reupload)));
+    // AP_HUD_GLYPHS: new contents asked for (a new generation): a tagged texture goes up again (the filter runs again),
+    // a derived render target is rewritten; whatever texture object samples the image now.
+    if (img->filter_tag) {
+        const uint64_t generation = g_upload_filter_generation.load(std::memory_order_acquire);
+        if (img->filter_generation != generation) {
+            if (!img->filter_derived && !img->rendered) upload = true;
+            else if (img->filter_derived && img->rendered) rewrite_derived(cb, *img, generation);
+            else img->filter_generation = generation;
+        }
+    }
     // A render target (COMPRESSIBLE, flag 0x8) the GPU never wrote through this image: its guest memory never holds
     // GPU output here (another target over the same memory left only stale data), so it starts cleared, not uploaded
     // (G3 cause 2, docs/nvn/DEBUG.md #50). NX_RT_UPLOAD=1: uploaded as before; NX_ALIAS_MAGENTA=1: cleared magenta.

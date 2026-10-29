@@ -242,6 +242,10 @@ The reference example is `framework/games/tsukihime_common/input.ini.example`: t
 
 The format is `<Npad button> = <key or button>, <another>` in `[teclado]`, `[mando]` and `[mouse]` sections. A section that is present replaces **all** the defaults of that device; delete it to get them back. Errors are written to the log with the line number and that entry is skipped.
 
+### Button icons
+
+The button icons and the controls follow the last device used: Xbox, PlayStation, Switch or keyboard. Pads follow the Nintendo layout by position, so the right-hand button shows B on Xbox and circle on PlayStation. The keyboard shows the first key `input.ini` gives each button. The icons are built by `recomp_tsukihime.ps1` from the packs in `utils\` (credits in `resources/HUD-LICENSES.md`); `NX_HUD_GLYPHS` fixes one set or turns it off.
+
 ### Environment variables
 
 Set the variable in the same console before launching the game. The variable only lasts for that console. In `cmd`:
@@ -273,6 +277,7 @@ Under Proton, put the variable in the Steam launch options instead (for example 
 | `NX_MOUSE=0` | Turn the mouse-as-touch off. |
 | `NX_DISCORD=0` | Turn Discord Rich Presence off. |
 | `NX_INPUT_TRACE=1` | Log input, to debug a remap. |
+| `NX_HUD_GLYPHS` | Button icons: `auto` (default, the last device used), `xbox`, `ps`, `switch`, `keyboard` (fixed) or `off`. |
 
 The global edition contains English, Japanese, Simplified Chinese and Traditional Chinese text; the Japanese edition contains Japanese.
 

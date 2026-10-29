@@ -9,6 +9,9 @@ target_sources(${NX_GAME} PRIVATE ${NX_TSUKI_COMMON_SOURCES})
 target_include_directories(${NX_GAME} PRIVATE "${NX_TSUKI_COMMON}")  # movie_core.h, input_tsuki.h
 # AP_PACKAGED_LAYOUT (apply_packaged_layout.py): block height of packaged (BNTX) textures from the game, not guessed
 target_compile_definitions(${NX_GAME} PRIVATE NX_PACKAGED_LAYOUT_HLE)
+# AP_HUD_GLYPHS (apply_hud_glyphs.py): button icons of the HUD follow the last device used (hud_glyphs.cpp);
+# its files go to <data root>/hud (tools/hud/build_hud_assets.py). NX_HUD_GLYPHS=off at run time turns it off.
+target_compile_definitions(${NX_GAME} PRIVATE NX_HUD_GLYPHS)
 # AP_ROMFS_MODS (apply_romfs_mods.py): romfs layers of <root>/mods/<edition>: mods copied by hand and the romfs of
 # the updates of <root>/updates (recomp_tsukihime.ps1)
 if(NX_GAME STREQUAL "tsukihime_global")

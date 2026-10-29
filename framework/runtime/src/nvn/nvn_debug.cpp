@@ -464,7 +464,8 @@ void debug_snapshot(VkCommandBuffer cb, GpuImage& img, uint64_t draw) {
     // height, VkFormat, then the texels): an RGBA8 blit rounds small floats to 0..2.
     static const bool raw = std::getenv("NX_SNAP_RAW") != nullptr;
     if (raw && (img.format == VK_FORMAT_R32_SFLOAT || img.format == VK_FORMAT_R16G16_SFLOAT ||
-                img.format == VK_FORMAT_R32_UINT || img.format == VK_FORMAT_R8G8B8A8_UNORM || wide)) {
+                img.format == VK_FORMAT_R32_UINT || img.format == VK_FORMAT_R8G8B8A8_UNORM ||
+                img.format == VK_FORMAT_R8G8B8A8_SRGB /* AP_HUD_GLYPHS: NX_HUD_DUMP */ || wide)) {
         VkBufferImageCopy r{};
         r.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
         r.imageOffset = {x0, y0, 0};

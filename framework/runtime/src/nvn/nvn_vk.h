@@ -21,6 +21,11 @@ struct GpuImage {
     VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
     bool rendered = false;  // written by the GPU: never re-uploaded from guest memory
     bool uploaded = false;  // filled from the texture's pool memory
+    // AP_HUD_GLYPHS: contents a game hook chose (nvn.h): its tag (0: none), whether this is a render target drawn
+    // from a tagged texture, and the generation they belong to
+    uint64_t filter_tag = 0;
+    bool filter_derived = false;
+    uint64_t filter_generation = 0;
     // Given texels by nvnTextureWriteTexels: those never reach guest memory here, so it is not uploaded from there
     // again (a pool flush over it wiped the light probes' direction map, docs/nvn/DEBUG.md #49).
     bool texels = false;

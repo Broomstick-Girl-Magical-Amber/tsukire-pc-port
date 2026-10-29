@@ -15,6 +15,10 @@ namespace nx::nvn {
 
 using namespace nx::vk;
 
+std::atomic<UploadFilter> g_upload_filter{nullptr};  // AP_HUD_GLYPHS (nvn.h)
+std::atomic<DerivedFilter> g_derived_filter{nullptr};
+std::atomic<uint64_t> g_upload_filter_generation{1};
+
 namespace {
 
 // R11G11B10F (NVN 0x3f) is stored as RGBA16F (nvn_format.cpp). Its channels are unsigned floats with half's 5-bit
@@ -225,6 +229,11 @@ void upload_texture(VkCommandBuffer cb, const Texture& t, GpuImage& img, uint64_
         log("nvn/vk: texture %ux%u format %#x: could not untile (%llu bytes)", img.width, img.height, t.format,
             (unsigned long long)t.storage_size);
         return;
+    }
+    if (UploadFilter f = g_upload_filter.load(std::memory_order_acquire)) {  // AP_HUD_GLYPHS: a game's own contents
+        img.filter_generation = g_upload_filter_generation.load(std::memory_order_acquire);
+        img.filter_tag = f(t, linear.data() + levels[0].offset, levels[0].layer_size);
+        img.filter_derived = false;
     }
     if (decode) {  // every level's blocks -> texels, tightly packed, then copied as an uncompressed image
         uint32_t tb = bc_decoded_bytes(t.format), slices = img.view_type == VK_IMAGE_VIEW_TYPE_3D ? layers : img.layers;

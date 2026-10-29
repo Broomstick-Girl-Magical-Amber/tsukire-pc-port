@@ -20,7 +20,8 @@
 #   6 recomp         regen_tsuki*.ps1 main, sdk -> gen\ (the previous gen\ is kept as gen.old)
 #   7 fonts          fonts\shared_0.ttf (Noto Sans JP, OFL license): from -Fonts, from <root>\resources\fonts\ (in the repo) or from the other edition
 #   8 shaders        tsuki_shaders_offline.py (romfs\shader + main) -> harness only for those without a .spv
-#   9 build          cmake -B (parameters of the existing CMakeCache) + cmake --build
+#   9 build          cmake -B (parameters of the existing CMakeCache) + cmake --build; then the HUD icons by device
+#                    (tools\hud\build_hud_assets.py -> <data>\hud; never fatal: without them the game keeps its icons)
 #  10 summary
 #
 # The build environment (dev.local.ps1, or tools\dev_env.ps1 if there is none) is loaded only when needed (step 0).
@@ -143,6 +144,10 @@ $Markers = @(
     @('both', 'framework\games\tsukihime_common\tsukihime_common.cmake', 'AP_ROMFS_MODS', 'apply_romfs_mods.py', $false),
     @('both', 'framework\runtime\src\nvn\nvn_objects.cpp', 'AP_PACKAGED_LAYOUT', 'apply_packaged_layout.py', $false),
     @('both', 'framework\games\tsukihime_common\tsukihime_common.cmake', 'AP_PACKAGED_LAYOUT', 'apply_packaged_layout.py', $false),
+    @('both', 'framework\games\tsukihime_common\hud_glyphs.cpp', 'AP_HUD_GLYPHS', 'hud_glyphs.cpp and hud_glyphs.h (in the repo)', $false),
+    @('both', 'framework\runtime\src\nvn\nvn_upload.cpp', 'AP_HUD_GLYPHS', 'apply_hud_glyphs.py', $false),
+    @('both', 'framework\games\tsukihime_common\input_tsuki.cpp', 'AP_HUD_GLYPHS', 'apply_hud_glyphs.py', $false),
+    @('both', 'framework\games\tsukihime_common\tsukihime_common.cmake', 'AP_HUD_GLYPHS', 'apply_hud_glyphs.py', $false),
     @('japan', 'framework\games\tsukihime\game.cmake', 'tsukihime_common/tsukihime_common.cmake', 'games\tsukihime_common (shared code, in the repo)', $false),
     @('japan', 'framework\games\tsukihime\game.cmake', 'NX_DEFAULT_ORIGIN_LOWER_LEFT', 'apply_origin_default.py', $false),
     @('japan', 'framework\games\tsukihime\game.cmake', 'NX_FIXED_ASPECT', 'apply_aspect.py', $false),
@@ -1126,6 +1131,18 @@ function VulkanView {
     return ($view -replace '\\', '/')
 }
 
+# HUD button icons by device (AP_HUD_GLYPHS, hud_glyphs.cpp): <data>\hud from the romfs and its mod layers (only hashes
+# of the game's atlas) and from the icon packs in utils\. Never fatal: without them the game keeps its own icons.
+function HudAssets {
+    $script = Under $Tools 'hud\build_hud_assets.py'
+    if (-not (Test-Path -LiteralPath $script)) { Warn "$script is missing: HUD icons by device skipped"; return }
+    Info 'HUD icons by device (tools\hud\build_hud_assets.py; the keyboard tiles take about a minute the first time)'
+    $r = RunCapture $Python @($script, '--edition', $Edition, '--root', $Root)
+    foreach ($l in $r.Output) { Info $l }
+    if ($r.Code -ne 0) { Warn "build_hud_assets.py failed (code $($r.Code)): the game keeps its own icons"; return }
+    $Summary['HUD'] = Under $Data 'hud'
+}
+
 function Step9 {
     $cache = Under $Build 'CMakeCache.txt'
     $gen = ((Under $Data 'gen') -replace '\\', '/')
@@ -1193,6 +1210,7 @@ function Step9 {
     $exe = Under $Build "$($V.Game).exe"
     if (-not (Test-Path -LiteralPath $exe)) { Fail "$exe does not appear" }
     $Summary['Exe'] = "$exe ($((Get-Item -LiteralPath $exe).LastWriteTime))"
+    HudAssets
 }
 
 function Step10 {

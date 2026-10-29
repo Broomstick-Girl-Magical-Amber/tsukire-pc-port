@@ -548,6 +548,26 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
         if (q) zero_draws_end(cb);
     }
     g_stats.done++;
+    // AP_HUD_GLYPHS: drawing a tagged texture into a target of its size (the game's cached copy) makes that target
+    // derived: it follows the game's hook from then on (rewrite_derived, nvn_pipeline.cpp).
+    if (t.color_count && t.colors[0])
+        for (const ResolvedTexture& r : g_textures.resolved) {
+            GpuImage* src = r.texture ? image_of(r.texture) : nullptr;
+            if (!src || !src->filter_tag || src->filter_derived) continue;
+            GpuImage* dst = image_of(t.colors[0]);
+            if (!dst || dst == src || dst->width != src->width || dst->height != src->height ||
+                (dst->filter_tag && !dst->filter_derived))
+                break;
+            // generation 0: rewritten at its first use (the game may have drawn the texture as it came from the romfs)
+            dst->filter_tag = src->filter_tag, dst->filter_derived = true, dst->filter_generation = 0;
+            static int derived = 0;
+            if (derived++ < 8)
+                log("nvn: render target %llx (%ux%u) drawn from a game-chosen texture (tag %016llx): it follows the game",
+                    (unsigned long long)t.colors[0], dst->width, dst->height, (unsigned long long)src->filter_tag);
+            static const bool dump = std::getenv("NX_HUD_DUMP") != nullptr;  // with NX_SNAP_RAW=1: frames/00000_d*.raw
+            if (dump && derived <= 8) draw_end_rendering(cb, 6), debug_snapshot(cb, *dst, 0xD0000000ull + derived);
+            break;
+        }
     g_pass_written |= ((1u << t.color_count) - 1) | (g_state.depth.depth_write || g_state.depth.stencil_test ? 1u << 8 : 0);
     // NX_SNAP_FS=<hash>,<hash>[@<first draw>]: also snapshot after draws with those fragment shaders (8 at most, or
     // NX_SNAP_FS_MAX).
