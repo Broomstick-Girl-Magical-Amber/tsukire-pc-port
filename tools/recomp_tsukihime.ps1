@@ -140,6 +140,7 @@ $Markers = @(
     @('both', 'framework\runtime\src\nvn\nvn_vk.cpp', 'AP_GPU_HANG', 'apply_gpu_hang.py', $false),
     @('both', 'framework\runtime\src\nvn\nvn_frames.cpp', 'AP_GPU_HANG', 'apply_gpu_hang.py', $false),
     @('both', 'framework\runtime\src\nvn\nvn_vk.cpp', 'AP_VK_REQ', 'apply_vk_requirements.py', $false),
+    @('both', 'framework\runtime\src\nvn\nvn_vk.cpp', 'AP_VK_FAIL', 'apply_vk_fail.py', $false),
     @('both', 'framework\runtime\src\hle_fs.cpp', 'AP_ROMFS_MODS', 'apply_romfs_mods.py', $false),
     @('both', 'framework\games\tsukihime_common\tsukihime_common.cmake', 'AP_ROMFS_MODS', 'apply_romfs_mods.py', $false),
     @('both', 'framework\runtime\src\nvn\nvn_objects.cpp', 'AP_PACKAGED_LAYOUT', 'apply_packaged_layout.py', $false),
