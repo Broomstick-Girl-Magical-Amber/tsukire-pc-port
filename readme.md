@@ -32,6 +32,25 @@ This project is a fork of [SuperMarioWonderRecomp](https://github.com/BelmanteGu
 - Tested on real hardware with Windows 10, Windows 11 and an Ubuntu Live ISO (Intel, AMD and NVIDIA GPUs), and on virtual machines with Windows 10 and an installed Ubuntu (both editions).
 
 - Xbox controller. PlayStation, Switch Pro and Joy-Con (first generation) controllers also work through SDL3 and were tested OK.
+
+- The button icons and the controls follow the last device used: Xbox, PlayStation, Switch or keyboard. Pads follow the Nintendo layout by position, so the right-hand button shows B on Xbox and circle on PlayStation. The keyboard shows the first key `input.ini` gives each button. The icons are built by `recomp_tsukihime.ps1` from the packs in `utils\` (credits in `resources/HUD-LICENSES.md`); `NX_HUD_GLYPHS` fixes one set or turns it off.
+
+  **Keyboard Buttons**
+    <p align="left">
+      <img src="./media/keyboard_layout.png" width="60%" />
+    </p>
+
+  **PlayStation Buttons**
+    <p align="left">
+      <img src="./media/playstation_layout.png" width="60%" />
+    </p>
+    
+  **Xbox Buttons**
+    <p align="left">
+      <img src="./media/xbox_layout.png" width="60%" />
+    </p>
+
+
 - Mouse as touch screen (click = tap, drag = held tap).
 - Keyboard and mouse with a Fate/stay night-style layout by default, and remapping of keyboard, controller and mouse with `input.ini`. A commented example is in `<root>/framework/games/tsukihime_common/input.ini.example`. **[See Controls section for more details](#Controls)**
 - Fixed 16:9 picture with black bars; F11 / Alt+Enter fullscreen.
@@ -137,7 +156,7 @@ The Linux scripts are thin wrappers that bring PowerShell 7 and run the same scr
 
 ```bash
 # Install if you don't have it
-sudo apt install curl tar coreutils
+sudo apt install curl tar coreutils git
 
 # Skip this if you already cloned the repo
 git clone https://github.com/Broomstick-Girl-Magical-Amber/tsukire-pc-port.git && cd tsukire-pc-port
@@ -241,10 +260,6 @@ Defaults. The keyboard and mouse follow the layout of *Fate/stay night [Realta N
 The reference example is `framework/games/tsukihime_common/input.ini.example`: the same keyboard and mouse layout as the defaults above, commented in English, to use as a starting point. Copy it as `input.ini` next to the `.exe`, or into each edition's data folder (`data\tsuki` and `data\tsuki_global`), or point `NX_INPUT_INI` at any file. It has no `[mando]` section, so the controller keeps its default mapping.
 
 The format is `<Npad button> = <key or button>, <another>` in `[teclado]`, `[mando]` and `[mouse]` sections. A section that is present replaces **all** the defaults of that device; delete it to get them back. Errors are written to the log with the line number and that entry is skipped.
-
-### Button icons
-
-The button icons and the controls follow the last device used: Xbox, PlayStation, Switch or keyboard. Pads follow the Nintendo layout by position, so the right-hand button shows B on Xbox and circle on PlayStation. The keyboard shows the first key `input.ini` gives each button. The icons are built by `recomp_tsukihime.ps1` from the packs in `utils\` (credits in `resources/HUD-LICENSES.md`); `NX_HUD_GLYPHS` fixes one set or turns it off.
 
 ### Environment variables
 
