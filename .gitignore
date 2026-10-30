@@ -52,6 +52,89 @@
 # personal (paths of one PC): never in the repo
 /tools/dev.local.ps1
 
+# ---- HUD button icons by device (AP_HUD_GLYPHS) ----
+# tools\hud: the scripts recomp_tsukihime.ps1 runs (build_hud_assets.py and what it imports; slice_sheet.py, which
+# made utils\hud_sliced from the Figma sheets, stays local). utils\: only the icons those scripts read (credits in
+# resources\HUD-LICENSES.md): the Xbox and PlayStation slices the atlases and the controls table use, and the filled
+# keyboard keys input.ini can name. Everything else there (source sheets, mouse icons, previews, outputs) stays local.
+!/tools/hud/
+/tools/hud/*
+!/tools/hud/*.py
+/tools/hud/slice_sheet.py
+!/framework/games/tsukihime_common/hud_glyphs.cpp
+!/framework/games/tsukihime_common/hud_glyphs.h
+!/utils/
+/utils/*
+!/utils/hud_sliced/
+/utils/hud_sliced/*
+!/utils/hud_sliced/xbox/
+/utils/hud_sliced/xbox/*
+!/utils/hud_sliced/xbox/xbox_r00_c04.png
+!/utils/hud_sliced/xbox/xbox_r00_c05.png
+!/utils/hud_sliced/xbox/xbox_r00_c06.png
+!/utils/hud_sliced/xbox/xbox_r00_c07.png
+!/utils/hud_sliced/xbox/xbox_r01_c00.png
+!/utils/hud_sliced/xbox/xbox_r01_c01.png
+!/utils/hud_sliced/xbox/xbox_r01_c02.png
+!/utils/hud_sliced/xbox/xbox_r01_c03.png
+!/utils/hud_sliced/xbox/xbox_r02_c00.png
+!/utils/hud_sliced/xbox/xbox_r02_c01.png
+!/utils/hud_sliced/xbox/xbox_r02_c02.png
+!/utils/hud_sliced/xbox/xbox_r02_c03.png
+!/utils/hud_sliced/xbox/xbox_r02_c04.png
+!/utils/hud_sliced/xbox/xbox_r03_c02.png
+!/utils/hud_sliced/xbox/xbox_r03_c03.png
+!/utils/hud_sliced/xbox/xbox_r04_c02.png
+!/utils/hud_sliced/xbox/xbox_r05_c00.png
+!/utils/hud_sliced/ps/
+/utils/hud_sliced/ps/*
+!/utils/hud_sliced/ps/ps_r01_c00.png
+!/utils/hud_sliced/ps/ps_r01_c01.png
+!/utils/hud_sliced/ps/ps_r01_c02.png
+!/utils/hud_sliced/ps/ps_r01_c03.png
+!/utils/hud_sliced/ps/ps_r01_c10.png
+!/utils/hud_sliced/ps/ps_r02_c04.png
+!/utils/hud_sliced/ps/ps_r02_c05.png
+!/utils/hud_sliced/ps/ps_r02_c06.png
+!/utils/hud_sliced/ps/ps_r02_c07.png
+!/utils/hud_sliced/ps/ps_r02_c10.png
+!/utils/hud_sliced/ps/ps_r03_c00.png
+!/utils/hud_sliced/ps/ps_r03_c01.png
+!/utils/hud_sliced/ps/ps_r03_c04.png
+!/utils/hud_sliced/ps/ps_r03_c05.png
+!/utils/hud_sliced/ps/ps_r03_c09.png
+!/utils/hud_sliced/ps/ps_r04_c03.png
+!/utils/hud_sliced/ps/ps_r04_c08.png
+!/utils/KeyboardButtons/
+/utils/KeyboardButtons/*
+!/utils/KeyboardButtons/keyboard-input-icons/
+/utils/KeyboardButtons/keyboard-input-icons/*
+!/utils/KeyboardButtons/keyboard-input-icons/key-[0-9a-z].png
+!/utils/KeyboardButtons/keyboard-input-icons/key-f[0-9].png
+!/utils/KeyboardButtons/keyboard-input-icons/key-f1[0-2].png
+!/utils/KeyboardButtons/keyboard-input-icons/key-arrow-*.png
+!/utils/KeyboardButtons/keyboard-input-icons/key-alt.png
+!/utils/KeyboardButtons/keyboard-input-icons/key-backspace.png
+!/utils/KeyboardButtons/keyboard-input-icons/key-comma.png
+!/utils/KeyboardButtons/keyboard-input-icons/key-ctrl.png
+!/utils/KeyboardButtons/keyboard-input-icons/key-del.png
+!/utils/KeyboardButtons/keyboard-input-icons/key-dot.png
+!/utils/KeyboardButtons/keyboard-input-icons/key-end.png
+!/utils/KeyboardButtons/keyboard-input-icons/key-enter.png
+!/utils/KeyboardButtons/keyboard-input-icons/key-esc.png
+!/utils/KeyboardButtons/keyboard-input-icons/key-home.png
+!/utils/KeyboardButtons/keyboard-input-icons/key-ins.png
+!/utils/KeyboardButtons/keyboard-input-icons/key-pgdn.png
+!/utils/KeyboardButtons/keyboard-input-icons/key-pgup.png
+!/utils/KeyboardButtons/keyboard-input-icons/key-shift.png
+!/utils/KeyboardButtons/keyboard-input-icons/key-space.png
+!/utils/KeyboardButtons/keyboard-input-icons/key-tab.png
+!/utils/KeyboardButtons/keyboard-input-icons/key-keyboard-arrows.png
+!/utils/KeyboardButtons/keyboard-input-icons/key-keyboard-wasd.png
+/utils/KeyboardButtons/keyboard-input-icons/*-outlined.png
+# a local diagnostic (apply_packaged_layout.py mentions it), not used by recomp_tsukihime.ps1
+/tools/patches/diag_packaged_layout.py
+
 # ---- safety net (also applies inside what is allowed) ----
 # keys, dumps and Switch containers
 *.keys
@@ -96,3 +179,4 @@ __pycache__/
 /resources/fonts/*
 !/resources/fonts/shared_0.ttf
 !/resources/fonts/*.txt
+!/resources/HUD-LICENSES.md

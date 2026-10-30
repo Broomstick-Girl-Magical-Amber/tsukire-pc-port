@@ -28,6 +28,7 @@
 #include <nx/runtime.h>
 
 #include "input_tsuki.h"
+#include "hud_glyphs.h"  // AP_HUD_GLYPHS
 #include "platform.h"
 
 namespace nx {
@@ -107,6 +108,18 @@ void mouse_pad(plat::PadState& p) {
         for (int k = 0; k < 3; k++) seen[k] = ptr.downs[k], until[k] = 0;
         wheel_used = ptr.wheel;
     }
+#ifdef NX_HUD_GLYPHS
+    {   // AP_HUD_GLYPHS: un clic de cualquier boton (tambien el tactil) o la rueda es entrada del teclado (el mouse
+        // muestra los iconos del teclado); moverlo no cuenta.
+        static uint32_t hud_downs[3] = {ptr.downs[0], ptr.downs[1], ptr.downs[2]};
+        static int32_t hud_wheel = ptr.wheel;
+        if (ptr.downs[0] != hud_downs[0] || ptr.downs[1] != hud_downs[1] || ptr.downs[2] != hud_downs[2] ||
+            ptr.wheel != hud_wheel)
+            tsuki::hud::note_input(tsuki::hud::Device::kKeyboard);
+        for (int k = 0; k < 3; k++) hud_downs[k] = ptr.downs[k];
+        hud_wheel = ptr.wheel;
+    }
+#endif
     // Derecho y medio: apretados mientras se mantienen, y al menos 80 ms desde el clic (un clic mas corto que un
     // frame igual se ve).
     for (int k = 1; k < 3; k++) {

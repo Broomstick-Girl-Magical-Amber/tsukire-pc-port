@@ -29,4 +29,8 @@ enum MouseSource { kMouseRight, kMouseMiddle, kWheelUp, kWheelDown, kMouseSource
 // el de siempre (derecho = B, rueda = stick derecho arriba/abajo, medio nada).
 const Target& mouse_target(MouseSource s);
 
+// AP_HUD_GLYPHS: la primera tecla (codigo VK de Windows) que input.ini, o el mapeo por defecto, le da a ese boton
+// del Npad (el mismo nombre que en input.ini: A, UP, SUP...); 0 si ninguna. Para los iconos del HUD (hud_glyphs.cpp).
+int first_key(const std::string& npad_name);
+
 }  // namespace nx::tsuki

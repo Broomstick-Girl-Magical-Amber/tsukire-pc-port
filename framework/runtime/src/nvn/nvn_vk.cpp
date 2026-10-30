@@ -23,6 +23,11 @@
 #include "nvn_vk.h"
 #include "platform.h"
 
+#include <cwchar>  // AP_VK_FAIL (apply_vk_fail.py)
+#if defined(_WIN32) && !defined(_WINUSER_)
+extern "C" __declspec(dllimport) int __stdcall MessageBoxW(void*, const wchar_t*, const wchar_t*, unsigned);
+#endif
+
 #include <nx/game.h>
 
 #if defined(NX_VK_REQUIRE_13) && defined(_WIN32) && !defined(_WINUSER_)  // AP_VK_REQ: el aviso, sin <windows.h>
@@ -111,6 +116,59 @@ bool has_extension(const std::vector<VkExtensionProperties>& list, const char* n
     return false;
 }
 
+// AP_VK_FAIL (apply_vk_fail.py): Vulkan cannot be used. Log, stderr, a MessageBox (Windows, Wine/Proton included)
+// and exit code 6, instead of a blank window with the audio playing. NX_VK_FAKE_FAIL=loader|instance|gpu|device
+// forces each failure (tests).
+int g_surface_result = 0;  // the VkResult of the last make_surface() failure
+
+bool vk_fake(const char* what) {
+    const char* e = std::getenv("NX_VK_FAKE_FAIL");
+    return e && std::strcmp(e, what) == 0;
+}
+
+const char* vk_result_name(int r) {
+    switch (r) {
+        case 0: return "VK_SUCCESS";
+        case -1: return "VK_ERROR_OUT_OF_HOST_MEMORY";
+        case -2: return "VK_ERROR_OUT_OF_DEVICE_MEMORY";
+        case -3: return "VK_ERROR_INITIALIZATION_FAILED";
+        case -4: return "VK_ERROR_DEVICE_LOST";
+        case -5: return "VK_ERROR_MEMORY_MAP_FAILED";
+        case -6: return "VK_ERROR_LAYER_NOT_PRESENT";
+        case -7: return "VK_ERROR_EXTENSION_NOT_PRESENT";
+        case -8: return "VK_ERROR_FEATURE_NOT_PRESENT";
+        case -9: return "VK_ERROR_INCOMPATIBLE_DRIVER";
+        case -1000000000: return "VK_ERROR_SURFACE_LOST_KHR";
+        case -1000000001: return "VK_ERROR_NATIVE_WINDOW_IN_USE_KHR";
+        default: return "VkResult";
+    }
+}
+
+// tag: short text for the log; what: what happened, for the box (English). has_result: result is a VkResult.
+[[noreturn]] void vk_unusable(const char* tag, bool has_result, int result, [[maybe_unused]] const wchar_t* what) {
+    char res[96] = "";
+    if (has_result) std::snprintf(res, sizeof res, " (VkResult %d, %s)", result, vk_result_name(result));
+    log("nvn/vk: Vulkan cannot be used: %s%s. Install or update the GPU driver. Stopping.", tag, res);
+    std::fprintf(stderr, "nvn/vk: Vulkan cannot be used: %s%s. Install or update the GPU driver.\n", tag, res);
+    std::fflush(stderr);
+#if defined(_WIN32)
+    wchar_t rw[96] = L"";
+    if (has_result) std::swprintf(rw, sizeof rw / sizeof rw[0], L"VkResult: %d (%hs)\n", result, vk_result_name(result));
+    wchar_t msg[2048];
+    std::swprintf(msg, sizeof msg / sizeof msg[0],
+                  L"The game needs Vulkan to draw, and it cannot be used.\n\n"
+                  L"%ls\n%ls\n"
+                  L"What to do: install or update the GPU driver from the manufacturer's site (Intel: Intel Driver & "
+                  L"Support Assistant; AMD: Adrenalin; NVIDIA: GeForce/Studio), not from Windows Update, then start the "
+                  L"game again. On Linux (Proton): install your distribution's Vulkan drivers.\n\n"
+                  L"Details: nx.log",
+                  what, rw);
+    // MB_ICONERROR | MB_SETFOREGROUND | MB_TOPMOST: not hidden behind the game window
+    ::MessageBoxW(nullptr, msg, L"Vulkan unavailable", 0x10 | 0x10000 | 0x40000);
+#endif
+    _exit(6);
+}
+
 void* g_gipa = nullptr;  // vkGetInstanceProcAddr, for surfaces made later (make_surface)
 bool make_surface();
 
@@ -179,9 +237,11 @@ bool init() {
     if (g_ready || g_failed) return g_ready;
     g_failed = true;  // until everything below succeeds
     auto gipa = reinterpret_cast<PFN_vkGetInstanceProcAddr>(plat::vulkan_get_instance_proc_addr());
+    if (vk_fake("loader")) gipa = nullptr;  // AP_VK_FAIL
     if (!gipa) {
         log("nvn/vk: no Vulkan loader");
-        return false;
+        vk_unusable("the Vulkan loader (vulkan-1.dll) could not be loaded", false, 0,
+                    L"vulkan-1.dll (the Vulkan loader) could not be loaded: no Vulkan driver is installed.");
     }
     for (size_t k = 0; k < g_entry_count; k++) *g_entries[k].pfn = gipa(nullptr, g_entries[k].name);
     p_enum_instance_ext = reinterpret_cast<PFN_vkEnumerateInstanceExtensionProperties>(
@@ -204,21 +264,29 @@ bool init() {
     ici.pApplicationInfo = &app;
     ici.enabledExtensionCount = uint32_t(exts.size());
     ici.ppEnabledExtensionNames = exts.data();
-    if (!check(p_create_instance(&ici, nullptr, &g_instance), "vkCreateInstance")) return false;
+    {   // AP_VK_FAIL
+        const VkResult ri = vk_fake("instance") ? VK_ERROR_INCOMPATIBLE_DRIVER
+                                                : p_create_instance(&ici, nullptr, &g_instance);
+        if (!check(ri, "vkCreateInstance"))
+            vk_unusable("vkCreateInstance failed", true, int(ri),
+                        L"The Vulkan instance could not be created (no Vulkan driver, or an incompatible one).");
+    }
     for (size_t k = 0; k < g_entry_count; k++)
         if (auto p = gipa(g_instance, g_entries[k].name)) *g_entries[k].pfn = p;
     p_enum_physical = reinterpret_cast<PFN_vkEnumeratePhysicalDevices>(gipa(g_instance, "vkEnumeratePhysicalDevices"));
     p_create_device = reinterpret_cast<PFN_vkCreateDevice>(gipa(g_instance, "vkCreateDevice"));
 
     n = 0;
-    p_enum_physical(g_instance, &n, nullptr);
+    const VkResult enum_r = p_enum_physical(g_instance, &n, nullptr);  // AP_VK_FAIL
     std::vector<VkPhysicalDevice> gpus(n);
     p_enum_physical(g_instance, &n, gpus.data());
     gpus.resize(n);
     g_physical = pick_physical_device(gpus);  // NX_GPU, default: the first discrete GPU (nvn_gpu_pick.cpp)
+    if (vk_fake("gpu")) g_physical = VK_NULL_HANDLE;  // AP_VK_FAIL
     if (!g_physical) {
         log("nvn/vk: no GPU");
-        return false;
+        vk_unusable("no Vulkan GPU found", true, int(enum_r),
+                    L"No GPU with Vulkan support was found.");
     }
 #ifdef NX_VK_REQUIRE_13
     g_physical = vk_req_pick(gpus, g_physical);  // AP_VK_REQ: Vulkan 1.3, o un aviso y la salida
@@ -233,7 +301,9 @@ bool init() {
         plat::request_performance_profile();
 
     g_gipa = reinterpret_cast<void*>(gipa);
-    if (!make_surface()) return false;
+    if (!make_surface())
+        vk_unusable("the window surface could not be created", true, g_surface_result,  // AP_VK_FAIL
+                    L"The Vulkan surface for the game window could not be created.");
 
     p_vkGetPhysicalDeviceQueueFamilyProperties(g_physical, &n, nullptr);
     std::vector<VkQueueFamilyProperties> families(n);
@@ -249,7 +319,8 @@ bool init() {
     }
     if (g_family == UINT32_MAX) {
         log("nvn/vk: no graphics + present queue");
-        return false;
+        vk_unusable("no queue family can draw and present", false, 0,  // AP_VK_FAIL
+                    L"The chosen GPU cannot draw and present to the game window.");
     }
 
     p_vkEnumerateDeviceExtensionProperties(g_physical, nullptr, &n, nullptr);
@@ -317,7 +388,13 @@ bool init() {
     dci.enabledExtensionCount = uint32_t(dexts.size());
     dci.ppEnabledExtensionNames = dexts.data();
     dci.pNext = &features;
-    if (!check(p_create_device(g_physical, &dci, nullptr, &g_device), "vkCreateDevice")) return false;
+    {   // AP_VK_FAIL
+        const VkResult rd = vk_fake("device") ? VK_ERROR_INITIALIZATION_FAILED
+                                               : p_create_device(g_physical, &dci, nullptr, &g_device);
+        if (!check(rd, "vkCreateDevice"))
+            vk_unusable("vkCreateDevice failed", true, int(rd),
+                        L"The Vulkan device could not be created on the GPU (incomplete or faulty driver).");
+    }
     p_vkGetDeviceQueue(g_device, g_family, 0, &g_queue);
 
     VkCommandPoolCreateInfo pci{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
@@ -365,7 +442,11 @@ bool make_surface() {
     g_window = plat::create_window();  // waits for a window (Android); the generation is read once it is there
     g_window_gen = plat::window_generation();
     uint64_t surface = 0;
-    if (!check(VkResult(plat::vulkan_create_surface(g_instance, g_window, &surface, g_gipa)), "surface")) return false;
+    const VkResult sr = VkResult(plat::vulkan_create_surface(g_instance, g_window, &surface, g_gipa));  // AP_VK_FAIL
+    if (!check(sr, "surface")) {
+        g_surface_result = int(sr);
+        return false;
+    }
     g_surface = reinterpret_cast<VkSurfaceKHR>(surface);
     uint32_t n = 0;
     p_vkGetPhysicalDeviceSurfaceFormatsKHR(g_physical, g_surface, &n, nullptr);

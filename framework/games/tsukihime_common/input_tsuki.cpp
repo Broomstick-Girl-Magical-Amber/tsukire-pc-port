@@ -31,6 +31,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
+#include <cstring>  // AP_HUD_GLYPHS
 #include <filesystem>
 #include <fstream>
 #include <mutex>
@@ -41,6 +42,7 @@
 
 #include "input_tsuki.h"
 #include "pad_sdl.h"  // AP_SDL_PAD
+#include "hud_glyphs.h"  // AP_HUD_GLYPHS
 #include "platform.h"
 
 #if defined(_WIN32)
@@ -427,6 +429,16 @@ const Config& config() {
 
 const Target& mouse_target(MouseSource s) { return config().mouse[s]; }
 
+// AP_HUD_GLYPHS: la primera linea de [teclado] (en orden) cuyo boton es exactamente ese.
+int first_key(const std::string& npad_name) {
+    Target want;
+    if (!parse_target(npad_name, want)) return 0;
+    for (const KeyBind& k : config().keys)
+        if (k.t.bits == want.bits && k.t.lx == want.lx && k.t.ly == want.ly && k.t.rx == want.rx && k.t.ry == want.ry)
+            return k.vk;
+    return 0;
+}
+
 // ---- lectura (Windows) -----------------------------------------------------------------------------------------
 #if defined(_WIN32)
 namespace {
@@ -487,6 +499,17 @@ bool leer_mando(MandoLeido& m) {
     }
     XINPUT_GAMEPAD g{};
     if (!read_xinput(g)) return false;
+#ifdef NX_HUD_GLYPHS
+    {   // AP_HUD_GLYPHS: un boton nuevo, o un stick o gatillo pasado la mitad, es entrada real del mando (Xbox)
+        static uint16_t antes = 0;
+        const uint16_t nuevos = uint16_t(g.wButtons & ~antes);
+        antes = g.wButtons;
+        auto mitad = [](int v) { return v > 16384 || v < -16384; };
+        if (nuevos || mitad(g.sThumbLX) || mitad(g.sThumbLY) || mitad(g.sThumbRX) || mitad(g.sThumbRY) ||
+            g.bLeftTrigger > 100 || g.bRightTrigger > 100)
+            hud::note_input(hud::Device::kXbox);
+    }
+#endif
     m.held = g.wButtons | (g.bLeftTrigger > 100 ? kSrcLT : 0) | (g.bRightTrigger > 100 ? kSrcRT : 0);
     m.lx = g.sThumbLX, m.ly = g.sThumbLY, m.rx = g.sThumbRX, m.ry = g.sThumbRY;
     return true;
@@ -501,10 +524,26 @@ void tsuki_pad_source(plat::PadState& p) {
         for (const PadBind& b : c.pad)
             if (g.held & b.mask) press(p, b.t);
     }
+#ifdef NX_HUD_GLYPHS
+    // AP_HUD_GLYPHS: una tecla asignada que se aprieta ahora (no mientras se mantiene) es entrada del teclado
+    static uint8_t teclas_antes[256];
+    uint8_t teclas_ahora[256] = {};
+    struct Guardar {
+        uint8_t* a;
+        const uint8_t* b;
+        ~Guardar() { std::memcpy(a, b, 256); }
+    } guardar{teclas_antes, teclas_ahora};
+#endif
     if (g_window && GetForegroundWindow() == g_window) {
         const bool alt = GetAsyncKeyState(kVkMenu) & 0x8000;  // Alt+Enter: pantalla completa, no el boton de Enter
         for (const KeyBind& k : c.keys)
-            if (!(alt && k.vk == kVkReturn) && (GetAsyncKeyState(k.vk) & 0x8000)) press(p, k.t);
+            if (!(alt && k.vk == kVkReturn) && (GetAsyncKeyState(k.vk) & 0x8000)) {
+                press(p, k.t);
+#ifdef NX_HUD_GLYPHS
+                if (!(teclas_antes[k.vk & 0xFF] & 1)) hud::note_input(hud::Device::kKeyboard);  // AP_HUD_GLYPHS
+                teclas_ahora[k.vk & 0xFF] = 1;
+#endif
+            }
     }
 }
 

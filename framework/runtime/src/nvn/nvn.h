@@ -227,6 +227,21 @@ struct Texture : Object {
     ~Texture();  // nvn_vk.cpp: the image is freed once the GPU is done with it
 };
 
+// AP_HUD_GLYPHS (apply_hud_glyphs.py): a game may choose the contents of some of its textures (Tsukihime swaps its
+// button icon atlas for the last device used).
+// UploadFilter: called on the thread that uploads, for every block-linear texture, with layer 0 of level 0 untiled
+// (rows of whole blocks, tightly packed, `size` bytes); what it leaves there goes to the image. Returns a tag (0: not
+// the game's; it must return at once for those). The image keeps the tag and the generation it went up with.
+// DerivedFilter: a render target the game drew from a tagged texture (same size: a cached copy) asks for its contents
+// as RGBA8 rows, in the target's own encoding; false leaves it as it is.
+// Bumping g_upload_filter_generation makes every tagged image and derived target ask again at its next use.
+// Null hooks (the default): nothing changes.
+using UploadFilter = uint64_t (*)(const Texture& t, uint8_t* level0, uint64_t size);
+using DerivedFilter = bool (*)(uint64_t tag, uint32_t width, uint32_t height, std::vector<uint8_t>& rgba);
+extern std::atomic<UploadFilter> g_upload_filter;
+extern std::atomic<DerivedFilter> g_derived_filter;
+extern std::atomic<uint64_t> g_upload_filter_generation;
+
 struct Window : Object {
     std::vector<uint64_t> textures;  // guest NVNtexture*
     int active = 0, next = 0, interval = 1;
