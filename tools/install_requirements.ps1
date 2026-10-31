@@ -9,6 +9,10 @@
 #   .\install_requirements.ps1 -Check                  # only checks: installs nothing, clones nothing, creates nothing
 #   .\install_requirements.ps1 -From 5                 # resume (each step checks its own part again)
 #   .\install_requirements.ps1 -CrossRecomp            # at the end, recomp_tsukihime.ps1 -From 0 -To 0 of the chosen editions
+#   .\install_requirements.ps1 -Recomp -Edition global # AP_INSTALL_FLOW: tools + recompile that edition in ONE run
+#       checks keys + dump first (read only), extracts and translates shaders BEFORE vcpkg, builds after it;
+#       needs -Edition global|japan|both (one dump per edition in the root, or -InputFile / -Keys as in recomp_tsukihime.ps1)
+#   Every run prints the time of each step and appends it to <root>\_prepare\step_times.log
 #   .\install_requirements.ps1 -Edition global         # only one edition (global | japan | both): space, cross check and summary
 #   .\install_requirements.ps1 -VcpkgCache D:\vcpkgbin # vcpkg binary cache (another copy of %LOCALAPPDATA%\vcpkg\archives)
 #
@@ -19,7 +23,8 @@
 #   2 user           Python 3.12 and Ninja (no administrator)
 #   3 repo           checks the already cloned port repo (origin, branch, uncommitted changes) and that framework\ is inside
 #   4 vcpkg          clone at the reference commit + bootstrap
-#   5 libraries      vcpkg install ffmpeg opus libjpeg-turbo libpng zlib sdl3 (x64-windows Release only; the longest)
+#   5 libraries      prebuilt FFmpeg 9.0 LGPL from BtbN (fixed SHA-256, to _prepare\ffmpeg; AP_FFMPEG_PREBUILT) and
+#                    vcpkg install opus libjpeg-turbo libpng zlib sdl3 (x64-windows Release only)
 #   6 venv           framework\private\venv with tools\requirements.txt (exact versions)
 #   7 nstool         tools\nstool.exe 1.9.2 (fixed SHA-256)
 #   8 ryubing        private\third_party\ryubing (Codeberg tarball, verified tree) + spirv_harness
@@ -40,6 +45,9 @@ param(
     [switch]$Check,
     [switch]$NonInteractive,
     [switch]$CrossRecomp,
+    [switch]$Recomp,
+    [string]$InputFile = '',
+    [string]$Keys = '',
     [string]$Vcpkg = 'C:\dev\vcpkg',
     [string]$NstoolFrom = '',
     [ValidateSet('global', 'japan', 'both')][string]$Edition = 'both',
@@ -59,6 +67,7 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2
 $ProgressPreference = 'SilentlyContinue'   # the Invoke-WebRequest progress bar of PowerShell 5.1 makes downloads very slow
+$EditionGiven = $PSBoundParameters.ContainsKey('Edition')   # AP_INSTALL_FLOW
 
 # ---------------------------------------------------------------------------------------------- references
 # Versions of the reference PC (2026-10-19). Pin = the one installed; Meets = what is accepted if already present.
@@ -82,7 +91,15 @@ $ToolSpecs = [ordered]@{
                 Rule = '>= 1.11'; Detect = 'DetectNinja'; Meets = { param($v) $v -ge [version]'1.11' } }
 }
 $VcpkgCommit = 'bf19794383e8fb95eba5aa553235bc8ec2271688'
-$VcpkgPorts = @('ffmpeg', 'opus', 'libjpeg-turbo', 'libpng', 'zlib', 'sdl3')
+$VcpkgPorts = @('opus', 'libjpeg-turbo', 'libpng', 'zlib', 'sdl3')
+# AP_FFMPEG_PREBUILT (apply_ffmpeg_prebuilt.py): FFmpeg is not built by vcpkg any more. FFmpeg 9.0 LGPL "shared" build of BtbN
+# (include, lib\*.lib, bin\*.dll), month-end autobuild 2026-09-30 (BtbN keeps those for two years), n9.0.2 like the vcpkg
+# reference commit. SHA-256 of the winget manifest BtbN.FFmpeg.LGPL.Shared.9.0 9.0.2-20260930 (also measured on the zip).
+$FfmpegUrl = 'https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-30-13-08/ffmpeg-n9.0.2-17-g2a571b6068-win64-lgpl-shared-9.0.zip'
+$FfmpegSha256 = '7157177B8A6CB2174C1650BA8C71B363F2C78CBA5330F88C4C02CF5B2B880646'
+$FfmpegDirName = 'ffmpeg-n9.0.2-17-g2a571b6068-win64-lgpl-shared-9.0'
+$FfmpegLibs = @('avcodec', 'avformat', 'avutil', 'swscale', 'swresample')
+$FfmpegDlls = @('avcodec-63.dll', 'avformat-63.dll', 'avutil-61.dll', 'swscale-10.dll', 'swresample-7.dll')
 $VcpkgRepo = 'https://github.com/microsoft/vcpkg.git'
 $NstoolTag = 'v1.9.2'
 $NstoolSha256 = '844648190DD8688098887A369DA1126C1B3AB1C2A664FB603B01CB22E76B6CA9'
@@ -400,7 +417,9 @@ function ElevateAndInstall([string[]]$keys) {
     foreach ($c in $keys) {
         $pr = $j.PSObject.Properties[$c]
         $v = if ($pr) { "$($pr.Value)" } else { 'no result' }
-        if ($v -eq 'ok') { Info "$($ToolSpecs[$c].Name): installed" } else { Warn "$($ToolSpecs[$c].Name): $v" }
+        $tp = $j.PSObject.Properties["${c}_seconds"]   # AP_TOOL_TIMES
+        $took = if ($tp) { ' (took ' + ([TimeSpan]::FromSeconds([double]$tp.Value)).ToString('hh\:mm\:ss\.f') + ')' } else { '' }
+        if ($v -eq 'ok') { Info "$($ToolSpecs[$c].Name): installed$took" } else { Warn "$($ToolSpecs[$c].Name): $v$took" }
     }
 }
 function AdminMode {
@@ -410,7 +429,11 @@ function AdminMode {
     $r = [ordered]@{}
     foreach ($c in ($List -split ',' | Where-Object { $_ })) {
         Write-Host "== $($ToolSpecs[$c].Name)" -ForegroundColor Cyan
+        $sw = [Diagnostics.Stopwatch]::StartNew()   # AP_TOOL_TIMES
         try { InstallTool $c; $r[$c] = 'ok' } catch { $r[$c] = "error: $($_.Exception.Message)"; Write-Host "   ERROR: $($_.Exception.Message)" -ForegroundColor Red }
+        $sw.Stop()
+        $r["${c}_seconds"] = [Math]::Round($sw.Elapsed.TotalSeconds, 1)
+        Write-Host ('   (took {0})' -f $sw.Elapsed.ToString('hh\:mm\:ss\.f'))
     }
     [IO.File]::WriteAllText($ResultFile, ($r | ConvertTo-Json), (New-Object Text.UTF8Encoding($false)))
     try { Stop-Transcript | Out-Null } catch { }
@@ -439,7 +462,13 @@ function StepTools([string[]]$keys, [bool]$admin) {
     if (-not $install.Count) { return }
     if (@($install | Where-Object { $ToolSpecs[$_].Winget }).Count) { EnsureWinget }   # before the UAC: it is per user
     if ($admin -and -not (IsAdmin)) { ElevateAndInstall $install }
-    else { foreach ($c in $install) { Write-Host "   -- $($ToolSpecs[$c].Name)"; InstallTool $c } }
+    else {
+        foreach ($c in $install) {
+            Write-Host "   -- $($ToolSpecs[$c].Name)"
+            $sw = [Diagnostics.Stopwatch]::StartNew()   # AP_TOOL_TIMES
+            try { InstallTool $c } finally { $sw.Stop(); Info ('(took {0})' -f $sw.Elapsed.ToString('hh\:mm\:ss\.f')) }
+        }
+    }
     RefreshEnv
     foreach ($c in $install) {
         $e = Status $c
@@ -543,7 +572,7 @@ function GitExe {
 function Step3 {
     $git = GitExe
     if (-not (Test-Path -LiteralPath $Root)) { Fail "${Root} does not exist: clone the port repo there and run this script from <root>\tools" }
-    if (-not (Test-Path -LiteralPath (PathOf $Root '.git'))) { Problem "$Root is not a git repo: clone the port repo into that folder" }
+    if (-not (Test-Path -LiteralPath (PathOf $Root '.git'))) { Warn "$Root is not a git repo (downloaded as a ZIP?): going on; git is only needed to update the port with git pull" }
     else {
         $o = (RunCapture $git @('-C', $Root, 'remote', 'get-url', 'origin')).Output | Select-Object -First 1
         $b = (RunCapture $git @('-C', $Root, 'rev-parse', '--abbrev-ref', 'HEAD')).Output | Select-Object -First 1
@@ -608,9 +637,44 @@ function MissingPorts {
     foreach ($l in $r.Output) { if ($l -match '^([a-z0-9-]+)(\[[^\]]*\])?:x64-windows\s') { $have[$Matches[1]] = 1 } }
     return @($VcpkgPorts | Where-Object { -not $have.ContainsKey($_) })
 }
+# AP_FFMPEG_PREBUILT: the prebuilt FFmpeg is complete if it has the headers, the five import libraries and the five DLLs.
+function FfmpegReady([string]$dir) {
+    $files = @('include\libavcodec\avcodec.h', 'include\libavformat\avformat.h') + @($FfmpegLibs | ForEach-Object { "lib\$_.lib" }) + @($FfmpegDlls | ForEach-Object { "bin\$_" })
+    foreach ($f in $files) { if (-not (Test-Path -LiteralPath (PathOf $dir $f) -PathType Leaf)) { return $false } }
+    return $true
+}
+# Downloads the zip (the bytes are checked against $FfmpegSha256 before anything is unpacked), unpacks it next to the final folder
+# and renames it at the end: a folder that exists is a complete one. Nothing is installed or changed outside <root>\_prepare\ffmpeg.
+function EnsureFfmpeg {
+    $dir = PathOf $WorkDir "ffmpeg\$FfmpegDirName"
+    if (FfmpegReady $dir) { Info "prebuilt FFmpeg $FfmpegDirName in $dir"; $script:Done.Add("FFmpeg prebuilt $FfmpegDirName"); return }
+    if ($Check) { Problem "prebuilt FFmpeg is missing ($dir): step 5 downloads it from BtbN ($FfmpegUrl)"; return }
+    $parent = Split-Path $dir -Parent
+    New-Item -ItemType Directory -Path $parent -Force | Out-Null
+    $zip = PathOf $parent 'ffmpeg_prebuilt.zip'
+    $tmp = "$dir.tmp"
+    if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Recurse -Force }
+    if (-not ((Test-Path -LiteralPath $zip) -and (Sha256 $zip) -eq $FfmpegSha256)) {
+        Download $FfmpegUrl $zip
+        $got = Sha256 $zip
+        if ($got -ne $FfmpegSha256) { Remove-Item -LiteralPath $zip -Force; Fail "the FFmpeg zip has SHA-256 $got, not the reference $FfmpegSha256 (nothing was unpacked)" }
+    }
+    Info 'FFmpeg zip: SHA-256 OK; unpacking'
+    try {
+        Expand-Archive -LiteralPath $zip -DestinationPath $tmp
+        $inner = PathOf $tmp $FfmpegDirName
+        if (-not (FfmpegReady $inner)) { Fail "the FFmpeg zip does not have the expected files in $FfmpegDirName\ (headers, lib\*.lib, bin\*.dll)" }
+        if (Test-Path -LiteralPath $dir) { Remove-Item -LiteralPath $dir -Recurse -Force }
+        Move-Item -LiteralPath $inner -Destination $dir
+    } finally { if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue } }
+    Remove-Item -LiteralPath $zip -Force
+    Info "prebuilt FFmpeg in $dir"
+    $script:Done.Add("FFmpeg prebuilt $FfmpegDirName (installed now)")
+}
 function Step5 {
     $env:VCPKG_ROOT = $Vcpkg                 # a VS console points it to its internal copy
     $env:VCPKG_DISABLE_METRICS = '1'
+    EnsureFfmpeg
     $missing = @(MissingPorts)
     if (-not $missing.Count) { Info "x64-windows libraries present: $($VcpkgPorts -join ', ')"; $script:Done.Add('vcpkg libraries'); return }
     if ($Check) { Problem "vcpkg libraries missing: $($missing -join ', ')"; return }
@@ -650,7 +714,7 @@ function Step5 {
         $env:VCPKG_BINARY_SOURCES = "clear;default,readwrite;files,$VcpkgCache,read"
         Info "binary cache: $VcpkgCache (what matches is not built)"
     }
-    Info "installing $($missing -join ', ') (ffmpeg builds from source: from 1 to several hours depending on the PC; if it is interrupted, -From 5 continues where it stopped)"
+    Info "installing $($missing -join ', ') (vcpkg builds them from source; if it is interrupted, -From 5 continues where it stopped)"
     Run (VcpkgExe) $a 'vcpkg install'
     $missing = @(MissingPorts)
     if ($missing.Count) { Fail "vcpkg finished but these are missing: $($missing -join ', ')" }
@@ -877,7 +941,7 @@ function Step11 {
     if (Test-Path -LiteralPath $Root) {
         $dumps = @(Get-ChildItem -LiteralPath $Root -File | Where-Object { $_.Extension -in '.xci', '.nsp' } | ForEach-Object { $_.Name })
     }
-    $eds = Editions
+    $eds = @(Editions)   # AP_INSTALL_FLOW: with ONE edition Editions gives a string, and in Windows PowerShell 5.1 (StrictMode 2) a string has no .Count
     $needed = if ($eds.Count -gt 1) { 'one dump per edition' } else { 'the dump' }
     Write-Host ("     dumps       {0}" -f $(if ($dumps.Count) { "in $Root\: " + ($dumps -join ', ') } else { "copy $needed (.xci or .nsp) to $Root\ (the root, not data\)" }))
     $font = @((PathOf $data 'tsuki_global\fonts\shared_0.ttf'), (PathOf $data 'tsuki\fonts\shared_0.ttf')) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
@@ -905,6 +969,109 @@ function Step11 {
 }
 
 # ---------------------------------------------------------------------------------------------- main
+# ---------------------------------------------------------------------------------------------- AP_INSTALL_FLOW
+# Step timing and the -Recomp flow (see tools/patches/apply_install_flow.py).
+$script:Times = New-Object System.Collections.ArrayList
+$script:InRecomp = ''
+$script:RecompBuilt = @()
+
+function FormatSpan([TimeSpan]$t) { '{0:00}:{1:00}:{2:00}.{3}' -f [int][Math]::Floor($t.TotalHours), $t.Minutes, $t.Seconds, [int][Math]::Floor($t.Milliseconds / 100) }
+
+# Runs the function named $fn as step $n (a number, or R1/R2 for the recomp phases) and records how long it took.
+function TimedStep([string]$n, [string]$name, [string]$fn) {
+    Write-Host ''; Write-Host "== step ${n}: $name" -ForegroundColor Cyan
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    try { & $fn }
+    finally {
+        $sw.Stop()
+        [void]$script:Times.Add(@($n, $name, $sw.Elapsed))
+        Info ('(took {0})' -f (FormatSpan $sw.Elapsed))
+    }
+}
+
+function ShowTimes {
+    if (-not $script:Times.Count) { return }
+    Write-Host ''
+    Write-Host '   Step times:' -ForegroundColor Green
+    $total = [TimeSpan]::Zero
+    foreach ($t in $script:Times) { $total += $t[2]; Write-Host ('     {0,-3} {1,-46} {2}' -f $t[0], $t[1], (FormatSpan $t[2])) }
+    Write-Host ('     {0,-50} {1}' -f 'total', (FormatSpan $total))
+    if ($Check) { return }
+    try {
+        $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+        $lines = @(foreach ($t in $script:Times) { "$stamp`tinstall_requirements`t$Edition`t$($t[0])`t$($t[1])`t$(FormatSpan $t[2])" })
+        [IO.File]::AppendAllText((PathOf $script:WorkDir 'step_times.log'), (($lines -join "`r`n") + "`r`n"), (New-Object Text.UTF8Encoding($false)))
+    } catch { }
+}
+
+# NSP (PFS0 at 0) or XCI (HEAD at 0x100) by the header only: no keys, nothing else of the file is read.
+function InputKind([string]$p) {
+    $n = 0
+    try {
+        $fs = [IO.File]::OpenRead($p)
+        try { $b = New-Object byte[] 0x104; $n = $fs.Read($b, 0, $b.Length) } finally { $fs.Dispose() }
+    } catch { return $null }
+    if ($n -ge 4 -and [Text.Encoding]::ASCII.GetString($b, 0, 4) -eq 'PFS0') { return 'nsp' }
+    if ($n -ge 0x104 -and [Text.Encoding]::ASCII.GetString($b, 0x100, 4) -eq 'HEAD') { return 'xci' }
+    return $null
+}
+
+function Early([string]$t) { if ($Recomp) { Problem $t } else { Warn $t } }
+
+# Read-only check of what the user has to provide (prod.keys is only looked for, never read). With -Recomp a problem
+# stops the run now; without it, it is a warning. Program ID, base version v0 and edition are checked by recomp (step 1).
+function CheckInputs {
+    $script:CurrentStep = 0
+    $eds = @(Editions)
+    if ($Recomp) {
+        if (-not $EditionGiven) { Fail '-Recomp needs -Edition global|japan|both (it says how many dumps to expect)' }
+        if ($InputFile -and $eds.Count -gt 1) { Fail '-InputFile is a single dump: use it with -Edition global or -Edition japan' }
+    }
+    $keysPath = if ($Keys) { [IO.Path]::GetFullPath($Keys) } else { PathOf $Root 'data/prod.keys' }
+    if (Test-Path -LiteralPath $keysPath -PathType Leaf) { Info "prod.keys present: $keysPath (not read)" }
+    else { Early "prod.keys not found: copy your keys to $keysPath" }
+    $found = @()
+    if ($InputFile) {
+        $f = [IO.Path]::GetFullPath($InputFile)
+        if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { Early "-InputFile $f does not exist" }
+        elseif (-not (InputKind $f)) { Early "$f is neither an NSP nor an XCI (header check)" }
+        else { $found += $f }
+    } elseif (Test-Path -LiteralPath $Root) {
+        foreach ($f in @(Get-ChildItem -LiteralPath $Root -File | Where-Object { $_.Extension -in '.xci', '.nsp' })) {
+            if (InputKind $f.FullName) { $found += $f.FullName } else { Warn "$($f.Name): neither an NSP nor an XCI (header check): ignored" }
+        }
+    }
+    if ($found.Count) { Info ('dump(s): ' + (($found | ForEach-Object { Split-Path -Leaf $_ }) -join ', ')) }
+    if ($found.Count -lt $eds.Count) {
+        Early "$($eds.Count) dump(s) (.xci or .nsp) needed for -Edition $Edition in $Root (or -InputFile); found $($found.Count)"
+    }
+}
+
+# recomp_tsukihime.ps1 in a process of its own: it sees the PATH this run refreshed, so no new console is needed.
+function RunRecomp([string]$ed, [int]$from, [int]$to) {
+    $m = PathOf $Root 'tools/recomp_tsukihime.ps1'
+    if (-not (Test-Path -LiteralPath $m)) { Fail "$m is missing" }
+    $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $m, '-Edition', $ed, '-From', "$from", '-To', "$to", '-Root', $Root)
+    if ($InputFile) { $a += @('-InputFile', $InputFile) }
+    if ($Keys) { $a += @('-Keys', $Keys) }
+    $script:InRecomp = "recomp_tsukihime.ps1 -Edition $ed -From $from -To $to"
+    Info $script:InRecomp
+    $env:NX_VCPKG = $Vcpkg                  # dev_env.ps1 reads it (the recomp process must use the same vcpkg)
+    $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try { & (Get-Process -Id $PID).Path @a | Out-Host; $code = $LASTEXITCODE } finally { $ErrorActionPreference = $prev }   # Out-Host: shown live, not returned to the caller
+    if ($code -ne 0) { Fail "$script:InRecomp failed (code $code)" }
+    $script:InRecomp = ''
+}
+function PhaseR1 { foreach ($ed in (Editions)) { RunRecomp $ed 0 8 } }
+function PhaseR2 {
+    foreach ($ed in (Editions)) {
+        RunRecomp $ed 9 10
+        $g = if ($ed -eq 'global') { 'tsukihime_global' } else { 'tsukihime' }
+        $exe = PathOf $Framework "build/$g/$g.exe"
+        if (Test-Path -LiteralPath $exe) { $script:RecompBuilt += $exe }
+    }
+}
+
 function ResolveRoot {
     if ($Root) { return [IO.Path]::GetFullPath($Root) }
     $here = Split-Path -Parent $PSCommandPath
@@ -937,20 +1104,36 @@ function Main {
     $encPrev = $null
     try { $encPrev = [Console]::OutputEncoding; [Console]::OutputEncoding = New-Object Text.UTF8Encoding($false) } catch { }
     try {
-        $script:CurrentStep = 0; Step 0 $StepNames[0]; Step0
-        for ($n = [Math]::Max(1, $From); $n -le $To; $n++) {
+        $script:CurrentStep = 0
+        TimedStep 0 $StepNames[0] 'Step0'
+        CheckInputs
+        $order = @(1..11)
+        if ($Recomp -and $Check) { Info '-Recomp is not run with -Check (the inputs above were checked)' }
+        elseif ($Recomp) { $order = @(1, 2, 3, 6, 7, 8, 'R1', 4, 5, 'R2', 9, 10, 11) }   # fail early: everything but the build before vcpkg
+        foreach ($n in $order) {
+            if ($n -is [string]) {
+                if ($n -eq 'R1' -and $To -ge 8) { TimedStep 'R1' 'recomp steps 0-8: identify, extract, shaders' 'PhaseR1' }
+                if ($n -eq 'R2' -and $To -ge 5) { TimedStep 'R2' 'recomp steps 9-10: build' 'PhaseR2' }
+                continue
+            }
+            if ($n -lt $From -or $n -gt $To) { continue }
             $script:CurrentStep = $n
-            Step $n $StepNames[$n]
-            & "Step$n"
+            TimedStep $n $StepNames[$n] "Step$n"
         }
         if ($To -lt 11) { Write-Host ''; Write-Host "   (summary: step 11)" }
+        if ($script:RecompBuilt.Count) {
+            Write-Host ''; Write-Host '   Built:' -ForegroundColor Green
+            foreach ($x in $script:RecompBuilt) { Write-Host "     $x" }
+        }
         if ($script:Problems.Count) { $code = 1 }
     } catch {
         Write-Host ''
-        Write-Host "ERROR in step $($script:CurrentStep): $($_.Exception.Message)" -ForegroundColor Red
-        Write-Host "Resume with -From $($script:CurrentStep) once it is fixed (log: $log)." -ForegroundColor Red
+        Write-Host "ERROR in $(if ($script:InRecomp) { 'the recompile' } else { "step $($script:CurrentStep)" }): $($_.Exception.Message)" -ForegroundColor Red
+        if ($script:InRecomp) { Write-Host "Run the same command again once it is fixed: the steps already done are skipped (log: $log)." -ForegroundColor Red }
+        else { Write-Host "Resume with -From $($script:CurrentStep) once it is fixed (log: $log)." -ForegroundColor Red }
         $code = 1
     } finally {
+        ShowTimes
         if ($encPrev) { try { [Console]::OutputEncoding = $encPrev } catch { } }
         try { Stop-Transcript | Out-Null } catch { }
     }
@@ -958,6 +1141,39 @@ function Main {
     return $code
 }
 
+# AP_QUICKEDIT (apply_quickedit_off.py): QuickEdit off while the script runs, so a click in the console does not pause it.
+# DisableQuickEdit returns the previous console input mode (or $null if there is no console / not Windows).
+function DisableQuickEdit {
+    if (-not $OnWindows) { return $null }
+    try {
+        if (-not ('NxConsoleMode' -as [type])) {
+            Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class NxConsoleMode {
+    [DllImport("kernel32.dll")] static extern IntPtr GetStdHandle(int n);
+    [DllImport("kernel32.dll")] static extern bool GetConsoleMode(IntPtr h, out uint m);
+    [DllImport("kernel32.dll")] static extern bool SetConsoleMode(IntPtr h, uint m);
+    public static long Get() { uint m; return GetConsoleMode(GetStdHandle(-10), out m) ? (long)m : -1; }
+    public static bool Set(long m) { return m >= 0 && SetConsoleMode(GetStdHandle(-10), (uint)m); }
+}
+'@
+        }
+        $old = [NxConsoleMode]::Get()
+        if ($old -lt 0) { return $null }
+        if (($old -band 0x40) -eq 0) { return $null }   # QuickEdit was already off: nothing to change or restore
+        # ENABLE_QUICK_EDIT_MODE = 0x40; the change only applies together with ENABLE_EXTENDED_FLAGS = 0x80
+        if (-not [NxConsoleMode]::Set((($old -band (-bnot 0x40)) -bor 0x80))) { return $null }
+        Write-Host '   (console QuickEdit is off while this runs: a click no longer pauses the output)'
+        return $old
+    } catch { return $null }
+}
+function RestoreConsoleMode($old) {
+    if ($null -eq $old) { return }
+    try { [void][NxConsoleMode]::Set(([long]$old -bor 0x80)) } catch { }
+}
+
 if ($FunctionsOnly) { return }
-$c = Main
+$nxConsoleMode = DisableQuickEdit
+try { $c = Main } finally { RestoreConsoleMode $nxConsoleMode }
 exit $c

@@ -158,10 +158,9 @@ const char* vk_result_name(int r) {
     std::swprintf(msg, sizeof msg / sizeof msg[0],
                   L"The game needs Vulkan to draw, and it cannot be used.\n\n"
                   L"%ls\n%ls\n"
-                  L"What to do: install or update the GPU driver from the manufacturer's site (Intel: Intel Driver & "
+                  L"install or update the GPU driver from the manufacturer's site (Intel: Intel Driver & "
                   L"Support Assistant; AMD: Adrenalin; NVIDIA: GeForce/Studio), not from Windows Update, then start the "
-                  L"game again. On Linux (Proton): install your distribution's Vulkan drivers.\n\n"
-                  L"Details: nx.log",
+                  L"game again\n\n",
                   what, rw);
     // MB_ICONERROR | MB_SETFOREGROUND | MB_TOPMOST: not hidden behind the game window
     ::MessageBoxW(nullptr, msg, L"Vulkan unavailable", 0x10 | 0x10000 | 0x40000);

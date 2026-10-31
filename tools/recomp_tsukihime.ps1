@@ -140,6 +140,7 @@ $Markers = @(
     @('both', 'framework\runtime\src\nvn\nvn_vk.cpp', 'AP_GPU_HANG', 'apply_gpu_hang.py', $false),
     @('both', 'framework\runtime\src\nvn\nvn_frames.cpp', 'AP_GPU_HANG', 'apply_gpu_hang.py', $false),
     @('both', 'framework\runtime\src\nvn\nvn_vk.cpp', 'AP_VK_REQ', 'apply_vk_requirements.py', $false),
+    @('both', 'tools\install_requirements.ps1', 'AP_INSTALL_FLOW', 'apply_install_flow.py', $false),
     @('both', 'framework\runtime\src\nvn\nvn_vk.cpp', 'AP_VK_FAIL', 'apply_vk_fail.py', $false),
     @('both', 'framework\runtime\src\hle_fs.cpp', 'AP_ROMFS_MODS', 'apply_romfs_mods.py', $false),
     @('both', 'framework\games\tsukihime_common\tsukihime_common.cmake', 'AP_ROMFS_MODS', 'apply_romfs_mods.py', $false),
@@ -149,6 +150,8 @@ $Markers = @(
     @('both', 'framework\runtime\src\nvn\nvn_upload.cpp', 'AP_HUD_GLYPHS', 'apply_hud_glyphs.py', $false),
     @('both', 'framework\games\tsukihime_common\input_tsuki.cpp', 'AP_HUD_GLYPHS', 'apply_hud_glyphs.py', $false),
     @('both', 'framework\games\tsukihime_common\tsukihime_common.cmake', 'AP_HUD_GLYPHS', 'apply_hud_glyphs.py', $false),
+    @('both', 'framework\games\tsukihime_common\tsukihime_common.cmake', 'AP_FFMPEG_PREBUILT', 'apply_ffmpeg_prebuilt.py', $false),
+    @('both', 'tools\install_requirements.ps1', 'AP_FFMPEG_PREBUILT', 'apply_ffmpeg_prebuilt.py', $false),
     @('japan', 'framework\games\tsukihime\game.cmake', 'tsukihime_common/tsukihime_common.cmake', 'games\tsukihime_common (shared code, in the repo)', $false),
     @('japan', 'framework\games\tsukihime\game.cmake', 'NX_DEFAULT_ORIGIN_LOWER_LEFT', 'apply_origin_default.py', $false),
     @('japan', 'framework\games\tsukihime\game.cmake', 'NX_FIXED_ASPECT', 'apply_aspect.py', $false),
@@ -449,7 +452,8 @@ function Step0 {
     # stay in this process (your console does not change).
     $toolsMissing = -not (Get-Command cmake -ErrorAction SilentlyContinue) -or -not (Get-Command clang-cl -ErrorAction SilentlyContinue)
     $builds = ($From -le 9 -and $To -ge 9)
-    if ($toolsMissing -or $builds) {
+    $shaders = ($From -le 8 -and $To -ge 8)   # AP_INSTALL_FLOW: step 8 needs VULKAN_SDK (spirv-val) and dotnet from the environment
+    if ($toolsMissing -or $builds -or $shaders) {
         if ($DevLocal) {
             Info "loading $DevLocal"
             LoadDevLocal
@@ -1111,6 +1115,16 @@ function CacheValue([string]$cache, [string]$k) {
     if ($l) { return $l.Matches[0].Groups[2].Value } else { return '' }
 }
 
+# AP_FFMPEG_PREBUILT: folder of the prebuilt FFmpeg that install_requirements.ps1 (step 5) leaves in _prepare\ffmpeg (the most
+# recent one that has lib\avcodec.lib), with forward slashes for CMake; '' if there is none (CMake then uses the vcpkg one).
+function FfmpegPrebuilt {
+    $base = InRoot '_prepare\ffmpeg'
+    if (-not (Test-Path -LiteralPath $base)) { return '' }
+    $d = @(Get-ChildItem -LiteralPath $base -Directory | Where-Object { Test-Path -LiteralPath (Under $_.FullName 'lib\avcodec.lib') -PathType Leaf } | Sort-Object LastWriteTime -Descending)
+    if (-not $d.Count) { return '' }
+    return ($d[0].FullName -replace '\\', '/')
+}
+
 # Linux: the framework CMakeLists (WIN32 branch) includes "${NX_VULKAN_SDK}/Include" as in the Windows SDK; the
 # Linux SDK has the folder in lowercase (x86_64/include) and Linux is case sensitive. Only the headers are needed (the
 # vulkan-1.dll loader comes from the driver or Proton: no .lib is linked). View with an Include -> include link in
@@ -1153,6 +1167,12 @@ function Step9 {
             $g = (CacheValue $cache 'NX_GEN_DIR') -replace '\\', '/'
             if ($g -ne $gen) { Fail "$Build uses NX_GEN_DIR=$g, not $gen (in a test copy: delete that build\ of the copy, it is configured again)" }
             Info "$Build already configured"
+            # AP_FFMPEG_PREBUILT: a build configured before this patch (or with another FFmpeg folder) changes only this variable
+            $ffRoot = FfmpegPrebuilt
+            if ($ffRoot -and (CacheValue $cache 'NX_FFMPEG_ROOT') -ne $ffRoot) {
+                Info "NX_FFMPEG_ROOT -> $ffRoot (reconfiguring; the rest of the cache stays the same)"
+                RunVisible 'cmake' @('-B', $Build, "-DNX_FFMPEG_ROOT=$ffRoot") 'cmake (reconfigure NX_FFMPEG_ROOT)'
+            }
             if ($OnLinux) {
                 $vk = VulkanView
                 if ((CacheValue $cache 'NX_VULKAN_SDK') -ne $vk) {
@@ -1203,6 +1223,9 @@ function Step9 {
                         "-DCMAKE_C_COMPILER=$cc", "-DCMAKE_CXX_COMPILER=$cc", '-DVCPKG_TARGET_TRIPLET=x64-windows', "-DNX_OPUS_ROOT=$vcpkg/installed/x64-windows")
                 }
             }
+            # AP_FFMPEG_PREBUILT: prebuilt FFmpeg of install_requirements.ps1 (step 5); without it CMake uses the vcpkg one
+            $ffRoot = FfmpegPrebuilt
+            if ($ffRoot) { $a += "-DNX_FFMPEG_ROOT=$ffRoot" }
             Info "cmake $($a -join ' ')"
             RunVisible 'cmake' $a 'cmake (configure)'
         }
@@ -1269,26 +1292,56 @@ function CompareInventory([string]$file) {
 }
 
 # ---------------------------------------------------------------------------------------------- main
+# AP_INSTALL_FLOW: step timing (table at the end, also on failure; appended to <root>\_prepare\step_times.log)
+$script:Times = New-Object System.Collections.ArrayList
+function FormatSpan([TimeSpan]$t) { '{0:00}:{1:00}:{2:00}.{3}' -f [int][Math]::Floor($t.TotalHours), $t.Minutes, $t.Seconds, [int][Math]::Floor($t.Milliseconds / 100) }
+function TimedStep([int]$n, [string]$name, [string]$fn) {
+    Step $n $name
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    try { & $fn }
+    finally {
+        $sw.Stop()
+        [void]$script:Times.Add(@($n, $name, $sw.Elapsed))
+        Info ('(took {0})' -f (FormatSpan $sw.Elapsed))
+    }
+}
+function ShowTimes {
+    if (-not $script:Times.Count) { return }
+    Write-Host ''
+    Write-Host '   Step times:' -ForegroundColor Green
+    $total = [TimeSpan]::Zero
+    foreach ($t in $script:Times) { $total += $t[2]; Write-Host ('     {0,-3} {1,-46} {2}' -f $t[0], $t[1], (FormatSpan $t[2])) }
+    Write-Host ('     {0,-50} {1}' -f 'total', (FormatSpan $total))
+    try {
+        $dir = InRoot '_prepare'
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+        $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+        $lines = @(foreach ($t in $script:Times) { "$stamp`trecomp_tsukihime`t$Edition`t$($t[0])`t$($t[1])`t$(FormatSpan $t[2])" })
+        [IO.File]::AppendAllText((Join-Path $dir 'step_times.log'), (($lines -join "`r`n") + "`r`n"), (New-Object Text.UTF8Encoding($false)))
+    } catch { }
+}
+
 if ($From -gt $To) { throw "-From $From greater than -To $To" }
 Write-Host "recomp_tsukihime: edition $Edition, steps $From..$To, root $Root$(if ($Replace) { ', -Replace' })"
 $StepNames = @('precheck', 'identify', 'extract', 'verify exefs', 'structure', 'analysis', 'recomp', 'fonts', 'shaders', 'build', 'summary')
 $script:CurrentStep = 0
 try {
-    Step 0 $StepNames[0]; Step0
+    TimedStep 0 $StepNames[0] 'Step0'
     # Step 3 (verify exefs) is cheap and everything else depends on it: when resuming after it, it runs first.
-    if ($From -gt 3) { $script:CurrentStep = 3; Step 3 "$($StepNames[3]) (always)"; Step3 }
+    if ($From -gt 3) { $script:CurrentStep = 3; TimedStep 3 "$($StepNames[3]) (always)" 'Step3' }
     $start = if ($From -eq 2) { 1 } else { [Math]::Max(1, $From) }   # step 2 needs what step 1 identifies
     for ($n = $start; $n -le $To; $n++) {
         $script:CurrentStep = $n
-        Step $n $StepNames[$n]
-        & "Step$n"
+        TimedStep $n $StepNames[$n] "Step$n"
     }
     if ($Compare) { $script:CurrentStep = 11; CompareInventory $Compare }
+    ShowTimes
 } catch {
     Write-Host ''
     Write-Host "ERROR in step $($script:CurrentStep): $($_.Exception.Message)" -ForegroundColor Red
     try { RemoveStage } catch { Write-Host "   (could not delete $Stage`: delete it by hand)" }
     Write-Host "What the step managed to do was undone. Resume with -From $($script:CurrentStep) once it is fixed." -ForegroundColor Red
+    ShowTimes
     exit 1
 }
 Write-Host ''
