@@ -74,7 +74,7 @@ $EditionGiven = $PSBoundParameters.ContainsKey('Edition')   # AP_INSTALL_FLOW
 $ToolSpecs = [ordered]@{
     vs     = @{ Name = 'VS Build Tools (C++)'; Admin = $true; Winget = 'Microsoft.VisualStudio.BuildTools'; Pin = ''
                 Rule = '17.x or 18.x with VC.Tools x64 (reference 18.9)'; Detect = 'DetectVS'; Meets = { param($v) $v.Major -ge 17 }
-                Override = '--quiet --wait --norestart --nocache --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended' }
+                Override = '--quiet --wait --norestart --nocache --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --add Microsoft.VisualStudio.Component.VC.CMake.Project' }   # AP_CMAKE_FROM_VS: its CMake is used
     llvm   = @{ Name = 'LLVM (clang-cl)'; Admin = $true; Winget = 'LLVM.LLVM'; Pin = '23.1.3'
                 Rule = '23.x'; Detect = 'DetectLLVM'; Meets = { param($v) $v.Major -eq 23 } }
     cmake  = @{ Name = 'CMake'; Admin = $true; Winget = 'Kitware.CMake'; Pin = '4.4.4'
@@ -239,8 +239,16 @@ function DetectVS {
     return @{ Version = [version]'0.0'; Path = $p; Text = 'without the C++ component (VC.Tools x64)'; NoVC = $true; Product = $prod }
 }
 function DetectLLVM { FirstThatRuns @("$env:ProgramFiles\LLVM\bin\clang-cl.exe", (InPath 'clang-cl')) @('--version') 'clang version (\d+\.\d+\.\d+)' }
+# AP_CMAKE_FROM_VS (apply_cmake_from_vs.py): the CMake of the "C++ CMake tools for Windows" component of VS Build Tools.
+function VsCmakeExe {
+    if (-not $OnWindows) { return $null }
+    $d = DetectVS
+    if (-not $d -or -not $d.Path) { return $null }
+    $e = PathOf $d.Path 'Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe'
+    if (Test-Path -LiteralPath $e -PathType Leaf) { return $e } else { return $null }
+}
 function DetectCMake {
-    FirstThatRuns @("$env:ProgramFiles\CMake\bin\cmake.exe", "$env:LOCALAPPDATA\Microsoft\WinGet\Links\cmake.exe", (InPath 'cmake')) @('--version') 'cmake version (\d+\.\d+\.\d+)'
+    FirstThatRuns @("$env:ProgramFiles\CMake\bin\cmake.exe", "$env:LOCALAPPDATA\Microsoft\WinGet\Links\cmake.exe", (InPath 'cmake'), (VsCmakeExe)) @('--version') 'cmake version (\d+\.\d+\.\d+)'
 }
 function DetectGit { FirstThatRuns @("$env:ProgramFiles\Git\cmd\git.exe", (InPath 'git')) @('--version') 'git version (\d+\.\d+\.\d+(\.windows\.\d+)?)' }
 function DetectNinja { FirstThatRuns @("$env:LOCALAPPDATA\Microsoft\WinGet\Links\ninja.exe", (InPath 'ninja')) @('--version') '(\d+\.\d+\.\d+)' }
@@ -371,7 +379,7 @@ function InstallVS {
         $setup = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\setup.exe"
         Info "adding the C++ component to $($d.Path)"
         $p = Start-Process -FilePath $setup -Wait -PassThru -ArgumentList ('modify --installPath ' + (Quote $d.Path) +
-             ' --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --quiet --norestart')
+             ' --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --add Microsoft.VisualStudio.Component.VC.CMake.Project --quiet --norestart')
         if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) { Fail "the VS installer finished with code $($p.ExitCode)" }
         return
     }
@@ -459,6 +467,13 @@ function StepTools([string[]]$keys, [bool]$admin) {
             }
         }
     }
+    # AP_CMAKE_FROM_VS: VS Build Tools brings a CMake (4.x): when it is being installed now, CMake is not installed separately
+    $cmakeFromVs = $false
+    if ($OnWindows -and ($install -contains 'cmake') -and ($install -contains 'vs')) {
+        $install = @($install | Where-Object { $_ -ne 'cmake' })
+        $cmakeFromVs = $true
+        Info 'CMake                    comes with VS Build Tools (C++ CMake tools for Windows): not installed separately'
+    }
     if (-not $install.Count) { return }
     if (@($install | Where-Object { $ToolSpecs[$_].Winget }).Count) { EnsureWinget }   # before the UAC: it is per user
     if ($admin -and -not (IsAdmin)) { ElevateAndInstall $install }
@@ -478,6 +493,20 @@ function StepTools([string[]]$keys, [bool]$admin) {
         }
         Info ('{0,-24} {1} installed ({2})' -f $ToolSpecs[$c].Name, $e.Det.Text, $e.Det.Path)
         $script:Done.Add("$($ToolSpecs[$c].Name) $($e.Det.Text) (installed now)")
+    }
+    if ($cmakeFromVs) {
+        $e = Status 'cmake'
+        $how = 'from VS Build Tools'
+        if ($e.State -ne 'ok') {
+            Warn 'VS Build Tools did not bring a usable CMake 4.x: installing CMake with winget (slow)'
+            InstallTool 'cmake'
+            RefreshEnv
+            $e = Status 'cmake'
+            $how = 'installed with winget'
+        }
+        if ($e.State -ne 'ok') { Fail "CMake: $(if ($e.Det) { "$($e.Det.Text) does not meet '$($ToolSpecs['cmake'].Rule)'" } else { 'does not appear after installing' })" }
+        Info ('{0,-24} {1} {2} ({3})' -f $ToolSpecs['cmake'].Name, $e.Det.Text, $how, $e.Det.Path)
+        $script:Done.Add("$($ToolSpecs['cmake'].Name) $($e.Det.Text) ($how)")
     }
 }
 

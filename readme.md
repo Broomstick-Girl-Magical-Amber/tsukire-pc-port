@@ -117,13 +117,7 @@ Some heroines and scenes. Hisui comes first by arbitrary choice.
    - Copy your `.xci` / `.nsp` into the repository root. It does not matter which file is which edition: the script recognises the container by its header and the edition by the program ID. Or keep it elsewhere and use `-InputFile`.
 
 
-3. **Install the requirements.** This takes about 30 to 60 minutes, and more on slower PCs (building `ffmpeg` is the longest part). The console may look stuck on a step; that is normal, so do not close it.
-   > **Warning:** Windows Defender scans every file the `ffmpeg` build creates, which can make the build several times slower. Before running the script, you can exclude the vcpkg folder from scanning. Open a new PowerShell tab **as administrator** and run:
-   >
-   > ```powershell
-   > Add-MpPreference -ExclusionPath 'C:\dev\vcpkg'
-   > ```
-   > If `Add-MpPreference` fails (for example with error `0x800106ba`), Windows Defender is not active on that PC, usually because another antivirus is installed. Skip this step: the installation works the same. That other antivirus may slow the build in the same way; if so, exclude `C:\dev\vcpkg` in that program.
+3. **Install requirements.** This takes about 15 minutes, and more on slower PCs. The console may look quiet on a step; that is normal, so do not close it.
 
    Then run the script (a normal, non-administrator console is fine; it asks for administrator permission once by itself):
 
@@ -131,11 +125,10 @@ Some heroines and scenes. Hisui comes first by arbitrary choice.
       ```powershell
       powershell -ExecutionPolicy Bypass -File .\tools\install_requirements.ps1
       ```
-    The console may stay quiet for long periods while ffmpeg builds. If it seems frozen, do not click inside the window: clicking pauses output in the Windows console. Press Esc or Enter and it continues.
- 
 
 
-4. **Recompile an edition.** `-Edition` is mandatory. **Close the console and open a new one first**: the installer puts the tools in the system `PATH`, but a console that was already open does not see them. This takes about 20 minutes or more on slower PCs.
+
+4. **Recompile an edition.** `-Edition` is mandatory, **close the console and open a new one first**. This takes about 20 minutes or more on slower PCs. If the console seems frozen while this script runs, do not click inside the window: clicking pauses output in the Windows console. Press Esc or Enter and it continues.
 
     **Note: You must be in the root folder to run this script (tsukire-pc-port) and I recommend install/update your GPU drivers before launching the game**
 
@@ -229,7 +222,7 @@ You provide:
 
 - A legal dump of the game, **base version v0 (1.0.0) only**, as `.xci` or `.nsp`, one per edition. The container format does not matter: either edition works in either format. An `.nsp` that bundles an update, or a dump that is already an updated version, is rejected as the base game (standalone updates and patches go in `updates\`, see [Updates and patches](#updates-and-patches)). (An `.xci` with an update partition is fine: only its base game is read.) Step 3 of `recomp_tsukihime.ps1` also refuses a binary other than the one the port was measured against.
 - Your own `prod.keys`.
-- On the working drive (`data\` + `build\`) you need about **22 GB for `japan edition`, 24 GB for `global edition` and 46 GB for both**. I recommend having 60 GB free. Keep the dumps on another drive if you can (use `-InputFile` to point to them). If they are on the same drive, add their size, because the scripts never delete them.
+- On the working drive (`data\` + `build\`) you need about **22 GB for `japan edition`, 24 GB for `global edition` and 46 GB for both**. The tools that `install_requirements.ps1` installs take about **16 GB more, mostly on `C:`**. If the repository is also on `C:`, it adds about 38 GB for japan edition, so I recommend having 80 GB free for using it on both. Keep the dumps on another drive if you can (use `-InputFile` to point to them). If they are on the same drive, add their size, because the scripts never delete them.
 
 
 ## Playing
@@ -240,7 +233,7 @@ You provide:
 
 ### Controls
 
-Defaults. The keyboard and mouse follow the layout of *Fate/stay night [Realta Nua]*. The controller layout follows the Nintendo one by **position**, so the right-hand button (B on an Xbox pad) advances the text.
+Defaults. The keyboard and mouse follow the layout of *Fate/stay night*. The controller layout follows the Nintendo one by **position**, so the right-hand button (B on an Xbox pad) advances the text.
 
 | Action in game | Keyboard | Xbox controller |
 |---|---|---|
@@ -310,7 +303,8 @@ This repository is under the **MIT License** ([LICENSE](LICENSE)). [NOTICE.md](N
 
 - **SuperMarioWonderRecomp** by BelmanteGu, MIT: the base of `framework/`. Its license and copyright notice are kept in `framework/LICENSE` and must stay with any copy of that code. Reference (currently offline): <https://github.com/BelmanteGu/SuperMarioWonderRecomp>. The Wonder-specific launcher art and icons were removed from the fork.
 - **Ryujinx / Ryubing**: Ryujinx is a Nintendo Switch emulator, and Ryubing is the project the pinned source comes from. This port is not an emulator and does not use the emulator itself: only its shader translator is used, offline, to turn the game's Maxwell shaders into SPIR-V. It is not included in this repository: the install script downloads a pinned tarball from [Codeberg](https://codeberg.org/Software_arch/Ryubing), verifies it, and builds the translator locally with the patches in `framework/tools/maxwell/spirv_harness/translator/`. The harness describes it as MIT-licensed.
-- **FFmpeg, libopus, SDL3, libjpeg-turbo, libpng and zlib**: installed through vcpkg, not included in this repository, and each one is under its own license. The built `.exe` is placed next to their DLLs.
+- **libopus, SDL3, libjpeg-turbo, libpng and zlib**: installed through vcpkg, not included in this repository, and each one is under its own license. The built `.exe` is placed next to their DLLs.
+- **FFmpeg** (LGPL): the install script downloads the prebuilt, unmodified FFmpeg 9.0 "shared" LGPL build published by [BtbN](https://github.com/BtbN/FFmpeg-Builds) (fixed URL and SHA-256, checked before it is unpacked). It is not included in this repository. The built `.exe` is placed next to its DLLs.
 - **Vulkan SDK** (LunarG): installed by the script for the headers and `spirv-val`, under its own license.
 - **Noto Sans JP** (`resources/fonts`): SIL Open Font License 1.1, with `OFL.txt` next to the font.
 - Build tools such as LLVM, CMake, Ninja, `nstool` and `xwin` are downloaded by the install scripts from their official sources and are not redistributed here.

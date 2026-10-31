@@ -18,9 +18,14 @@ Exit code 0 unless something is really broken; a missing input only skips that o
 keeps the original icons for the device it cannot show).
 """
 import argparse
+import concurrent.futures
+import contextlib
 import glob
+import io
 import os
 import sys
+import time
+import traceback
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -67,7 +72,8 @@ def wanted(name):
     return name == ATLAS_NAME or name.startswith(MANUAL_PREFIX)
 
 
-def build_manifest(root, edition, out, force):
+def build_manifest(root, edition, out, force, defer=None):
+    # AP_HUD_PARALLEL: with a list in `defer` the controls tables are not built here: their arguments are appended to it
     import ui_archive
     stack = layers(root, edition)
     if not stack:
@@ -104,7 +110,10 @@ def build_manifest(root, edition, out, force):
                     hashes.append(line)
                     print(f"  {line}  ({os.path.relpath(files[2], root)}, {entry})")
                     if name.startswith(MANUAL_PREFIX):
-                        build_manual_variant(root, lin, w, h, digest, os.path.dirname(out), inputs, force)
+                        if defer is None:
+                            build_manual_variant(root, lin, w, h, digest, os.path.dirname(out), inputs, force)
+                        else:
+                            defer.append((root, lin, w, h, digest, os.path.dirname(out), list(inputs), force))
     if not hashes:
         print(f"WARNING: no {ATLAS_NAME} texture found in the {edition} romfs: no manifest, the game keeps its icons")
         return False
@@ -167,12 +176,59 @@ def build_keyboard(root, out, force):
     print(f"  keyboard_tiles.bin: {len(slots)} slots, {len(tiles)} tiles, {os.path.getsize(out)} bytes")
 
 
+# AP_HUD_PARALLEL: the independent builds in a pool of worker processes. A task is (label, function, arguments); the
+# functions are the ones above, at module level so that Windows (spawn) can import them in the workers.
+def _run_task(fn, args):
+    """In the worker: runs one task with its output collected. Returns (output, error text or None, seconds)."""
+    buf = io.StringIO()
+    err = None
+    t0 = time.time()
+    with contextlib.redirect_stdout(buf):
+        try:
+            fn(*args)
+        except Exception:  # reported by the caller; the other tasks go on
+            err = traceback.format_exc()
+    return buf.getvalue(), err, time.time() - t0
+
+
+def build_parallel(root, edition, out_dir, force, jobs):
+    t0 = time.time()
+    tables = []
+    build_manifest(root, edition, os.path.join(out_dir, "manifest.txt"), force, defer=tables)
+    tasks = [("keyboard tiles", build_keyboard, (root, os.path.join(out_dir, "keyboard_tiles.bin"), force))]  # the longest first
+    for t in tables:
+        tasks.append((f"controls table manual_{t[4]:016x}", build_manual_variant, t))
+    for dev in ("xbox", "ps"):
+        tasks.append((f"{dev} atlas", build_pad_atlas, (root, dev, os.path.join(out_dir, f"help_key_{dev}.bc7"), force)))
+    workers = max(1, min(jobs, len(tasks)))
+    print(f"  {len(tasks)} tasks on {workers} worker process(es) (--jobs 1: one after the other)")
+    failed = 0
+    with concurrent.futures.ProcessPoolExecutor(max_workers=workers) as pool:
+        futures = [(label, pool.submit(_run_task, fn, args)) for label, fn, args in tasks]
+        for label, fut in futures:  # printed in the order the tasks were queued
+            try:
+                out, err, secs = fut.result()
+            except Exception:  # the worker itself died
+                out, err, secs = "", traceback.format_exc(), 0.0
+            print(f"  [{label}] ({secs:.1f} s)")
+            for line in out.splitlines():
+                print(line)
+            if err:
+                failed += 1
+                print(f"ERROR in {label}:")
+                print(err)
+    print(f"  HUD icons done in {time.time() - t0:.1f} s" + (f"; {failed} task(s) FAILED" if failed else ""))
+    return 1 if failed else 0
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--edition", required=True, choices=sorted(DATA_DIRS))
     ap.add_argument("--root", default=os.path.normpath(os.path.join(HERE, os.pardir, os.pardir)),
                     help="port root (default: two folders above this script)")
     ap.add_argument("--force", action="store_true")
+    ap.add_argument("--jobs", type=int, default=0,
+                    help="worker processes (default 0 = number of CPUs minus one, at most one per task; 1 = one task after the other)")
     a = ap.parse_args()
     try:
         import numpy  # noqa: F401
@@ -184,11 +240,14 @@ def main():
     root = os.path.abspath(a.root)
     out_dir = os.path.join(root, DATA_DIRS[a.edition], "hud")
     print(f"HUD icons ({a.edition}) -> {os.path.relpath(out_dir, root)}")
-    build_manifest(root, a.edition, os.path.join(out_dir, "manifest.txt"), a.force)
-    for dev in ("xbox", "ps"):
-        build_pad_atlas(root, dev, os.path.join(out_dir, f"help_key_{dev}.bc7"), a.force)
-    build_keyboard(root, os.path.join(out_dir, "keyboard_tiles.bin"), a.force)
-    return 0
+    jobs = a.jobs if a.jobs > 0 else max(1, (os.cpu_count() or 1) - 1)  # AP_HUD_PARALLEL: leave one CPU free
+    if jobs == 1:
+        build_manifest(root, a.edition, os.path.join(out_dir, "manifest.txt"), a.force)
+        for dev in ("xbox", "ps"):
+            build_pad_atlas(root, dev, os.path.join(out_dir, f"help_key_{dev}.bc7"), a.force)
+        build_keyboard(root, os.path.join(out_dir, "keyboard_tiles.bin"), a.force)
+        return 0
+    return build_parallel(root, a.edition, out_dir, a.force, jobs)
 
 
 if __name__ == "__main__":
