@@ -28,6 +28,13 @@
 
 namespace fs = std::filesystem;
 
+#ifdef NX_TITLE_MUSIC
+// AP_TITLE_MUSIC (apply_title_music.py): the title screen tracks (games/tsukihime_common/title_bg.cpp). "" = no change.
+namespace tsuki_title {
+std::string remap_stream(const std::string& path);
+}  // namespace tsuki_title
+#endif
+
 namespace nx {
 
 namespace {
@@ -370,6 +377,17 @@ void GetEntryType(CPU& c) {  // (DirectoryEntryType* out, path)
 void OpenFile(CPU& c) {  // (FileHandle* out, path, int mode: 1 read, 2 write, 4 append)
     std::lock_guard lk(g_fs);
     std::string guest = cstr(c.x[1]);
+#ifdef NX_TITLE_MUSIC
+    if (!(int(c.x[2]) & 2)) {  // AP_TITLE_MUSIC: the title screen music may be another track (read only)
+        const std::string alt = tsuki_title::remap_stream(guest);
+        if (!alt.empty()) {
+            std::error_code ec0;
+            const fs::path q = resolve(alt);
+            if (!q.empty() && fs::is_regular_file(q, ec0)) guest = alt;
+            else log("title: %s does not exist, using %s", alt.c_str(), guest.c_str());
+        }
+    }
+#endif
     fs::path p = resolve(guest);
     int mode = int(c.x[2]);
     if (const std::string* v = find_virtual(p)) {  // served from memory, through a temporary file

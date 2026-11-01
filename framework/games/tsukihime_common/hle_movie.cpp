@@ -33,6 +33,15 @@ void video_started(const void* key, const char* romfs_rel);
 void video_ended(const void* key);
 }  // namespace tsuki_discord
 
+// AP_TITLE_BG (apply_title_bg.py): which titlebg<N>.mp4 to serve (games/tsukihime_common/title_bg.cpp).
+// "" = the one the game asked for.
+namespace tsuki_title {
+std::string remap(const std::string& rel);
+// AP_TITLE_SCOPE (apply_title_scope.py): the music changes only while the title screen is up (title_bg.cpp).
+void video_started(const void* key, const char* rel);
+void video_ended(const void* key);
+}  // namespace tsuki_title
+
 using namespace movie_host;
 
 namespace {
@@ -241,6 +250,22 @@ std::string romfs_relative(const char* guest_path) {
     return p;
 }
 
+// AP_TITLE_BG (apply_title_bg.py): reads the video, but a titlebg<N> may be replaced by the one title.ini says. If the
+// replacement does not exist the game's own file is used. `rel` ends up being the file that was actually served.
+std::string read_video(std::string& rel) {
+    const std::string alt = tsuki_title::remap(rel);
+    if (!alt.empty() && alt != rel) {
+        std::string data = nx::read_game_file(alt);
+        if (!data.empty()) {
+            nx::log("title: %s -> %s", rel.c_str(), alt.c_str());
+            rel = alt;
+            return data;
+        }
+        nx::log("title: %s does not exist, using %s", alt.c_str(), rel.c_str());
+    }
+    return nx::read_game_file(rel);
+}
+
 // ============================================================================================== funciones libres
 
 void SetAllocator(nx::CPU&) {}  // usamos el heap del host
@@ -365,6 +390,7 @@ void Extractor_ctor(nx::CPU& c) {
 }
 void Extractor_D2(nx::CPU& c) {
     tsuki_discord::video_ended(ext(c.x[0]));  // AP_DISCORD
+    tsuki_title::video_ended(ext(c.x[0]));  // AP_TITLE_SCOPE
     delete ext(c.x[0]);
     slot8<Extractor>(c.x[0]) = nullptr;
 }
@@ -375,9 +401,10 @@ void Extractor_D0(nx::CPU& c) {
 }
 void Extractor_SetDataSource_path(nx::CPU& c) {
     std::string rel = romfs_relative(reinterpret_cast<const char*>(c.x[1]));
-    std::string data = nx::read_game_file(rel);
+    std::string data = read_video(rel);  // AP_TITLE_BG
     nx::log("movie: SetDataSource(\"%s\") -> %zu bytes", rel.c_str(), data.size());
     if (!data.empty()) tsuki_discord::video_started(ext(c.x[0]), rel.c_str());  // AP_DISCORD
+    if (!data.empty()) tsuki_title::video_started(ext(c.x[0]), rel.c_str());  // AP_TITLE_SCOPE
     ret(c, data.empty() ? kIoError : ext(c.x[0])->open_memory(std::move(data)));
 }
 void Extractor_SetDataSource_mem(nx::CPU& c) {
@@ -392,10 +419,11 @@ void Extractor_SetDataSource_reader(nx::CPU& c) {
     // directo por la ruta y el lector no se usa (no hace falta reconstruir la vtable de ClientStreamReader).
     const char* path = reinterpret_cast<const char*>(c.x[2]);
     std::string rel = romfs_relative(path);
-    std::string data = rel.empty() ? std::string() : nx::read_game_file(rel);
+    std::string data = rel.empty() ? std::string() : read_video(rel);  // AP_TITLE_BG
     nx::log("movie: SetDataSource(ClientStreamReader=%llx, \"%s\") -> abierto por ruta, %zu bytes",
             (unsigned long long)c.x[1], path ? path : "(null)", data.size());
     if (!data.empty()) tsuki_discord::video_started(ext(c.x[0]), rel.c_str());  // AP_DISCORD
+    if (!data.empty()) tsuki_title::video_started(ext(c.x[0]), rel.c_str());  // AP_TITLE_SCOPE
     ret(c, data.empty() ? kIoError : ext(c.x[0])->open_memory(std::move(data)));
 }
 void Extractor_GetTrackCount(nx::CPU& c) {

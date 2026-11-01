@@ -1,0 +1,28 @@
+; title.ini - which background video the title screen shows (Tsukihime, both editions).
+; Copy it as title.ini next to the exe, or into the data root of each edition (data\tsuki and data\tsuki_global),
+; or point NX_TITLE_INI at any file. NX_TITLE_BG=<value> overrides "video" without editing the file.
+; Comments with ; or #. A mistake is written to the log with its line number and that line is skipped.
+; Changes are read when the game starts. Check the log: "title: titlebg1.mp4 -> titlebg3.mp4".
+;
+; The game normally picks titlebg1..4 by itself from the routes you have cleared. Here you replace that choice.
+; The music of the title screen is a separate track (not the audio of the mp4): videos 1, 2 and 3 share one track
+; (stream\MOON01_BGM02.opus) and video 4 has another (stream\MOON01_BGM59.opus). By default the music goes with the video.
+
+[title]
+; auto    the game's own choice (default; same as having no title.ini)
+; 1 to 4  always that video (movie\titlebg<N>.mp4)
+; random  a different video each time the title screen opens (never the same twice in a row)
+; cycle   the videos of "pool" in order, one per time the title screen opens
+video = auto
+
+; Only for random and cycle: which videos they use, separated by commas (default 1, 2, 3, 4).
+; pool = 1, 2, 3, 4
+
+; Music of the title screen.
+; follow  the music of the video that is shown (default; nothing changes while video = auto)
+; game    the game's own music, whatever the video is
+; 1 to 4  always the music of that video (works with video = auto too: e.g. the game's video with the music of the 4th)
+; music = follow
+;
+; The music only changes on the title screen (the story plays the same tracks and is never touched), including when you
+; come back to it from the game.

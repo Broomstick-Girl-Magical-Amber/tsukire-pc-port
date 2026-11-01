@@ -12,6 +12,8 @@ target_compile_definitions(${NX_GAME} PRIVATE NX_PACKAGED_LAYOUT_HLE)
 # AP_HUD_GLYPHS (apply_hud_glyphs.py): button icons of the HUD follow the last device used (hud_glyphs.cpp);
 # its files go to <data root>/hud (tools/hud/build_hud_assets.py). NX_HUD_GLYPHS=off at run time turns it off.
 target_compile_definitions(${NX_GAME} PRIVATE NX_HUD_GLYPHS)
+# AP_TITLE_MUSIC (apply_title_music.py): the music of the title screen can be another track (title_bg.cpp, title.ini)
+target_compile_definitions(${NX_GAME} PRIVATE NX_TITLE_MUSIC)
 # AP_ROMFS_MODS (apply_romfs_mods.py): romfs layers of <root>/mods/<edition>: mods copied by hand and the romfs of
 # the updates of <root>/updates (recomp_tsukihime.ps1)
 if(NX_GAME STREQUAL "tsukihime_global")
@@ -20,35 +22,11 @@ else()
     target_compile_definitions(${NX_GAME} PRIVATE NX_ROMFS_MODS NX_ROMFS_MODS_EDITION="japan")
 endif()
 
-# FFmpeg for the movie:: HLE.
-# AP_FFMPEG_PREBUILT (apply_ffmpeg_prebuilt.py): with NX_FFMPEG_ROOT (recomp_tsukihime.ps1 sets it to the prebuilt FFmpeg 9.0
-# LGPL that install_requirements.ps1 leaves in _prepare/ffmpeg: include/, lib/*.lib and bin/*.dll) that one is linked and
-# its DLLs are copied next to the exe; without it, the one from vcpkg (find_package(FFMPEG), x64-windows) as before.
-set(NX_FFMPEG_ROOT "" CACHE PATH "Prebuilt FFmpeg (include, lib, bin); empty = FFmpeg from vcpkg")
-if(NX_FFMPEG_ROOT)
-    if(NOT EXISTS "${NX_FFMPEG_ROOT}/include/libavcodec/avcodec.h")
-        message(FATAL_ERROR "NX_FFMPEG_ROOT=${NX_FFMPEG_ROOT} has no include/libavcodec/avcodec.h (install_requirements.ps1 step 5)")
-    endif()
-    target_include_directories(${NX_GAME} PRIVATE "${NX_FFMPEG_ROOT}/include")
-    foreach(nx_ff_name avcodec avformat avutil swscale swresample)
-        if(NOT EXISTS "${NX_FFMPEG_ROOT}/lib/${nx_ff_name}.lib")
-            message(FATAL_ERROR "${NX_FFMPEG_ROOT}/lib/${nx_ff_name}.lib does not exist (install_requirements.ps1 step 5)")
-        endif()
-        target_link_libraries(${NX_GAME} PRIVATE "${NX_FFMPEG_ROOT}/lib/${nx_ff_name}.lib")
-        file(GLOB nx_ff_dll "${NX_FFMPEG_ROOT}/bin/${nx_ff_name}-*.dll")
-        list(LENGTH nx_ff_dll nx_ff_dll_count)
-        if(NOT nx_ff_dll_count EQUAL 1)
-            message(FATAL_ERROR "${NX_FFMPEG_ROOT}/bin/${nx_ff_name}-*.dll: ${nx_ff_dll_count} files (1 expected)")
-        endif()
-        add_custom_command(TARGET ${NX_GAME} POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${nx_ff_dll}" "$<TARGET_FILE_DIR:${NX_GAME}>")
-    endforeach()
-else()
-    find_package(FFMPEG REQUIRED)
-    target_include_directories(${NX_GAME} PRIVATE ${FFMPEG_INCLUDE_DIRS})
-    target_link_directories(${NX_GAME} PRIVATE ${FFMPEG_LIBRARY_DIRS})
-    target_link_libraries(${NX_GAME} PRIVATE ${FFMPEG_LIBRARIES})
-endif()
+# FFmpeg (vcpkg, x64-windows) para el HLE de movie::.
+find_package(FFMPEG REQUIRED)
+target_include_directories(${NX_GAME} PRIVATE ${FFMPEG_INCLUDE_DIRS})
+target_link_directories(${NX_GAME} PRIVATE ${FFMPEG_LIBRARY_DIRS})
+target_link_libraries(${NX_GAME} PRIVATE ${FFMPEG_LIBRARIES})
 # libopus: HardwareOpusDecoder (hle_codec.cpp)
 set(NX_OPUS_ROOT "C:/vcpkg/installed/x64-windows" CACHE PATH "Prefijo de libopus (include/opus, lib, bin)")
 find_path(NX_OPUS_INCLUDE opus.h HINTS "${NX_OPUS_ROOT}/include/opus" REQUIRED)
