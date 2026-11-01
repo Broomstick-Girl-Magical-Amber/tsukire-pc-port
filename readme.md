@@ -113,7 +113,7 @@ Some heroines and scenes. Hisui comes first by arbitrary choice.
    ```
 
 2. **Put your files in place.**
-   - Create a `data` folder in the repository root and copy your `prod.keys` into it (`data\prod.keys`). The scripts only check that it exists and pass its path to `nstool`; they never read, copy or print it.
+   - Copy your `prod.keys` into (`data\prod.keys`). The scripts only check that it exists and pass its path to `nstool`; they never read, copy or print it.
    - Copy your `.xci` / `.nsp` into the repository root. It does not matter which file is which edition: the script recognises the container by its header and the edition by the program ID. Or keep it elsewhere and use `-InputFile`.
 
 

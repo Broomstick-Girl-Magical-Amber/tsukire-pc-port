@@ -177,6 +177,19 @@ function Download([string]$url, [string]$dst) {
     Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $tmp
     Move-Item -LiteralPath $tmp -Destination $dst -Force
 }
+# AP_CLEAN_DOWNLOADS (apply_clean_downloads.py): an installer or archive kept in <root>\_prepare only to be reused is deleted once its
+# step succeeded. Only inside $WorkDir; never fails the step; NX_KEEP_DOWNLOADS=1 keeps everything.
+function CleanDownload([string]$p) {
+    try {
+        if ($env:NX_KEEP_DOWNLOADS -or -not $p -or -not (Test-Path -LiteralPath $p)) { return }
+        $full = [IO.Path]::GetFullPath($p)
+        $base = [IO.Path]::GetFullPath($WorkDir).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+        if (-not $full.StartsWith($base, [StringComparison]::OrdinalIgnoreCase)) { return }
+        $mb = [double](@(Get-ChildItem -LiteralPath $full -Recurse -File -Force -ErrorAction SilentlyContinue) | Measure-Object Length -Sum).Sum / 1MB
+        Remove-Item -LiteralPath $full -Recurse -Force -ErrorAction Stop
+        Info ('removed {0} ({1:N0} MB)' -f (Split-Path $full -Leaf), $mb)
+    } catch { }
+}
 function IsAdmin {
     if (-not $OnWindows) { return $false }
     try { return ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) }
@@ -352,6 +365,7 @@ function EnsureWinget {
     if (-not (WingetAvailable)) { Fail "winget was installed but it does not appear in the PATH: open a new console and run again (or install it from the Store: $WingetStore)" }
     $script:Done.Add("winget $((RunCapture 'winget' @('--version')).Output -join ' ') (installed now)")
     Info "winget $((RunCapture 'winget' @('--version')).Output -join ' ') installed"
+    CleanDownload (PathOf $WorkDir 'winget')   # AP_CLEAN_DOWNLOADS: the package is installed, its files are not needed
 }
 function InstallWinget([string]$key) {
     $h = $ToolSpecs[$key]
@@ -401,6 +415,7 @@ function InstallVulkan {
     $dst = "C:\VulkanSDK\$ver"
     $p = Start-Process -FilePath $exe -Wait -PassThru -ArgumentList ('--root ' + (Quote $dst) + ' --accept-licenses --default-answer --confirm-command install')
     if ($p.ExitCode -ne 0) { Fail "the Vulkan SDK installer finished with code $($p.ExitCode)" }
+    CleanDownload $exe   # AP_CLEAN_DOWNLOADS
 }
 function InstallTool([string]$key) {
     switch ($key) {
@@ -890,6 +905,7 @@ function Step8 {
                 Move-Item -LiteralPath $tmp -Destination $ry
             } catch { if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue }; throw }
             Info "ryubing extracted into $ry ($RyubingFiles files, verified tree)"
+            CleanDownload $tgz   # AP_CLEAN_DOWNLOADS
         }
     }
     $dll = PathOf $Framework 'private\build\spirv_harness\bin\Release\net10.0\spirv_harness.dll'
