@@ -85,6 +85,7 @@ struct Extractor::Impl {
     AVPacket* raw = av_packet_alloc();
     AVPacket* cur = av_packet_alloc();
     bool have = false, eof = false;
+    int64_t off_us = 0, last_us = 0;  // AP_TITLE_FADE: time added after replace_memory; last time given to the game
 
     ~Impl() {
         for (auto* b : bsf) av_bsf_free(&b);
@@ -118,7 +119,7 @@ struct Extractor::Impl {
     int64_t to_us(const AVPacket* pkt) const {
         int64_t ts = pkt->pts != AV_NOPTS_VALUE ? pkt->pts : pkt->dts;
         if (ts == AV_NOPTS_VALUE) return 0;
-        return av_rescale_q(ts, fmt->streams[pkt->stream_index]->time_base, kMicros);
+        return av_rescale_q(ts, fmt->streams[pkt->stream_index]->time_base, kMicros) + off_us;
     }
 
     // Deja en `cur` la siguiente muestra de una pista seleccionada.
@@ -186,6 +187,65 @@ Status Extractor::open_memory(std::string data) {
             }
         }
     }
+    return kOk;
+}
+
+// AP_TITLE_LIVE (apply_title_live.py)
+Status Extractor::replace_memory(std::string data, int64_t base_us) {
+    std::lock_guard<std::recursive_mutex> lk(p_->m);
+    if (!p_->fmt) return kInvalidState;
+    Impl n;  // temporary demuxer: it is validated before touching the one that is playing
+    n.data = std::move(data);
+    const int kBuf = 1 << 16;
+    n.io = avio_alloc_context(static_cast<uint8_t*>(av_malloc(kBuf)), kBuf, 0, &n, &Impl::read_cb, nullptr, &Impl::seek_cb);
+    n.fmt = avformat_alloc_context();
+    n.fmt->pb = n.io;
+    if (avformat_open_input(&n.fmt, nullptr, nullptr, nullptr) < 0) return kIoError;
+    if (avformat_find_stream_info(n.fmt, nullptr) < 0) return kIoError;
+    if (n.fmt->nb_streams != p_->fmt->nb_streams) return kInvalidArgument;
+    for (unsigned i = 0; i < n.fmt->nb_streams; i++) {
+        const AVCodecParameters* a = p_->fmt->streams[i]->codecpar;
+        const AVCodecParameters* b = n.fmt->streams[i]->codecpar;
+        if (a->codec_type != b->codec_type || a->codec_id != b->codec_id || a->width != b->width || a->height != b->height ||
+            a->sample_rate != b->sample_rate)
+            return kInvalidArgument;
+    }
+    n.bsf.assign(n.fmt->nb_streams, nullptr);
+    for (unsigned i = 0; i < n.fmt->nb_streams; i++) {
+        AVStream* st = n.fmt->streams[i];
+        st->discard = p_->selected[i] ? AVDISCARD_DEFAULT : AVDISCARD_ALL;
+        if (st->codecpar->codec_id == AV_CODEC_ID_H264 && st->codecpar->extradata_size && st->codecpar->extradata[0] == 1) {
+            const AVBitStreamFilter* f = av_bsf_get_by_name("h264_mp4toannexb");
+            AVBSFContext* b = nullptr;
+            if (f && av_bsf_alloc(f, &b) == 0) {
+                avcodec_parameters_copy(b->par_in, st->codecpar);
+                b->time_base_in = st->time_base;
+                if (av_bsf_init(b) == 0) n.bsf[i] = b;
+                else av_bsf_free(&b);
+            }
+        }
+    }
+    // everything fits: the old demuxer is freed and the new one (and its data) moves in
+    for (auto*& b : p_->bsf) av_bsf_free(&b);
+    avformat_close_input(&p_->fmt);
+    av_freep(&p_->io->buffer);
+    avio_context_free(&p_->io);
+    p_->data = std::move(n.data);
+    p_->pos = n.pos;
+    p_->io = n.io;
+    p_->io->opaque = p_.get();
+    p_->fmt = n.fmt;
+    p_->bsf = std::move(n.bsf);
+    n.io = nullptr, n.fmt = nullptr, n.bsf.clear();
+    av_packet_unref(p_->cur);
+    av_packet_unref(p_->raw);
+    p_->have = false;
+    p_->eof = false;
+    // AP_TITLE_FADE: the new video goes on from the time the old one had reached (30 fps)
+    const int64_t before = base_us >= 0 ? base_us : p_->last_us;  // AP_TITLE_SYNC
+    p_->off_us = 0;
+    p_->fill();
+    if (p_->have) p_->off_us = before + 33333 - p_->to_us(p_->cur);
     return kOk;
 }
 
@@ -262,6 +322,7 @@ Status Extractor::seek_to(int64_t time_us) {
     if (!p_->fmt) return kInvalidState;
     if (av_seek_frame(p_->fmt, -1, av_rescale_q(time_us, kMicros, AV_TIME_BASE_Q), AVSEEK_FLAG_BACKWARD) < 0)
         return kIoError;
+    p_->off_us = 0;  // AP_TITLE_FADE: a seek is an absolute time again
     for (auto* b : p_->bsf)
         if (b) av_bsf_flush(b);
     p_->eof = false;
@@ -304,6 +365,7 @@ Status Extractor::sample_time(int64_t* time_us) {
     p_->ensure();
     if (!p_->have) return kEndOfStream;
     *time_us = p_->to_us(p_->cur);
+    p_->last_us = *time_us;  // AP_TITLE_FADE
     return kOk;
 }
 
@@ -374,6 +436,7 @@ struct Decoder::Impl {
     std::deque<AVPacket*> pending;  // entradas copiadas, aun sin mandar al decoder
     std::deque<int> ready;          // salidas listas para AcquireOutputBufferIndex
     bool started = false, eos_in = false, drain_sent = false, eos_out = false;
+    int64_t last_out_us = -1;  // AP_TITLE_SYNC: time of the last output the game acquired
     int width = 0, height = 0;
     uint64_t work_ns = 0;  // tiempo en avcodec_send_packet / receive_frame desde la ultima salida guardada
     static uint64_t now_ns() {
@@ -644,6 +707,7 @@ Status Decoder::acquire_output_index(int* index, int64_t* time_us, uint32_t* fla
     *index = o;
     *time_us = p_->out[o].time_us;
     *flags = p_->out[o].flags;
+    if (p_->kind == DecoderKind::Video) p_->last_out_us = p_->out[o].time_us;  // AP_TITLE_SYNC
     return kOk;
 }
 
@@ -675,6 +739,20 @@ bool Decoder::pump() {
     if (!p_->started) return false;
     if (p_->ready.empty()) p_->produce();
     return !p_->ready.empty();
+}
+
+// AP_TITLE_SYNC (apply_title_sync.py)
+void Decoder::drop_pending() {
+    std::lock_guard<std::recursive_mutex> lk(p_->m);
+    for (auto* q : p_->pending) av_packet_free(&q);
+    p_->pending.clear();
+    if (p_->ctx) avcodec_flush_buffers(p_->ctx);
+    p_->drain_sent = false;
+}
+bool Decoder::is_video() const { return p_->kind == DecoderKind::Video; }
+int64_t Decoder::last_output_us() const {
+    std::lock_guard<std::recursive_mutex> lk(p_->m);
+    return p_->last_out_us;
 }
 
 bool Decoder::has_free_input() const {

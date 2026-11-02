@@ -14,6 +14,8 @@ target_compile_definitions(${NX_GAME} PRIVATE NX_PACKAGED_LAYOUT_HLE)
 target_compile_definitions(${NX_GAME} PRIVATE NX_HUD_GLYPHS)
 # AP_TITLE_MUSIC (apply_title_music.py): the music of the title screen can be another track (title_bg.cpp, title.ini)
 target_compile_definitions(${NX_GAME} PRIVATE NX_TITLE_MUSIC)
+# AP_TITLE_LIVE (apply_title_live.py): F5 / F6 change the title screen video while it is up
+target_compile_definitions(${NX_GAME} PRIVATE NX_TITLE_LIVE)
 # AP_ROMFS_MODS (apply_romfs_mods.py): romfs layers of <root>/mods/<edition>: mods copied by hand and the romfs of
 # the updates of <root>/updates (recomp_tsukihime.ps1)
 if(NX_GAME STREQUAL "tsukihime_global")
