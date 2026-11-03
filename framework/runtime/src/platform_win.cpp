@@ -23,6 +23,11 @@
 #include "kernel.h"
 #include "platform.h"
 
+#ifdef NX_TITLE_LIVE  // AP_TITLE_LIVE (apply_title_live.py): F5 / F6 change the title video (title_bg.cpp)
+namespace tsuki_title {
+void hotkey(int dir);
+}
+#endif
 namespace nx {
 HWND g_window = nullptr;
 void boot();
@@ -305,6 +310,9 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM w, LPARAM l) {
             ExitProcess(0);
         case WM_KEYDOWN:
             if (w == VK_F11) toggle_fullscreen(h);
+#ifdef NX_TITLE_LIVE  // AP_TITLE_LIVE
+            if ((w == VK_F5 || w == VK_F6) && !(l & (1 << 30))) tsuki_title::hotkey(w == VK_F6 ? 1 : -1);
+#endif
 #ifdef NX_FIXED_ASPECT  // AP_ASPECT: Ctrl+1/2/3, the window at 50/75/100% of 1920 px wide
             if (w >= '1' && w <= '3' && GetKeyState(VK_CONTROL) < 0)
                 set_client_width(h, w == '1' ? 50 : w == '2' ? 75 : 100);

@@ -1,7 +1,7 @@
 # install_requirements.ps1 - Gets a Windows PC ready to recompile Tsukihime (both editions) with recomp_tsukihime.ps1.
 # On Linux it is launched by tools/linux/install_requirements_linux.sh (PowerShell 7): same steps, with the Linux tools
-# defined in tools/linux/install_requirements_linux.ps1 (tarballs with a fixed SHA-256, xwin, nstool built from
-# source) and the Windows exe cross-compiled.
+# defined in tools/linux/install_requirements_linux.ps1 (tarballs with a fixed SHA-256, xwin) and the Windows exe
+# cross-compiled.
 #
 # Before: clone the port repo into <root> (it includes framework\). This script does not clone.
 #   powershell -ExecutionPolicy Bypass -File <root>\tools\install_requirements.ps1    # the root is the folder above tools\
@@ -9,8 +9,15 @@
 #   .\install_requirements.ps1 -Check                  # only checks: installs nothing, clones nothing, creates nothing
 #   .\install_requirements.ps1 -From 5                 # resume (each step checks its own part again)
 #   .\install_requirements.ps1 -CrossRecomp            # at the end, recomp_tsukihime.ps1 -From 0 -To 0 of the chosen editions
+#   .\install_requirements.ps1 -Recomp -Edition global # AP_INSTALL_FLOW: tools + recompile that edition in ONE run
+#       checks keys + dump first (read only), extracts and translates shaders BEFORE vcpkg, builds after it;
+#       needs -Edition global|japan|both (one dump per edition in the root, or -InputFile / -Keys as in recomp_tsukihime.ps1)
+#   Every run prints the time of each step and appends it to <root>\_prepare\step_times.log
 #   .\install_requirements.ps1 -Edition global         # only one edition (global | japan | both): space, cross check and summary
 #   .\install_requirements.ps1 -VcpkgCache D:\vcpkgbin # vcpkg binary cache (another copy of %LOCALAPPDATA%\vcpkg\archives)
+#   .\install_requirements.ps1 -Toolchain xwin         # AP_TOOLCHAIN_XWIN: no VS Build Tools (tools\internal\install_requirements_xwin.ps1):
+#       clang-cl + xwin + the prebuilt pack of tools\internal\prebuilt.json, per user, no administrator. -Toolchain auto (the
+#       default) uses it when prebuilt.json has the pack; -Toolchain vs = VS Build Tools, .NET, Vulkan SDK and vcpkg as before
 #
 # Steps (if what the step does is already there and meets the rule, it is skipped):
 #   0 precheck       Windows, PowerShell, winget, network, space; status of each tool
@@ -19,9 +26,10 @@
 #   2 user           Python 3.12 and Ninja (no administrator)
 #   3 repo           checks the already cloned port repo (origin, branch, uncommitted changes) and that framework\ is inside
 #   4 vcpkg          clone at the reference commit + bootstrap
-#   5 libraries      vcpkg install ffmpeg opus libjpeg-turbo libpng zlib sdl3 (x64-windows Release only; the longest)
+#   5 libraries      prebuilt FFmpeg 9.0 LGPL from BtbN (fixed SHA-256, to _prepare\ffmpeg; AP_FFMPEG_PREBUILT) and
+#                    vcpkg install opus libjpeg-turbo libpng zlib sdl3 (x64-windows Release only)
 #   6 venv           framework\private\venv with tools\requirements.txt (exact versions)
-#   7 nstool         tools\nstool.exe 1.9.2 (fixed SHA-256)
+#   7 nsextract      dotnet build tools\nsextract (C#, LibHac from NuGet): the extractor recomp_tsukihime.ps1 uses (AP_DROP_UNUSED)
 #   8 ryubing        private\third_party\ryubing (Codeberg tarball, verified tree) + spirv_harness
 #   9 gpu            Vulkan 1.3 + dynamicRendering + synchronization2 (warning only)
 #  10 cross check    recomp_tsukihime.ps1 -From 0 -To 0 (only with -CrossRecomp)
@@ -40,8 +48,11 @@ param(
     [switch]$Check,
     [switch]$NonInteractive,
     [switch]$CrossRecomp,
+    [switch]$Recomp,
+    [string]$InputFile = '',
+    [string]$Keys = '',
     [string]$Vcpkg = 'C:\dev\vcpkg',
-    [string]$NstoolFrom = '',
+    # AP_DROP_UNUSED: -NstoolFrom removed
     [ValidateSet('global', 'japan', 'both')][string]$Edition = 'both',
     [switch]$VcpkgWithDebug,
     [string]$VcpkgCache = '',
@@ -53,19 +64,27 @@ param(
     [switch]$AdminOnly,
     [string]$List = '',
     [string]$ResultFile = '',
-    [switch]$FunctionsOnly
+    [switch]$FunctionsOnly,
+    # AP_INSTALL_PARALLEL (internal): -AdminChild = one tool installed in parallel by the elevated instance;
+    # -Worker = step 5 in the background (StartVcpkgWorker)
+    [switch]$AdminChild,
+    [switch]$Worker,
+    # AP_TOOLCHAIN_XWIN: auto | xwin | vs (see above); -Chain is internal (one chain of step 1 in the xwin flow)
+    [ValidateSet('auto', 'xwin', 'vs')][string]$Toolchain = 'auto',
+    [string]$Chain = ''
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2
 $ProgressPreference = 'SilentlyContinue'   # the Invoke-WebRequest progress bar of PowerShell 5.1 makes downloads very slow
+$EditionGiven = $PSBoundParameters.ContainsKey('Edition')   # AP_INSTALL_FLOW
 
 # ---------------------------------------------------------------------------------------------- references
 # Versions of the reference PC (2026-10-19). Pin = the one installed; Meets = what is accepted if already present.
 $ToolSpecs = [ordered]@{
     vs     = @{ Name = 'VS Build Tools (C++)'; Admin = $true; Winget = 'Microsoft.VisualStudio.BuildTools'; Pin = ''
                 Rule = '17.x or 18.x with VC.Tools x64 (reference 18.9)'; Detect = 'DetectVS'; Meets = { param($v) $v.Major -ge 17 }
-                Override = '--quiet --wait --norestart --nocache --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended' }
+                Override = '--quiet --wait --norestart --nocache --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --add Microsoft.VisualStudio.Component.VC.CMake.Project --remove Microsoft.VisualStudio.Component.VC.ASAN --remove Microsoft.VisualStudio.Component.TestTools.BuildTools --remove Microsoft.VisualStudio.Component.Vcpkg' }   # AP_INSTALL_IO: --remove of 3 recommended components nothing here uses   # AP_CMAKE_FROM_VS: its CMake is used
     llvm   = @{ Name = 'LLVM (clang-cl)'; Admin = $true; Winget = 'LLVM.LLVM'; Pin = '23.1.3'
                 Rule = '23.x'; Detect = 'DetectLLVM'; Meets = { param($v) $v.Major -eq 23 } }
     cmake  = @{ Name = 'CMake'; Admin = $true; Winget = 'Kitware.CMake'; Pin = '4.4.4'
@@ -82,10 +101,17 @@ $ToolSpecs = [ordered]@{
                 Rule = '>= 1.11'; Detect = 'DetectNinja'; Meets = { param($v) $v -ge [version]'1.11' } }
 }
 $VcpkgCommit = 'bf19794383e8fb95eba5aa553235bc8ec2271688'
-$VcpkgPorts = @('ffmpeg', 'opus', 'libjpeg-turbo', 'libpng', 'zlib', 'sdl3')
+$VcpkgPorts = @('opus', 'libjpeg-turbo', 'libpng', 'zlib', 'sdl3')
+# AP_FFMPEG_PREBUILT (apply_ffmpeg_prebuilt.py): FFmpeg is not built by vcpkg any more. FFmpeg 9.0 LGPL "shared" build of BtbN
+# (include, lib\*.lib, bin\*.dll), month-end autobuild 2026-09-30 (BtbN keeps those for two years), n9.0.2 like the vcpkg
+# reference commit. SHA-256 of the winget manifest BtbN.FFmpeg.LGPL.Shared.9.0 9.0.2-20260930 (also measured on the zip).
+$FfmpegUrl = 'https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-30-13-08/ffmpeg-n9.0.2-17-g2a571b6068-win64-lgpl-shared-9.0.zip'
+$FfmpegSha256 = '7157177B8A6CB2174C1650BA8C71B363F2C78CBA5330F88C4C02CF5B2B880646'
+$FfmpegDirName = 'ffmpeg-n9.0.2-17-g2a571b6068-win64-lgpl-shared-9.0'
+$FfmpegLibs = @('avcodec', 'avformat', 'avutil', 'swscale', 'swresample')
+$FfmpegDlls = @('avcodec-63.dll', 'avformat-63.dll', 'avutil-61.dll', 'swscale-10.dll', 'swresample-7.dll')
 $VcpkgRepo = 'https://github.com/microsoft/vcpkg.git'
-$NstoolTag = 'v1.9.2'
-$NstoolSha256 = '844648190DD8688098887A369DA1126C1B3AB1C2A664FB603B01CB22E76B6CA9'
+# AP_DROP_UNUSED: $NstoolTag / $NstoolSha256 removed
 $RyubingUrl = 'https://codeberg.org/Software_arch/Ryubing/archive/a82350bb77.tar.gz'
 # Ryubing tree of the reference PC: "path  SHA256" per file (without the bin\ and obj\ the build leaves), ordinal order,
 # separated by LF, final LF; SHA-256 of that text in UTF-8.
@@ -97,7 +123,7 @@ $RyubingHash = '20D9B5394F6B24316980BE1870ED22375CF684C88ADBB1D8782083F2905D8D8F
 # what step 2 of recomp uses while it extracts one edition (encrypted container/NCA, deleted at the end). The dumps are not
 # counted: they can be elsewhere (-InputFile); in the root, add their size (recomp never deletes them).
 $SpacePerEdition = @{ global = 24GB; japan = 22GB }
-$SpaceExtract = 24GB
+$SpaceExtract = 2GB   # AP_DROP_UNUSED: was 24 GB, the intermediate NCA of nstool; nsextract writes only exefs + romfs (counted above)
 $SpaceC = @{ WithDebug = 25GB; ReleaseOnly = 18GB }   # VS Build Tools, SDKs, vcpkg with ffmpeg (buildtrees during the build)
 $WingetStore = 'https://apps.microsoft.com/detail/9NBLGGH4NNS1'   # App Installer (winget), Microsoft Store
 
@@ -160,6 +186,48 @@ function Download([string]$url, [string]$dst) {
     Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $tmp
     Move-Item -LiteralPath $tmp -Destination $dst -Force
 }
+# AP_CLEAN_DOWNLOADS (apply_clean_downloads.py): an installer or archive kept in <root>\_prepare only to be reused is deleted once its
+# step succeeded. Only inside $WorkDir; never fails the step; NX_KEEP_DOWNLOADS=1 keeps everything.
+function CleanDownload([string]$p) {
+    try {
+        if ($env:NX_KEEP_DOWNLOADS -or -not $p -or -not (Test-Path -LiteralPath $p)) { return }
+        $full = [IO.Path]::GetFullPath($p)
+        $base = [IO.Path]::GetFullPath($WorkDir).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+        if (-not $full.StartsWith($base, [StringComparison]::OrdinalIgnoreCase)) { return }
+        $mb = [double](@(Get-ChildItem -LiteralPath $full -Recurse -File -Force -ErrorAction SilentlyContinue) | Measure-Object Length -Sum).Sum / 1MB
+        Remove-Item -LiteralPath $full -Recurse -Force -ErrorAction Stop
+        Info ('removed {0} ({1:N0} MB)' -f (Split-Path $full -Leaf), $mb)
+    } catch { }
+}
+# AP_INSTALL_IO: tar.exe (bsdtar, System32 since Windows 10 1803) unpacks a zip much faster than Expand-Archive of
+# Windows PowerShell 5.1; if it is missing or fails, Expand-Archive as before (and always on Linux).
+function Unzip([string]$zip, [string]$dst) {
+    $tar = if ($OnWindows) { "$env:SystemRoot\System32\tar.exe" } else { '' }
+    if ($tar -and (Test-Path -LiteralPath $tar)) {
+        New-Item -ItemType Directory -Path $dst -Force | Out-Null
+        $r = RunCapture $tar @('-xf', $zip, '-C', $dst)
+        if ($r.Code -eq 0) { return }
+        Warn "tar.exe could not unpack $(Split-Path -Leaf $zip) ($($r.Output | Select-Object -Last 1)): .NET ZipFile"
+        Remove-Item -LiteralPath $dst -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    # AP_UNZIP_DOTNET: .NET directly instead of Expand-Archive (a background pwsh on Linux could not load the
+    # Microsoft.PowerShell.Archive module, 2026-11-03). Overwrites like Expand-Archive -Force.
+    Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Path $dst -Force | Out-Null
+    $full = [IO.Path]::GetFullPath($dst)
+    if ($PSVersionTable.PSVersion.Major -ge 6) { [IO.Compression.ZipFile]::ExtractToDirectory([IO.Path]::GetFullPath($zip), $full, $true); return }
+    $za = [IO.Compression.ZipFile]::OpenRead([IO.Path]::GetFullPath($zip))   # Windows PowerShell 5.1: no overwrite overload
+    try {
+        foreach ($e in $za.Entries) {
+            $out = [IO.Path]::GetFullPath((Join-Path $full $e.FullName))
+            if (-not $out.StartsWith($full, [StringComparison]::OrdinalIgnoreCase)) { Fail "$(Split-Path -Leaf $zip): entry outside the folder ($($e.FullName))" }
+            if ($e.FullName.EndsWith('/') -or $e.FullName.EndsWith('\')) { New-Item -ItemType Directory -Path $out -Force | Out-Null; continue }
+            New-Item -ItemType Directory -Path (Split-Path -Parent $out) -Force | Out-Null
+            [IO.Compression.ZipFileExtensions]::ExtractToFile($e, $out, $true)
+        }
+    } finally { $za.Dispose() }
+}
+
 function IsAdmin {
     if (-not $OnWindows) { return $false }
     try { return ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) }
@@ -222,8 +290,16 @@ function DetectVS {
     return @{ Version = [version]'0.0'; Path = $p; Text = 'without the C++ component (VC.Tools x64)'; NoVC = $true; Product = $prod }
 }
 function DetectLLVM { FirstThatRuns @("$env:ProgramFiles\LLVM\bin\clang-cl.exe", (InPath 'clang-cl')) @('--version') 'clang version (\d+\.\d+\.\d+)' }
+# AP_CMAKE_FROM_VS (apply_cmake_from_vs.py): the CMake of the "C++ CMake tools for Windows" component of VS Build Tools.
+function VsCmakeExe {
+    if (-not $OnWindows) { return $null }
+    $d = DetectVS
+    if (-not $d -or -not $d.Path) { return $null }
+    $e = PathOf $d.Path 'Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe'
+    if (Test-Path -LiteralPath $e -PathType Leaf) { return $e } else { return $null }
+}
 function DetectCMake {
-    FirstThatRuns @("$env:ProgramFiles\CMake\bin\cmake.exe", "$env:LOCALAPPDATA\Microsoft\WinGet\Links\cmake.exe", (InPath 'cmake')) @('--version') 'cmake version (\d+\.\d+\.\d+)'
+    FirstThatRuns @("$env:ProgramFiles\CMake\bin\cmake.exe", "$env:LOCALAPPDATA\Microsoft\WinGet\Links\cmake.exe", (InPath 'cmake'), (VsCmakeExe)) @('--version') 'cmake version (\d+\.\d+\.\d+)'
 }
 function DetectGit { FirstThatRuns @("$env:ProgramFiles\Git\cmd\git.exe", (InPath 'git')) @('--version') 'git version (\d+\.\d+\.\d+(\.windows\.\d+)?)' }
 function DetectNinja { FirstThatRuns @("$env:LOCALAPPDATA\Microsoft\WinGet\Links\ninja.exe", (InPath 'ninja')) @('--version') '(\d+\.\d+\.\d+)' }
@@ -310,7 +386,7 @@ function EnsureWinget {
         Fail "the downloaded winget package is not signed by Microsoft (signature: $($sig.Status)); not installed"
     }
     if (Test-Path -LiteralPath $depsDir) { Remove-Item -LiteralPath $depsDir -Recurse -Force }
-    Expand-Archive -LiteralPath $depsZip -DestinationPath $depsDir -Force
+    Unzip $depsZip $depsDir   # AP_INSTALL_IO
     $deps = @(Get-ChildItem -LiteralPath (PathOf $depsDir 'x64') -Filter '*.appx' -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
     if (-not $deps.Count) { Fail "the winget dependencies zip does not have x64\*.appx (see $depsDir)" }
     Info "installing App Installer with $($deps.Count) dependencies (x64)"
@@ -327,6 +403,7 @@ function EnsureWinget {
     if (-not (WingetAvailable)) { Fail "winget was installed but it does not appear in the PATH: open a new console and run again (or install it from the Store: $WingetStore)" }
     $script:Done.Add("winget $((RunCapture 'winget' @('--version')).Output -join ' ') (installed now)")
     Info "winget $((RunCapture 'winget' @('--version')).Output -join ' ') installed"
+    CleanDownload (PathOf $WorkDir 'winget')   # AP_CLEAN_DOWNLOADS: the package is installed, its files are not needed
 }
 function InstallWinget([string]$key) {
     $h = $ToolSpecs[$key]
@@ -354,11 +431,18 @@ function InstallVS {
         $setup = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\setup.exe"
         Info "adding the C++ component to $($d.Path)"
         $p = Start-Process -FilePath $setup -Wait -PassThru -ArgumentList ('modify --installPath ' + (Quote $d.Path) +
-             ' --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --quiet --norestart')
+             ' --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --add Microsoft.VisualStudio.Component.VC.CMake.Project --quiet --norestart')
         if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) { Fail "the VS installer finished with code $($p.ExitCode)" }
         return
     }
     InstallWinget 'vs'
+    # AP_INSTALL_IO: if the C++ compiler is not there after installing without ASAN / TestTools / Vcpkg, once more as before
+    $after = DetectVS
+    if ((-not $after -or $after.ContainsKey('NoVC')) -and $ToolSpecs.vs.Override -match ' --remove ') {
+        Warn 'VS Build Tools without the C++ compiler after the install: trying again with every recommended component'
+        $ToolSpecs.vs.Override = $ToolSpecs.vs.Override -replace ' --remove \S+', ''
+        InstallVS
+    }
 }
 # Vulkan SDK: official LunarG installer with the SHA-256 its API publishes.
 function InstallVulkan {
@@ -376,13 +460,125 @@ function InstallVulkan {
     $dst = "C:\VulkanSDK\$ver"
     $p = Start-Process -FilePath $exe -Wait -PassThru -ArgumentList ('--root ' + (Quote $dst) + ' --accept-licenses --default-answer --confirm-command install')
     if ($p.ExitCode -ne 0) { Fail "the Vulkan SDK installer finished with code $($p.ExitCode)" }
+    CleanDownload $exe   # AP_CLEAN_DOWNLOADS
 }
 function InstallTool([string]$key) {
     switch ($key) {
         'vs' { InstallVS }
         'vulkan' { InstallVulkan }
+        'llvm' { if ($AdminChild) { InstallLlvmDirect } else { InstallWinget 'llvm' } }   # AP_INSTALL_PARALLEL
         default { InstallWinget $key }
     }
+}
+
+# ---------------------------------------------------------------------------------------------- AP_INSTALL_PARALLEL
+# LLVM and the Vulkan SDK use neither winget nor Windows Installer (MSI): the elevated instance installs them in their own
+# elevated processes (-AdminChild) while VS Build Tools / Git / .NET (winget, MSI: one at a time) install in it.
+# LLVM in a child: the NSIS installer of the winget manifest (URL and SHA-256 read with `winget show` before anything
+# else starts, so two winget never run at the same time), checked against that SHA-256 and run with /S like winget does.
+function ResolveLlvmInstaller {
+    if ($env:NX_LLVM_URL -and $env:NX_LLVM_SHA) { return $true }
+    try {
+        if (-not (WingetAvailable)) { return $false }
+        $h = $ToolSpecs.llvm
+        $show = RunCapture 'winget' @('show', '--id', $h.Winget, '--exact', '--versions', '--source', 'winget', '--accept-source-agreements')
+        $ver = PickVersion 'llvm' $show.Output
+        if (-not $ver) { return $false }
+        $m = RunCapture 'winget' @('show', '--id', $h.Winget, '--exact', '--version', $ver, '--source', 'winget', '--accept-source-agreements')
+        $txt = $m.Output -join "`n"
+        $u = [regex]::Match($txt, 'https://\S+?/LLVM-[0-9.]+-win64\.exe')
+        $s = @([regex]::Matches($txt, '(?<![0-9A-Fa-f])[0-9A-Fa-f]{64}(?![0-9A-Fa-f])') | ForEach-Object { $_.Value.ToUpper() } | Sort-Object -Unique)
+        if (-not $u.Success -or $s.Count -ne 1) { return $false }   # the text of winget show is localized: only the URL and the hash are read
+        $env:NX_LLVM_URL = $u.Value; $env:NX_LLVM_SHA = $s[0]; $env:NX_LLVM_VER = $ver
+        return $true
+    } catch { return $false }
+}
+function InstallLlvmDirect {
+    $url = $env:NX_LLVM_URL; $sha = "$env:NX_LLVM_SHA"
+    if (-not $url -or $sha -notmatch '^[0-9A-F]{64}$') { Fail 'no LLVM installer URL / SHA-256 from winget' }
+    if ($env:NX_LLVM_VER -and $env:NX_LLVM_VER -ne $ToolSpecs.llvm.Pin) { Warn "winget no longer has LLVM $($ToolSpecs.llvm.Pin): installing $($env:NX_LLVM_VER) (meets '$($ToolSpecs.llvm.Rule)')" }
+    $dl = PathOf $WorkDir 'downloads'
+    New-Item -ItemType Directory -Path $dl -Force | Out-Null
+    $exe = PathOf $dl (Split-Path $url -Leaf)
+    if (-not (Test-Path -LiteralPath $exe) -or (Sha256 $exe) -ne $sha) { Download $url $exe }
+    if ((Sha256 $exe) -ne $sha) { Remove-Item -LiteralPath $exe -Force; Fail 'the LLVM installer does not match the SHA-256 of the winget manifest' }
+    Info "LLVM $(Split-Path $url -Leaf): SHA-256 OK (the one of the winget manifest)"
+    $p = Start-Process -FilePath $exe -ArgumentList '/S' -Wait -PassThru
+    if ($p.ExitCode -ne 0) { Fail "the LLVM installer finished with code $($p.ExitCode)" }
+    if (Get-Command CleanDownload -ErrorAction SilentlyContinue) { CleanDownload $exe }
+}
+function AdminInstallOne([string]$c, $r) {
+    Write-Host "== $($ToolSpecs[$c].Name)" -ForegroundColor Cyan
+    $sw = [Diagnostics.Stopwatch]::StartNew()   # AP_TOOL_TIMES
+    try { InstallTool $c; $r[$c] = 'ok' } catch { $r[$c] = "error: $($_.Exception.Message)"; Write-Host "   ERROR: $($_.Exception.Message)" -ForegroundColor Red }
+    $sw.Stop()
+    $r["${c}_seconds"] = [Math]::Round($sw.Elapsed.TotalSeconds, 1)
+    Write-Host ('   (took {0})' -f $sw.Elapsed.ToString('hh\:mm\:ss\.f'))
+}
+function StartParallelInstalls([string[]]$all) {
+    $kids = @{}
+    if ($AdminChild -or $env:NX_SERIAL_INSTALL -or -not $OnWindows) { return $kids }
+    $par = @($all | Where-Object { $_ -in 'vulkan' })   # AP_TOOLCHAIN_XWIN: LLVM 23 is an MSI: it waits for the MSIs of VS anyway
+    if (-not $par.Count -or $par.Count -eq $all.Count) { return $kids }   # nothing to overlap with
+    $host_ = (Get-Process -Id $PID).Path
+    foreach ($c in $par) {
+        if ($c -eq 'llvm' -and -not (ResolveLlvmInstaller)) { Info 'LLVM: no installer URL / SHA-256 from winget show: installed here, with winget'; continue }
+        $tag = "${c}_$(Stamp)"
+        $res = PathOf $WorkDir "admin_$tag.json"; $out = PathOf $WorkDir "admin_$tag.out"
+        $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath, '-AdminOnly', '-AdminChild', '-List', $c, '-ResultFile', $res, '-Root', $Root)
+        try {
+            $p = Start-Process -FilePath $host_ -ArgumentList (($a | ForEach-Object { Quote $_ }) -join ' ') -NoNewWindow -PassThru -RedirectStandardOutput $out -RedirectStandardError "$out.err"
+            $null = $p.Handle   # without this ExitCode can stay empty in PowerShell 5.1
+            $kids[$c] = @{ P = $p; Res = $res; Out = $out }
+            Write-Host "== $($ToolSpecs[$c].Name): installing in parallel (its output is shown when it finishes)" -ForegroundColor Cyan
+        } catch { Info "$($ToolSpecs[$c].Name): could not start it in parallel ($($_.Exception.Message)): installed here" }
+    }
+    return $kids
+}
+function FinishParallelInstalls($kids, $r) {
+    foreach ($c in @($kids.Keys)) {
+        $k = $kids[$c]
+        $k.P.WaitForExit()
+        Write-Host "== $($ToolSpecs[$c].Name) (in parallel)" -ForegroundColor Cyan
+        foreach ($f in @($k.Out, "$($k.Out).err")) {
+            if (Test-Path -LiteralPath $f) { Get-Content -LiteralPath $f | Where-Object { $_ -match '\S' } | ForEach-Object { Write-Host "   | $_" }; Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue }
+        }
+        $ok = $false; $why = 'no result'
+        if (Test-Path -LiteralPath $k.Res) {
+            try {
+                $j = Get-Content -LiteralPath $k.Res -Raw | ConvertFrom-Json
+                $pr = $j.PSObject.Properties[$c]; $tp = $j.PSObject.Properties["${c}_seconds"]
+                if ($tp) { $r["${c}_seconds"] = $tp.Value }
+                if ($pr) { $why = "$($pr.Value)"; $ok = ($why -eq 'ok') }
+            } catch { $why = "unreadable result ($($_.Exception.Message))" }
+            Remove-Item -LiteralPath $k.Res -Force -ErrorAction SilentlyContinue
+        }
+        if ($ok) { $r[$c] = 'ok' }
+        else { Write-Host "   in parallel: $why; installing it again here, the usual way" -ForegroundColor Yellow; AdminInstallOne $c $r }
+    }
+}
+
+# While the elevated window installs (step 1), this one prepares what later steps download. Each step checks its own part
+# again in its turn: here a failure is only a warning. Nothing here needs administrator or the tools of step 1 (vcpkg is
+# cloned only if Git is already installed).
+$script:RyubingOnly = $false
+function PrefetchOne([string]$what, [scriptblock]$sb) {
+    $n = $script:Done.Count
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    try { & $sb; Info ('{0}: ready ({1:N1} s)' -f $what, $sw.Elapsed.TotalSeconds) }
+    catch { Warn "$what could not be prepared now ($($_.Exception.Message)): its step tries again" }
+    finally { $script:RyubingOnly = $false }
+    while ($script:Done.Count -gt $n) { $script:Done.RemoveAt($n) }   # the step itself reports it in the summary
+}
+function Prefetch {
+    if ($Check -or $AdminOnly) { return }
+    Info 'while that window installs, this one prepares what the next steps download:'
+    if ($From -le 5 -and $To -ge 5) { PrefetchOne 'FFmpeg (step 5)' { EnsureFfmpeg } }
+    if ($From -le 8 -and $To -ge 8 -and -not (Test-Path -LiteralPath (PathOf $Framework 'private\third_party\ryubing'))) {
+        PrefetchOne 'ryubing (step 8, without the harness)' { $script:RyubingOnly = $true; Step8 }
+    }
+    if ($From -le 4 -and $To -ge 4 -and -not (Test-Path -LiteralPath $Vcpkg) -and (DetectGit)) { PrefetchOne 'vcpkg clone + bootstrap (step 4)' { Step4 } }
+    Info 'waiting for the administrator window to finish...'
 }
 
 # Elevated instance: this same script is relaunched with -AdminOnly (a single UAC) and leaves the result in a JSON.
@@ -393,25 +589,31 @@ function ElevateAndInstall([string[]]$keys) {
            '-ResultFile', $res, '-Root', $Root)
     Info "asking for administrator permission (one UAC) to install: $($keys -join ', ')"
     Info 'another window opens with the progress; this one waits until it finishes'
-    try { $p = Start-Process -FilePath $host_ -Verb RunAs -Wait -PassThru -ArgumentList (($a | ForEach-Object { Quote $_ }) -join ' ') }
+    try { $p = Start-Process -FilePath $host_ -Verb RunAs -PassThru -ArgumentList (($a | ForEach-Object { Quote $_ }) -join ' ') }
     catch { Fail "administrator permission was not granted ($($_.Exception.Message))" }
-    if (-not (Test-Path -LiteralPath $res)) { Fail "the administrator installation left no result (code $($p.ExitCode)); see the admin_*.log in $WorkDir" }
+    try { $null = $p.Handle } catch { }
+    Prefetch                                  # AP_INSTALL_PARALLEL: meanwhile, the downloads of later steps
+    $p.WaitForExit()
+    $ec = '?'; try { $ec = $p.ExitCode } catch { }
+    if (-not (Test-Path -LiteralPath $res)) { Fail "the administrator installation left no result (code $ec); see the admin_*.log in $WorkDir" }
     $j = Get-Content -LiteralPath $res -Raw | ConvertFrom-Json
     foreach ($c in $keys) {
         $pr = $j.PSObject.Properties[$c]
         $v = if ($pr) { "$($pr.Value)" } else { 'no result' }
-        if ($v -eq 'ok') { Info "$($ToolSpecs[$c].Name): installed" } else { Warn "$($ToolSpecs[$c].Name): $v" }
+        $tp = $j.PSObject.Properties["${c}_seconds"]   # AP_TOOL_TIMES
+        $took = if ($tp) { ' (took ' + ([TimeSpan]::FromSeconds([double]$tp.Value)).ToString('hh\:mm\:ss\.f') + ')' } else { '' }
+        if ($v -eq 'ok') { Info "$($ToolSpecs[$c].Name): installed$took" } else { Warn "$($ToolSpecs[$c].Name): $v$took" }
     }
 }
 function AdminMode {
-    $log = PathOf $WorkDir "admin_$(Stamp).log"
+    $log = PathOf $WorkDir "admin_$(Stamp)_$(($List -split ',' | Where-Object { $_ }) -join '-').log"   # AP_INSTALL_PARALLEL: one log per instance
     try { Start-Transcript -Path $log | Out-Null } catch { }
     RefreshEnv
     $r = [ordered]@{}
-    foreach ($c in ($List -split ',' | Where-Object { $_ })) {
-        Write-Host "== $($ToolSpecs[$c].Name)" -ForegroundColor Cyan
-        try { InstallTool $c; $r[$c] = 'ok' } catch { $r[$c] = "error: $($_.Exception.Message)"; Write-Host "   ERROR: $($_.Exception.Message)" -ForegroundColor Red }
-    }
+    $all = @($List -split ',' | Where-Object { $_ })
+    $kids = StartParallelInstalls $all        # AP_INSTALL_PARALLEL: LLVM / Vulkan SDK in their own processes
+    foreach ($c in @($all | Where-Object { -not $kids.ContainsKey($_) })) { AdminInstallOne $c $r }
+    FinishParallelInstalls $kids $r
     [IO.File]::WriteAllText($ResultFile, ($r | ConvertTo-Json), (New-Object Text.UTF8Encoding($false)))
     try { Stop-Transcript | Out-Null } catch { }
 }
@@ -436,10 +638,23 @@ function StepTools([string[]]$keys, [bool]$admin) {
             }
         }
     }
+    # AP_CMAKE_FROM_VS: VS Build Tools brings a CMake (4.x): when it is being installed now, CMake is not installed separately
+    $cmakeFromVs = $false
+    if ($OnWindows -and ($install -contains 'cmake') -and ($install -contains 'vs')) {
+        $install = @($install | Where-Object { $_ -ne 'cmake' })
+        $cmakeFromVs = $true
+        Info 'CMake                    comes with VS Build Tools (C++ CMake tools for Windows): not installed separately'
+    }
     if (-not $install.Count) { return }
     if (@($install | Where-Object { $ToolSpecs[$_].Winget }).Count) { EnsureWinget }   # before the UAC: it is per user
     if ($admin -and -not (IsAdmin)) { ElevateAndInstall $install }
-    else { foreach ($c in $install) { Write-Host "   -- $($ToolSpecs[$c].Name)"; InstallTool $c } }
+    else {
+        foreach ($c in $install) {
+            Write-Host "   -- $($ToolSpecs[$c].Name)"
+            $sw = [Diagnostics.Stopwatch]::StartNew()   # AP_TOOL_TIMES
+            try { InstallTool $c } finally { $sw.Stop(); Info ('(took {0})' -f $sw.Elapsed.ToString('hh\:mm\:ss\.f')) }
+        }
+    }
     RefreshEnv
     foreach ($c in $install) {
         $e = Status $c
@@ -450,17 +665,51 @@ function StepTools([string[]]$keys, [bool]$admin) {
         Info ('{0,-24} {1} installed ({2})' -f $ToolSpecs[$c].Name, $e.Det.Text, $e.Det.Path)
         $script:Done.Add("$($ToolSpecs[$c].Name) $($e.Det.Text) (installed now)")
     }
+    if ($cmakeFromVs) {
+        $e = Status 'cmake'
+        $how = 'from VS Build Tools'
+        if ($e.State -ne 'ok') {
+            Warn 'VS Build Tools did not bring a usable CMake 4.x: installing CMake with winget (slow)'
+            InstallTool 'cmake'
+            RefreshEnv
+            $e = Status 'cmake'
+            $how = 'installed with winget'
+        }
+        if ($e.State -ne 'ok') { Fail "CMake: $(if ($e.Det) { "$($e.Det.Text) does not meet '$($ToolSpecs['cmake'].Rule)'" } else { 'does not appear after installing' })" }
+        Info ('{0,-24} {1} {2} ({3})' -f $ToolSpecs['cmake'].Name, $e.Det.Text, $how, $e.Det.Path)
+        $script:Done.Add("$($ToolSpecs['cmake'].Name) $($e.Det.Text) ($how)")
+    }
 }
 
 # ---------------------------------------------------------------------------------------------- ryubing tree
-function TreeInventory([string]$dir) {
+# AP_INSTALL_IO: cheap fingerprint of a verified tree (reference hash, number of files, total size, newest date; without
+# bin\ and obj\): the full TreeInventory runs again only if it changes.
+function TreeStamp([string]$dir) {
     $base = [IO.Path]::GetFullPath($dir).TrimEnd('\', '/')
-    $l = New-Object System.Collections.Generic.List[string]
+    $n = 0; $size = [int64]0; $newest = [int64]0
     foreach ($f in Get-ChildItem -LiteralPath $base -Recurse -File -Force) {
         $p = $f.FullName.Substring($base.Length + 1).Replace('\', '/')
         if ($p -match '(^|/)(bin|obj)/') { continue }
-        $l.Add("$p  " + (Sha256 $f.FullName))
+        $n++; $size += $f.Length
+        if ($f.LastWriteTimeUtc.Ticks -gt $newest) { $newest = $f.LastWriteTimeUtc.Ticks }
     }
+    return "$RyubingHash|$n|$size|$newest"
+}
+function RyubingStampFile { PathOf $WorkDir 'ryubing_verified.txt' }
+
+function TreeInventory([string]$dir) {
+    $base = [IO.Path]::GetFullPath($dir).TrimEnd('\', '/')
+    $l = New-Object System.Collections.Generic.List[string]
+    $hasher = [Security.Cryptography.SHA256]::Create()   # AP_INSTALL_IO: one hasher for every file (Get-FileHash per file is much slower)
+    try {
+        foreach ($f in Get-ChildItem -LiteralPath $base -Recurse -File -Force) {
+            $p = $f.FullName.Substring($base.Length + 1).Replace('\', '/')
+            if ($p -match '(^|/)(bin|obj)/') { continue }
+            $fs = [IO.File]::OpenRead($f.FullName)
+            try { $hb = $hasher.ComputeHash($fs) } finally { $fs.Dispose() }
+            $l.Add("$p  " + [BitConverter]::ToString($hb).Replace('-', ''))
+        }
+    } finally { $hasher.Dispose() }
     $a = $l.ToArray(); [Array]::Sort($a, [StringComparer]::Ordinal)
     $txt = ($a -join "`n") + "`n"
     $sha = [Security.Cryptography.SHA256]::Create()
@@ -543,7 +792,7 @@ function GitExe {
 function Step3 {
     $git = GitExe
     if (-not (Test-Path -LiteralPath $Root)) { Fail "${Root} does not exist: clone the port repo there and run this script from <root>\tools" }
-    if (-not (Test-Path -LiteralPath (PathOf $Root '.git'))) { Problem "$Root is not a git repo: clone the port repo into that folder" }
+    if (-not (Test-Path -LiteralPath (PathOf $Root '.git'))) { Warn "$Root is not a git repo (downloaded as a ZIP?): going on; git is only needed to update the port with git pull" }
     else {
         $o = (RunCapture $git @('-C', $Root, 'remote', 'get-url', 'origin')).Output | Select-Object -First 1
         $b = (RunCapture $git @('-C', $Root, 'rev-parse', '--abbrev-ref', 'HEAD')).Output | Select-Object -First 1
@@ -573,7 +822,7 @@ function Step4 {
             $t = "vcpkg in $Vcpkg is at $head, not at $VcpkgCommit (the versions of ffmpeg and the rest may differ)"
             if ($Check) { Problem $t }
             elseif (Ask "$t. Move that vcpkg to the reference commit?") {
-                Run $git @('-C', $Vcpkg, 'fetch', 'origin') 'git fetch (vcpkg)'
+                Run $git @('-C', $Vcpkg, 'fetch', 'origin', $VcpkgCommit) 'git fetch (vcpkg)'   # AP_INSTALL_IO: that commit only (shallow clones too)
                 Run $git @('-C', $Vcpkg, 'checkout', '-q', $VcpkgCommit) 'git checkout (vcpkg)'
             } else { Warn "$t; going on with that one" }
         }
@@ -586,8 +835,16 @@ function Step4 {
         if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Recurse -Force }
         New-Item -ItemType Directory -Path (Split-Path $Vcpkg -Parent) -Force | Out-Null
         try {
-            Run $git @('clone', $VcpkgRepo, $tmp) 'git clone vcpkg'
-            Run $git @('-C', $tmp, 'checkout', '-q', $VcpkgCommit) 'git checkout (vcpkg)'
+            if ($env:NX_VCPKG_FULL_CLONE) {
+                Run $git @('clone', $VcpkgRepo, $tmp) 'git clone vcpkg'
+                Run $git @('-C', $tmp, 'checkout', '-q', $VcpkgCommit) 'git checkout (vcpkg)'
+            } else {
+                # AP_INSTALL_IO: only the reference commit, without history (~20 s and ~0.1 GB less; classic mode does not read it)
+                Run $git @('init', '-q', $tmp) 'git init (vcpkg)'
+                Run $git @('-C', $tmp, 'remote', 'add', 'origin', $VcpkgRepo) 'git remote add (vcpkg)'
+                Run $git @('-C', $tmp, 'fetch', '-q', '--depth', '1', 'origin', $VcpkgCommit) 'git fetch (vcpkg)'
+                Run $git @('-C', $tmp, 'checkout', '-q', 'FETCH_HEAD') 'git checkout (vcpkg)'
+            }
             Move-Item -LiteralPath $tmp -Destination $Vcpkg
         } catch { if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue }; throw }
         Info "vcpkg cloned into $Vcpkg ($VcpkgCommit)"
@@ -608,9 +865,44 @@ function MissingPorts {
     foreach ($l in $r.Output) { if ($l -match '^([a-z0-9-]+)(\[[^\]]*\])?:x64-windows\s') { $have[$Matches[1]] = 1 } }
     return @($VcpkgPorts | Where-Object { -not $have.ContainsKey($_) })
 }
+# AP_FFMPEG_PREBUILT: the prebuilt FFmpeg is complete if it has the headers, the five import libraries and the five DLLs.
+function FfmpegReady([string]$dir) {
+    $files = @('include\libavcodec\avcodec.h', 'include\libavformat\avformat.h') + @($FfmpegLibs | ForEach-Object { "lib\$_.lib" }) + @($FfmpegDlls | ForEach-Object { "bin\$_" })
+    foreach ($f in $files) { if (-not (Test-Path -LiteralPath (PathOf $dir $f) -PathType Leaf)) { return $false } }
+    return $true
+}
+# Downloads the zip (the bytes are checked against $FfmpegSha256 before anything is unpacked), unpacks it next to the final folder
+# and renames it at the end: a folder that exists is a complete one. Nothing is installed or changed outside <root>\_prepare\ffmpeg.
+function EnsureFfmpeg {
+    $dir = PathOf $WorkDir "ffmpeg\$FfmpegDirName"
+    if (FfmpegReady $dir) { Info "prebuilt FFmpeg $FfmpegDirName in $dir"; $script:Done.Add("FFmpeg prebuilt $FfmpegDirName"); return }
+    if ($Check) { Problem "prebuilt FFmpeg is missing ($dir): step 5 downloads it from BtbN ($FfmpegUrl)"; return }
+    $parent = Split-Path $dir -Parent
+    New-Item -ItemType Directory -Path $parent -Force | Out-Null
+    $zip = PathOf $parent 'ffmpeg_prebuilt.zip'
+    $tmp = "$dir.tmp"
+    if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Recurse -Force }
+    if (-not ((Test-Path -LiteralPath $zip) -and (Sha256 $zip) -eq $FfmpegSha256)) {
+        Download $FfmpegUrl $zip
+        $got = Sha256 $zip
+        if ($got -ne $FfmpegSha256) { Remove-Item -LiteralPath $zip -Force; Fail "the FFmpeg zip has SHA-256 $got, not the reference $FfmpegSha256 (nothing was unpacked)" }
+    }
+    Info 'FFmpeg zip: SHA-256 OK; unpacking'
+    try {
+        Unzip $zip $tmp   # AP_INSTALL_IO
+        $inner = PathOf $tmp $FfmpegDirName
+        if (-not (FfmpegReady $inner)) { Fail "the FFmpeg zip does not have the expected files in $FfmpegDirName\ (headers, lib\*.lib, bin\*.dll)" }
+        if (Test-Path -LiteralPath $dir) { Remove-Item -LiteralPath $dir -Recurse -Force }
+        Move-Item -LiteralPath $inner -Destination $dir
+    } finally { if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue } }
+    Remove-Item -LiteralPath $zip -Force
+    Info "prebuilt FFmpeg in $dir"
+    $script:Done.Add("FFmpeg prebuilt $FfmpegDirName (installed now)")
+}
 function Step5 {
     $env:VCPKG_ROOT = $Vcpkg                 # a VS console points it to its internal copy
     $env:VCPKG_DISABLE_METRICS = '1'
+    EnsureFfmpeg
     $missing = @(MissingPorts)
     if (-not $missing.Count) { Info "x64-windows libraries present: $($VcpkgPorts -join ', ')"; $script:Done.Add('vcpkg libraries'); return }
     if ($Check) { Problem "vcpkg libraries missing: $($missing -join ', ')"; return }
@@ -621,7 +913,7 @@ function Step5 {
             $mp = Get-MpPreference -ErrorAction Stop
             $ex = @($mp.ExclusionPath | Where-Object { $_ })
             if (-not $mp.DisableRealtimeMonitoring -and -not ($ex | Where-Object { $Vcpkg.ToLower().StartsWith($_.TrimEnd('\').ToLower()) })) {
-                Warn "Defender scans every file the ffmpeg build creates (thousands of MSYS2 processes): it can make it several times slower. If you want, as administrator: Add-MpPreference -ExclusionPath '$Vcpkg'"
+                Warn "Defender scans every file the vcpkg builds create: it can make them slower. If you want, as administrator: Add-MpPreference -ExclusionPath '$Vcpkg'"   # AP_INSTALL_IO
             }
         } catch { }
     }
@@ -650,7 +942,7 @@ function Step5 {
         $env:VCPKG_BINARY_SOURCES = "clear;default,readwrite;files,$VcpkgCache,read"
         Info "binary cache: $VcpkgCache (what matches is not built)"
     }
-    Info "installing $($missing -join ', ') (ffmpeg builds from source: from 1 to several hours depending on the PC; if it is interrupted, -From 5 continues where it stopped)"
+    Info "installing $($missing -join ', ') (vcpkg builds them from source; if it is interrupted, -From 5 continues where it stopped)"
     Run (VcpkgExe) $a 'vcpkg install'
     $missing = @(MissingPorts)
     if ($missing.Count) { Fail "vcpkg finished but these are missing: $($missing -join ', ')" }
@@ -720,49 +1012,39 @@ function Step6 {
     $script:Done.Add('venv (exact versions of requirements.txt)')
 }
 
+# AP_DROP_UNUSED: tools\nsextract is built here (recomp_tsukihime.ps1 uses only it; nstool, its fallback, is gone), so a
+# problem with .NET or with NuGet shows up now and not in the middle of a recompile. Same rule as recomp: rebuilt when a
+# source is newer than the dll.
 function Step7 {
-    $dst = PathOf $Root 'tools\nstool.exe'
-    if (Test-Path -LiteralPath $dst) {
-        if ((Sha256 $dst) -eq $NstoolSha256) { Info "nstool.exe $NstoolTag OK (SHA-256)"; $script:Done.Add("nstool $NstoolTag"); return }
-        $t = "$dst is not the reference nstool $NstoolTag (different SHA-256)"
-        if ($Check) { Problem $t; return }
-        if (-not (Ask "$t. Set it aside as nstool.exe.old and put the reference one?")) { Fail $t }
-        if (Test-Path -LiteralPath "$dst.old") { Fail "$dst.old already exists: delete it by hand" }
-        Move-Item -LiteralPath $dst -Destination "$dst.old"
+    foreach ($old in @((PathOf $Root 'tools\nstool.exe'), (PathOf $Root 'tools/nstool'))) {
+        if (Test-Path -LiteralPath $old -PathType Leaf) { Info "$old is no longer used (nsextract replaces it): you can delete it" }
     }
-    if ($Check) { Problem "$dst is missing"; return }
-    $tmp = PathOf $WorkDir "nstool_$(Stamp)"
-    New-Item -ItemType Directory -Path $tmp | Out-Null
-    try {
-        if ($NstoolFrom) {
-            $exe = $NstoolFrom
-        } else {
-            if ($OnWindows) { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 }
-            $rel = Invoke-RestMethod -UseBasicParsing -Uri "https://api.github.com/repos/jakcron/nstool/releases/tags/$NstoolTag" -Headers @{ 'User-Agent' = 'install_requirements' }
-            $as = @($rel.assets | Where-Object { $_.name -match 'win' -and $_.name -match 'x64' -and $_.name -match '\.zip$' })
-            if ($as.Count -ne 1) { Fail "the $NstoolTag release of jakcron/nstool does not have a single win x64 zip ($(@($rel.assets | ForEach-Object { $_.name }) -join ', ')); use -NstoolFrom <nstool.exe>" }
-            $zip = PathOf $tmp $as[0].name
-            Download $as[0].browser_download_url $zip
-            $dg = $as[0].PSObject.Properties['digest']
-            if ($dg -and "$($dg.Value)" -match '^sha256:([0-9a-f]{64})$' -and (Sha256 $zip) -ne $Matches[1].ToUpper()) { Fail 'the nstool zip does not match the GitHub digest' }
-            Expand-Archive -LiteralPath $zip -DestinationPath (PathOf $tmp 'x')
-            $exe = @(Get-ChildItem -LiteralPath (PathOf $tmp 'x') -Recurse -Filter 'nstool.exe' -File | ForEach-Object { $_.FullName }) | Select-Object -First 1
-            if (-not $exe) { Fail 'the nstool zip does not have nstool.exe' }
-        }
-        if (-not (Test-Path -LiteralPath $exe)) { Fail "$exe does not exist" }
-        if ((Sha256 $exe) -ne $NstoolSha256) { Fail "nstool.exe from $(if ($NstoolFrom) { $NstoolFrom } else { 'GitHub' }) with SHA-256 $(Sha256 $exe), not the reference $NstoolSha256 (pass your copy with -NstoolFrom)" }
-        New-Item -ItemType Directory -Path (Split-Path $dst -Parent) -Force | Out-Null
-        Copy-Item -LiteralPath $exe -Destination $dst
-    } finally { Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue }
-    Info "nstool.exe $NstoolTag in $dst (SHA-256 OK)"
-    $script:Done.Add("nstool $NstoolTag (placed now)")
+    $proj = PathOf $Root 'tools\nsextract\nsextract.csproj'
+    $dll = PathOf $Root 'tools\nsextract\bin\Release\net10.0\nsextract.dll'
+    if (-not (Test-Path -LiteralPath $proj)) { Problem "$proj is missing (it comes with the repo)"; return }
+    $src = @(Get-ChildItem -LiteralPath (Split-Path -Parent $proj) -File | Where-Object { $_.Extension -in '.cs', '.csproj' })
+    $newest = ($src | Measure-Object LastWriteTimeUtc -Maximum).Maximum
+    if ((Test-Path -LiteralPath $dll) -and (Get-Item -LiteralPath $dll).LastWriteTimeUtc -ge $newest) { Info "nsextract built ($dll)"; $script:Done.Add('nsextract'); return }
+    if ($Check) { Problem "nsextract is not built ($dll)"; return }
+    $dn = DetectDotnet
+    if (-not $dn -or -not $dn.Ok) { Fail '.NET SDK 10 is missing (step 1)' }
+    $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'; $env:DOTNET_NOLOGO = '1'
+    Run $dn.Path @('build', $proj, '-c', 'Release', '--nologo', '-v', 'q', '-p:NuGetAudit=false') 'dotnet build (nsextract)'
+    if (-not (Test-Path -LiteralPath $dll)) { Fail "the build finished but $dll does not appear" }
+    Info 'nsextract built'
+    $script:Done.Add('nsextract (built now)')
 }
 
 function Step8 {
     $ry = PathOf $Framework 'private\third_party\ryubing'
     if (Test-Path -LiteralPath $ry) {
-        $inv = TreeInventory $ry
-        if ($inv.Hash -eq $RyubingHash) { Info "ryubing a82350bb77: tree identical to the reference one ($($inv.Files) files)" }
+        # AP_INSTALL_IO: verified before and unchanged since (stamp): the 4310 hashes are not computed again
+        $sf = RyubingStampFile
+        $quick = $null
+        if (Test-Path -LiteralPath $sf) { $quick = TreeStamp $ry; if ((Get-Content -LiteralPath $sf -Raw).Trim() -ne $quick) { $quick = $null } }
+        $inv = if ($quick) { @{ Hash = $RyubingHash; Files = $RyubingFiles } } else { TreeInventory $ry }
+        if ($inv.Hash -eq $RyubingHash -and -not $quick -and -not $Check) { try { [IO.File]::WriteAllText($sf, (TreeStamp $ry)) } catch { } }
+        if ($inv.Hash -eq $RyubingHash) { Info "ryubing a82350bb77: tree identical to the reference one ($($inv.Files) files$(if ($quick) { ', unchanged since it was verified' }))" }
         else {
             $f = PathOf $WorkDir "ryubing_inv_$(Stamp).txt"
             if (-not $Check) { [IO.File]::WriteAllText($f, $inv.Text, (New-Object Text.UTF8Encoding($false))) }
@@ -797,8 +1079,11 @@ function Step8 {
                 Move-Item -LiteralPath $tmp -Destination $ry
             } catch { if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue }; throw }
             Info "ryubing extracted into $ry ($RyubingFiles files, verified tree)"
+            try { [IO.File]::WriteAllText((RyubingStampFile), (TreeStamp $ry)) } catch { }   # AP_INSTALL_IO
+            CleanDownload $tgz   # AP_CLEAN_DOWNLOADS
         }
     }
+    if ($script:RyubingOnly) { return }   # AP_INSTALL_PARALLEL: prefetch (the harness needs .NET and the venv: step 8 itself)
     $dll = PathOf $Framework 'private\build\spirv_harness\bin\Release\net10.0\spirv_harness.dll'
     if (Test-Path -LiteralPath $dll) { Info "spirv_harness.dll present ($((Get-Item -LiteralPath $dll).LastWriteTime))"; $script:Done.Add('ryubing + spirv_harness'); return }
     if ($Check) { Problem "$dll is missing"; return }
@@ -877,7 +1162,7 @@ function Step11 {
     if (Test-Path -LiteralPath $Root) {
         $dumps = @(Get-ChildItem -LiteralPath $Root -File | Where-Object { $_.Extension -in '.xci', '.nsp' } | ForEach-Object { $_.Name })
     }
-    $eds = Editions
+    $eds = @(Editions)   # AP_INSTALL_FLOW: with ONE edition Editions gives a string, and in Windows PowerShell 5.1 (StrictMode 2) a string has no .Count
     $needed = if ($eds.Count -gt 1) { 'one dump per edition' } else { 'the dump' }
     Write-Host ("     dumps       {0}" -f $(if ($dumps.Count) { "in $Root\: " + ($dumps -join ', ') } else { "copy $needed (.xci or .nsp) to $Root\ (the root, not data\)" }))
     $font = @((PathOf $data 'tsuki_global\fonts\shared_0.ttf'), (PathOf $data 'tsuki\fonts\shared_0.ttf')) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
@@ -905,6 +1190,153 @@ function Step11 {
 }
 
 # ---------------------------------------------------------------------------------------------- main
+# ---------------------------------------------------------------------------------------------- AP_INSTALL_FLOW
+# Step timing and the -Recomp flow (see tools/patches/apply_install_flow.py).
+$script:Times = New-Object System.Collections.ArrayList
+$script:InRecomp = ''
+$script:RecompBuilt = @()
+
+function FormatSpan([TimeSpan]$t) { '{0:00}:{1:00}:{2:00}.{3}' -f [int][Math]::Floor($t.TotalHours), $t.Minutes, $t.Seconds, [int][Math]::Floor($t.Milliseconds / 100) }
+
+# Runs the function named $fn as step $n (a number, or R1/R2 for the recomp phases) and records how long it took.
+function TimedStep([string]$n, [string]$name, [string]$fn) {
+    Write-Host ''; Write-Host "== step ${n}: $name" -ForegroundColor Cyan
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    try { & $fn }
+    finally {
+        $sw.Stop()
+        [void]$script:Times.Add(@($n, $name, $sw.Elapsed))
+        Info ('(took {0})' -f (FormatSpan $sw.Elapsed))
+    }
+}
+
+function ShowTimes {
+    if ($Worker -or -not $script:Times.Count) { return }   # AP_INSTALL_PARALLEL: the background step 5 is shown and recorded by the main run
+    Write-Host ''
+    Write-Host '   Step times:' -ForegroundColor Green
+    $total = [TimeSpan]::Zero
+    foreach ($t in $script:Times) { $total += $t[2]; Write-Host ('     {0,-3} {1,-46} {2}' -f $t[0], $t[1], (FormatSpan $t[2])) }
+    Write-Host ('     {0,-50} {1}' -f 'total', (FormatSpan $total))
+    if ($Check) { return }
+    try {
+        $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+        $lines = @(foreach ($t in $script:Times) { "$stamp`tinstall_requirements`t$Edition`t$($t[0])`t$($t[1])`t$(FormatSpan $t[2])" })
+        [IO.File]::AppendAllText((PathOf $script:WorkDir 'step_times.log'), (($lines -join "`r`n") + "`r`n"), (New-Object Text.UTF8Encoding($false)))
+    } catch { }
+}
+
+# NSP (PFS0 at 0) or XCI (HEAD at 0x100) by the header only: no keys, nothing else of the file is read.
+function InputKind([string]$p) {
+    $n = 0
+    try {
+        $fs = [IO.File]::OpenRead($p)
+        try { $b = New-Object byte[] 0x104; $n = $fs.Read($b, 0, $b.Length) } finally { $fs.Dispose() }
+    } catch { return $null }
+    if ($n -ge 4 -and [Text.Encoding]::ASCII.GetString($b, 0, 4) -eq 'PFS0') { return 'nsp' }
+    if ($n -ge 0x104 -and [Text.Encoding]::ASCII.GetString($b, 0x100, 4) -eq 'HEAD') { return 'xci' }
+    return $null
+}
+
+function Early([string]$t) { if ($Recomp) { Problem $t } else { Warn $t } }
+
+# Read-only check of what the user has to provide (prod.keys is only looked for, never read). With -Recomp a problem
+# stops the run now; without it, it is a warning. Program ID, base version v0 and edition are checked by recomp (step 1).
+function CheckInputs {
+    $script:CurrentStep = 0
+    $eds = @(Editions)
+    if ($Recomp) {
+        if (-not $EditionGiven) { Fail '-Recomp needs -Edition global|japan|both (it says how many dumps to expect)' }
+        if ($InputFile -and $eds.Count -gt 1) { Fail '-InputFile is a single dump: use it with -Edition global or -Edition japan' }
+    }
+    $keysPath = if ($Keys) { [IO.Path]::GetFullPath($Keys) } else { PathOf $Root 'data/prod.keys' }
+    if (Test-Path -LiteralPath $keysPath -PathType Leaf) { Info "prod.keys present: $keysPath (not read)" }
+    else { Early "prod.keys not found: copy your keys to $keysPath" }
+    $found = @()
+    if ($InputFile) {
+        $f = [IO.Path]::GetFullPath($InputFile)
+        if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { Early "-InputFile $f does not exist" }
+        elseif (-not (InputKind $f)) { Early "$f is neither an NSP nor an XCI (header check)" }
+        else { $found += $f }
+    } elseif (Test-Path -LiteralPath $Root) {
+        foreach ($f in @(Get-ChildItem -LiteralPath $Root -File | Where-Object { $_.Extension -in '.xci', '.nsp' })) {
+            if (InputKind $f.FullName) { $found += $f.FullName } else { Warn "$($f.Name): neither an NSP nor an XCI (header check): ignored" }
+        }
+    }
+    if ($found.Count) { Info ('dump(s): ' + (($found | ForEach-Object { Split-Path -Leaf $_ }) -join ', ')) }
+    if ($found.Count -lt $eds.Count) {
+        Early "$($eds.Count) dump(s) (.xci or .nsp) needed for -Edition $Edition in $Root (or -InputFile); found $($found.Count)"
+    }
+}
+
+# recomp_tsukihime.ps1 in a process of its own: it sees the PATH this run refreshed, so no new console is needed.
+function RunRecomp([string]$ed, [int]$from, [int]$to) {
+    $m = PathOf $Root 'tools/recomp_tsukihime.ps1'
+    if (-not (Test-Path -LiteralPath $m)) { Fail "$m is missing" }
+    $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $m, '-Edition', $ed, '-From', "$from", '-To', "$to", '-Root', $Root)
+    if ($InputFile) { $a += @('-InputFile', $InputFile) }
+    if ($Keys) { $a += @('-Keys', $Keys) }
+    $script:InRecomp = "recomp_tsukihime.ps1 -Edition $ed -From $from -To $to"
+    Info $script:InRecomp
+    $env:NX_VCPKG = $Vcpkg                  # dev_env.ps1 reads it (the recomp process must use the same vcpkg)
+    $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try { & (Get-Process -Id $PID).Path @a | Out-Host; $code = $LASTEXITCODE } finally { $ErrorActionPreference = $prev }   # Out-Host: shown live, not returned to the caller
+    if ($code -ne 0) { Fail "$script:InRecomp failed (code $code)" }
+    $script:InRecomp = ''
+}
+function PhaseR1 { foreach ($ed in (Editions)) { RunRecomp $ed 0 8 } }
+function PhaseR2 {
+    foreach ($ed in (Editions)) {
+        RunRecomp $ed 9 10
+        $g = if ($ed -eq 'global') { 'tsukihime_global' } else { 'tsukihime' }
+        $exe = PathOf $Framework "build/$g/$g.exe"
+        if (Test-Path -LiteralPath $exe) { $script:RecompBuilt += $exe }
+    }
+}
+
+# AP_INSTALL_PARALLEL: step 5 (vcpkg builds its ports, minutes of CPU) in a background process while the next steps run.
+# It is this same script with -Worker -From 5 -To 5 -NonInteractive; its output goes to _prepare\vcpkg_background_<date>.log.
+$script:VcpkgWorker = $null
+function StartVcpkgWorker {
+    if ($Check -or $Worker -or $From -gt 5 -or $To -lt 5 -or $env:NX_SERIAL_INSTALL) { return }
+    if (-not (Test-Path -LiteralPath (VcpkgExe))) { return }   # step 4 did not leave vcpkg: step 5 in line says why
+    if (-not @(MissingPorts).Count -and (FfmpegReady (PathOf $WorkDir "ffmpeg\$FfmpegDirName"))) { return }   # nothing to build
+    $out = PathOf $WorkDir "vcpkg_background_$(Stamp).log"
+    $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath, '-Worker', '-From', '5', '-To', '5', '-NonInteractive',
+           '-Root', $Root, '-Vcpkg', $Vcpkg, '-Edition', $Edition)
+    if ($VcpkgWithDebug) { $a += '-VcpkgWithDebug' }
+    if ($VcpkgCache) { $a += @('-VcpkgCache', $VcpkgCache) }
+    if ($OnLinux) { $a += @('-XwinCrt', $XwinCrt, '-XwinSdk', $XwinSdk) }
+    $p = Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList (($a | ForEach-Object { Quote $_ }) -join ' ') -NoNewWindow -PassThru `
+         -RedirectStandardOutput $out -RedirectStandardError "$out.err"
+    $null = $p.Handle   # without this ExitCode can stay empty in PowerShell 5.1
+    $script:VcpkgWorker = @{ P = $p; Out = $out; Sw = [Diagnostics.Stopwatch]::StartNew() }
+    Write-Host ''
+    Write-Host '== step 5: vcpkg libraries -> in the background while the next steps run' -ForegroundColor Cyan
+    Info "output: $out"
+}
+function JoinVcpkgWorker {
+    $w = $script:VcpkgWorker
+    if (-not $w) { return }
+    $script:VcpkgWorker = $null
+    $wait = [Diagnostics.Stopwatch]::StartNew()
+    if (-not $w.P.HasExited) { Write-Host ''; Info 'waiting for the vcpkg libraries (step 5, in the background)...' }
+    $w.P.WaitForExit()
+    $wait.Stop(); $w.Sw.Stop()
+    $code = -1
+    try { $code = $w.P.ExitCode } catch { }
+    if ($null -eq $code) { $code = -1 }
+    $lines = @()
+    foreach ($f in @($w.Out, "$($w.Out).err")) { if (Test-Path -LiteralPath $f) { $lines += @(Get-Content -LiteralPath $f | Where-Object { $_ -match '\S' }) } }
+    $err = "$($w.Out).err"
+    if ((Test-Path -LiteralPath $err) -and (Get-Item -LiteralPath $err).Length -eq 0) { Remove-Item -LiteralPath $err -Force -ErrorAction SilentlyContinue }
+    # Only the time spent waiting for it counts in the table (the rest overlapped other steps), so the total stays wall time.
+    [void]$script:Times.Add(@('5', ('vcpkg libraries (bg {0}; waited)' -f (FormatSpan $w.Sw.Elapsed)), $wait.Elapsed))
+    Write-Host ''
+    Write-Host ('== step 5: vcpkg libraries (in the background) finished: {0} in total, {1} of them waited for here' -f (FormatSpan $w.Sw.Elapsed), (FormatSpan $wait.Elapsed)) -ForegroundColor Cyan
+    foreach ($l in @($lines | Select-Object -Last 8)) { Info "| $l" }
+    if ($code -ne 0) { $script:CurrentStep = 5; Fail "step 5 (vcpkg libraries, in the background) failed (code $code); its whole output is in $($w.Out)" }
+}
+
 function ResolveRoot {
     if ($Root) { return [IO.Path]::GetFullPath($Root) }
     $here = Split-Path -Parent $PSCommandPath
@@ -913,14 +1345,14 @@ function ResolveRoot {
     throw '-Root is missing (the port folder, e.g. -Root C:\src\tsukire-pc-recomp): this script is not in <root>\tools of a clone'
 }
 
-# Linux: tools, steps 0-2, 7 and 11 of its own (they redefine the functions above; the rest is shared).
+# Linux: tools, steps 0-2 and 11 of its own (they redefine the functions above; the rest is shared).
 if ($OnLinux) {
     $nxLinux = Join-Path $PSScriptRoot 'linux/install_requirements_linux.ps1'
     if (-not (Test-Path -LiteralPath $nxLinux)) { Write-Host "ERROR: $nxLinux is missing (is it in the repo? check that the .gitignore lets tools/linux/*.ps1 through)" -ForegroundColor Red; exit 1 }
     . $nxLinux
 }
 
-$StepNames = @('precheck', 'system (administrator)', 'user', 'repos', 'vcpkg', 'vcpkg libraries', 'venv', 'nstool',
+$StepNames = @('precheck', 'system (administrator)', 'user', 'repos', 'vcpkg', 'vcpkg libraries', 'venv', 'nsextract',
                'ryubing + harness', 'gpu', 'cross check with recomp_tsukihime', 'summary')
 
 function Main {
@@ -930,6 +1362,7 @@ function Main {
     $script:WorkDir = if ((Test-Path -LiteralPath $script:Root) -or -not $Check) { PathOf $script:Root '_prepare' } else { PathOf ([IO.Path]::GetTempPath()) 'tsuki_prepare' }
     New-Item -ItemType Directory -Path $script:WorkDir -Force | Out-Null
     if ($AdminOnly) { AdminMode; return 0 }
+    if ($Chain) { return (RunChain $Chain) }   # AP_TOOLCHAIN_XWIN: one chain of step 1 (xwin); its output is captured by the parent
     $log = PathOf $script:WorkDir "install_requirements_$(Stamp).log"
     try { Start-Transcript -Path $log | Out-Null } catch { $log = '(no log)' }
     Write-Host "install_requirements: root $script:Root, edition $Edition, steps $From..$To$(if ($Check) { ', check only' })$(if ($NonInteractive) { ', no questions' }); log $log"
@@ -937,20 +1370,47 @@ function Main {
     $encPrev = $null
     try { $encPrev = [Console]::OutputEncoding; [Console]::OutputEncoding = New-Object Text.UTF8Encoding($false) } catch { }
     try {
-        $script:CurrentStep = 0; Step 0 $StepNames[0]; Step0
-        for ($n = [Math]::Max(1, $From); $n -le $To; $n++) {
+        $script:CurrentStep = 0
+        if (-not $Worker) { TimedStep 0 $StepNames[0] 'Step0'; CheckInputs }
+        $order = @(1..11)
+        # AP_INSTALL_PARALLEL: V5 starts step 5 in the background (vcpkg), J5 waits for it and checks it in line
+        if (-not $Check) { $order = @(1, 2, 3, 4, 'V5', 6, 7, 8, 9, 'J5', 10, 11) }
+        if ($Worker) { $order = @(5) }
+        elseif ($Recomp -and $Check) { Info '-Recomp is not run with -Check (the inputs above were checked)' }
+        elseif ($Recomp) { $order = @(1, 2, 3, 4, 'V5', 6, 7, 8, 'R1', 'J5', 'R2', 9, 10, 11) }   # inputs checked first (CheckInputs); recomp 0-8 does not need vcpkg
+        foreach ($n in $order) {
+            if ($n -is [string]) {
+                if ($n -eq 'V5' -and $From -le 5 -and $To -ge 5) {
+                    $script:CurrentStep = 5
+                    StartVcpkgWorker
+                    if (-not $script:VcpkgWorker) { TimedStep 5 $StepNames[5] 'Step5' }
+                }
+                if ($n -eq 'J5' -and $script:VcpkgWorker) { JoinVcpkgWorker; $script:CurrentStep = 5; TimedStep 5 "$($StepNames[5]) (check)" 'Step5' }
+                if ($n -eq 'R1' -and $To -ge 8) { TimedStep 'R1' 'recomp steps 0-8: identify, extract, shaders' 'PhaseR1' }
+                if ($n -eq 'R2' -and $To -ge 5) { TimedStep 'R2' 'recomp steps 9-10: build' 'PhaseR2' }
+                continue
+            }
+            if ($n -lt $From -or $n -gt $To) { continue }
             $script:CurrentStep = $n
-            Step $n $StepNames[$n]
-            & "Step$n"
+            TimedStep $n $StepNames[$n] "Step$n"
         }
-        if ($To -lt 11) { Write-Host ''; Write-Host "   (summary: step 11)" }
+        if ($To -lt 11 -and -not $Worker) { Write-Host ''; Write-Host "   (summary: step 11)" }   # AP_INSTALL_PARALLEL
+        if ($script:RecompBuilt.Count) {
+            Write-Host ''; Write-Host '   Built:' -ForegroundColor Green
+            foreach ($x in $script:RecompBuilt) { Write-Host "     $x" }
+        }
         if ($script:Problems.Count) { $code = 1 }
     } catch {
         Write-Host ''
-        Write-Host "ERROR in step $($script:CurrentStep): $($_.Exception.Message)" -ForegroundColor Red
-        Write-Host "Resume with -From $($script:CurrentStep) once it is fixed (log: $log)." -ForegroundColor Red
+        Write-Host "ERROR in $(if ($script:InRecomp) { 'the recompile' } else { "step $($script:CurrentStep)" }): $($_.Exception.Message)" -ForegroundColor Red
+        if ($script:InRecomp) { Write-Host "Run the same command again once it is fixed: the steps already done are skipped (log: $log)." -ForegroundColor Red }
+        else { Write-Host "Resume with -From $($script:CurrentStep) once it is fixed (log: $log)." -ForegroundColor Red }
         $code = 1
     } finally {
+        if ($script:VcpkgWorker) {   # AP_INSTALL_PARALLEL: something else failed while step 5 was building: wait for it
+            try { JoinVcpkgWorker } catch { Write-Host "   $($_.Exception.Message)" -ForegroundColor Red; $code = 1 }
+        }
+        ShowTimes
         if ($encPrev) { try { [Console]::OutputEncoding = $encPrev } catch { } }
         try { Stop-Transcript | Out-Null } catch { }
     }
@@ -958,6 +1418,51 @@ function Main {
     return $code
 }
 
+# AP_QUICKEDIT (apply_quickedit_off.py): QuickEdit off while the script runs, so a click in the console does not pause it.
+# DisableQuickEdit returns the previous console input mode (or $null if there is no console / not Windows).
+function DisableQuickEdit {
+    if (-not $OnWindows) { return $null }
+    try {
+        if (-not ('NxConsoleMode' -as [type])) {
+            Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class NxConsoleMode {
+    [DllImport("kernel32.dll")] static extern IntPtr GetStdHandle(int n);
+    [DllImport("kernel32.dll")] static extern bool GetConsoleMode(IntPtr h, out uint m);
+    [DllImport("kernel32.dll")] static extern bool SetConsoleMode(IntPtr h, uint m);
+    public static long Get() { uint m; return GetConsoleMode(GetStdHandle(-10), out m) ? (long)m : -1; }
+    public static bool Set(long m) { return m >= 0 && SetConsoleMode(GetStdHandle(-10), (uint)m); }
+}
+'@
+        }
+        $old = [NxConsoleMode]::Get()
+        if ($old -lt 0) { return $null }
+        if (($old -band 0x40) -eq 0) { return $null }   # QuickEdit was already off: nothing to change or restore
+        # ENABLE_QUICK_EDIT_MODE = 0x40; the change only applies together with ENABLE_EXTENDED_FLAGS = 0x80
+        if (-not [NxConsoleMode]::Set((($old -band (-bnot 0x40)) -bor 0x80))) { return $null }
+        Write-Host '   (console QuickEdit is off while this runs: a click no longer pauses the output)'
+        return $old
+    } catch { return $null }
+}
+function RestoreConsoleMode($old) {
+    if ($null -eq $old) { return }
+    try { [void][NxConsoleMode]::Set(([long]$old -bor 0x80)) } catch { }
+}
+
+# AP_TOOLCHAIN_XWIN: Windows without VS Build Tools, only when chosen (-Toolchain xwin, or auto with the prebuilt pack
+# pinned). Loaded here, after every function of this script, because it redefines some of them (steps, StartVcpkgWorker).
+$script:UseXwin = $false
+if ($OnWindows) {
+    $nxXwin = Join-Path $PSScriptRoot 'internal/install_requirements_xwin.ps1'
+    if (Test-Path -LiteralPath $nxXwin) { . $nxXwin }
+    elseif ($Toolchain -eq 'xwin') { Write-Host "ERROR: $nxXwin is missing (is it in the repo?)" -ForegroundColor Red; exit 1 }
+}
+if ($script:UseXwin) {
+    $StepNames[1] = 'tools (per user, in parallel; xwin)'; $StepNames[4] = 'vcpkg (not needed)'; $StepNames[5] = 'libraries (prebuilt pack)'
+    $StepNames[8] = 'spirv_harness'
+}
 if ($FunctionsOnly) { return }
-$c = Main
+$nxConsoleMode = DisableQuickEdit
+try { $c = Main } finally { RestoreConsoleMode $nxConsoleMode }
 exit $c

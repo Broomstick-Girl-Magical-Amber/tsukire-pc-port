@@ -59,23 +59,23 @@ def bleed_rgb(rgba, min_alpha=1, rounds=64):
         return a
     rgb = a[..., :3].astype(np.float32)
     rgb[~known] = 0
+    h, w = known.shape
     for _ in range(rounds):
         todo = ~known
         if not todo.any():
             break
         acc = np.zeros_like(rgb)
         cnt = np.zeros(known.shape, np.float32)
+        # AP_HUD_FAST: neighbours as views of a copy padded with "unknown" instead of two np.roll copies per
+        # neighbour (no wrap-around at the edges either): same values added in the same order.
+        kp = np.pad(known, 1)
+        cp = np.pad(rgb, ((1, 1), (1, 1), (0, 0)))
         for dy in (-1, 0, 1):
             for dx in (-1, 0, 1):
                 if dy == 0 and dx == 0:
                     continue
-                k = np.roll(np.roll(known, dy, 0), dx, 1)
-                c = np.roll(np.roll(rgb, dy, 0), dx, 1)
-                # no wrap-around at the edges
-                if dy == 1: k[0, :] = False
-                if dy == -1: k[-1, :] = False
-                if dx == 1: k[:, 0] = False
-                if dx == -1: k[:, -1] = False
+                k = kp[1 - dy:1 - dy + h, 1 - dx:1 - dx + w]
+                c = cp[1 - dy:1 - dy + h, 1 - dx:1 - dx + w]
                 acc += c * k[..., None]
                 cnt += k
         grow = todo & (cnt > 0)

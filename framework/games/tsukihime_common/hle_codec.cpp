@@ -18,12 +18,20 @@
 #include <memory>
 #include <mutex>
 #include <unordered_map>
+#include <vector>
 
 #include <opus.h>
 
 #include <nx/game.h>
 
 #include "kernel.h"  // CPU, log, call, find_symbol, NX_HLE (igual que hle_audio.cpp)
+
+#ifdef NX_TITLE_LIVE  // AP_TITLE_LIVE_OPUS (apply_title_live_opus.py): the title music chosen with F5 / F6 (title_bg.cpp)
+namespace tsuki_title {
+bool music_packet(const uint8_t* in, uint32_t len, std::vector<uint8_t>* out);
+bool music_packet(const uint8_t* in, uint32_t len, std::vector<uint8_t>* out, float* gain);  // AP_TITLE_FADE
+}
+#endif
 
 namespace nx {
 
@@ -148,13 +156,24 @@ void DecodeOpusInterleavedWithHardware(CPU& c) {
     if (len == 0 || 8ull + len > in_size) return fail(kOpusBrokenData, "tamaño de paquete inválido");
 
     int max_frames = int(out_size / (2 * size_t(d->channels)));
+    const uint8_t* pkt = in + 8;  // AP_TITLE_LIVE_OPUS: the packet to decode
+    uint32_t pkt_len = len;
+#ifdef NX_TITLE_LIVE
+    std::vector<uint8_t> chosen;
+    float title_gain = 1.0f;  // AP_TITLE_FADE: the fade of a title track that changes
+    if (tsuki_title::music_packet(in, len, &chosen, &title_gain)) pkt = chosen.data(), pkt_len = uint32_t(chosen.size());
+#endif
     int n;
     {
         std::lock_guard lk(d->lock);
-        n = opus_decode(d->dec, in + 8, int(len), out, max_frames, 0);
+        n = opus_decode(d->dec, pkt, int(pkt_len), out, max_frames, 0);
     }
     if (n == OPUS_BUFFER_TOO_SMALL) return fail(kOpusInsufficientPcmBuffer, "buffer PCM chico");
     if (n < 0) return fail(kOpusBrokenData, opus_strerror(n));
+#ifdef NX_TITLE_LIVE
+    if (title_gain < 0.999f)  // AP_TITLE_FADE
+        for (int i = 0, m = n * d->channels; i < m; i++) out[i] = int16_t(out[i] * title_gain);
+#endif
 
     *consumed = 8 + len;
     *samples = n;

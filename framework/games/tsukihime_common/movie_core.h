@@ -80,6 +80,9 @@ public:
     Extractor& operator=(const Extractor&) = delete;
 
     Status open_memory(std::string data);  // toma el contenido del archivo completo
+    // AP_TITLE_LIVE: cambia el archivo por otro con las mismas pistas (mismo codec y tamano), conservando las pistas
+    // seleccionadas. Si no encaja devuelve un error y todo queda como estaba.
+    Status replace_memory(std::string data, int64_t base_us = -1);  // AP_TITLE_SYNC: base_us = time the new video goes on from
     Status track_count(int* n) const;
     Status track_configuration(int track, MediaDataStore* out) const;
     Status select_track(int track);
@@ -131,6 +134,10 @@ public:
     // salidas esperando AcquireOutputBufferIndex.
     bool pump();
     bool has_free_input() const;
+    // AP_TITLE_SYNC (apply_title_sync.py): at a video swap the packets waiting for the decoder are dropped
+    void drop_pending();
+    bool is_video() const;
+    int64_t last_output_us() const;  // time of the last frame the game took (-1 = none)
     int free_input_count() const;  // slots de entrada libres (para el 2o int* de AcquireInputBufferIndex)
     int ready_output_count() const;
     std::string debug_state() const;  // una linea con el estado de las colas, para el diagnostico periodico  // salidas listas esperando (para el 4o int* de AcquireOutputBufferIndex)

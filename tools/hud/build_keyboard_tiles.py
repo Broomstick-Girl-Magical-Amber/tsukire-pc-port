@@ -117,10 +117,29 @@ def render_tile(icon, rect, cell, inset=1):
     canvas = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     if icon is None or ix1 - ix0 < 4 or iy1 - iy0 < 4:
         return canvas
-    bb = icon.getchannel("A").getbbox()
-    ic = fit(icon.crop(bb) if bb else icon, ix1 - ix0 - inset, iy1 - iy0 - inset)
+    ic = fit(_cropped(icon), ix1 - ix0 - inset, iy1 - iy0 - inset)  # AP_HUD_FAST: the same crop object per icon
     canvas.paste(ic, (ix0 - x + (ix1 - ix0 - ic.width) // 2, iy0 - y + (iy1 - iy0 - ic.height) // 2), ic)
     return canvas
+
+
+_CROPS = {}  # AP_HUD_FAST: id(icon) -> (icon, icon cropped to its alpha box): fit() reuses its work per source image
+
+
+def _cropped(icon):
+    hit = _CROPS.get(id(icon))
+    if hit is None or hit[0] is not icon:
+        bb = icon.getchannel("A").getbbox()
+        hit = _CROPS[id(icon)] = (icon, icon.crop(bb) if bb else icon)
+    return hit[1]
+
+
+def tile_geometry(rect, cell):
+    """AP_HUD_FAST: everything render_tile uses of (rect, cell): slot size and the icon box inside it."""
+    x, y, w, h = rect
+    cx, cy, cw, ch = cell
+    ix0, iy0 = max(x, cx), max(y, cy)
+    ix1, iy1 = min(x + w, cx + cw), min(y + h, cy + ch)
+    return (w, h, ix0 - x, iy0 - y, ix1 - ix0, iy1 - iy0)
 
 
 def special_icon(key, icons):
@@ -146,13 +165,22 @@ def build_library(icons, out_path):
 
     tiles = []  # (slot, key, bytes)
     keys = sorted(VK) + [K_UNASSIGNED]
+    # AP_HUD_FAST: a tile depends only on the key and on the slot geometry (what render_tile reads of rect and cell),
+    # and many slots share it: each distinct tile is rendered once, and all are encoded in ONE BC7 pass (same bytes).
+    memo, uniq = {}, []
     for sid, (rect, cell) in enumerate(slots):
         todo = list(keys) + ([K_ARROWS, K_WASD] if sid == dpad_full else [])
         if sid in full_ids:
             todo.append(K_CLEAR)
         for key in todo:
-            img = render_tile(None if key == K_CLEAR else icon_for(key), rect, cell)
-            tiles.append((sid, key, bc7.encode_bc7(bc7.bleed_rgb(np.array(img)))))
+            gk = (key,) + tile_geometry(rect, cell)
+            if gk not in memo:
+                memo[gk] = len(uniq)
+                img = render_tile(None if key == K_CLEAR else icon_for(key), rect, cell)
+                uniq.append(bc7.bleed_rgb(np.array(img)))
+            tiles.append((sid, key, memo[gk]))
+    encoded = bc7.encode_bc7_many(uniq)
+    tiles = [(sid, key, encoded[i]) for sid, key, i in tiles]
 
     kinds = {"one": 0, "h2": 1, "v2": 2, "dpad": 3}
     cell_tab = b""

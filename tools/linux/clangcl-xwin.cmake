@@ -9,7 +9,8 @@
 #     <vcpkg>/scripts/toolchains/windows.cmake (as on Windows) and then this file, with NX_XWIN and NX_LLVM fixed.
 #   - The game build (step 9 of recomp): vcpkg.cmake + -DVCPKG_CHAINLOAD_TOOLCHAIN_FILE=<this file>
 #     -DNX_XWIN=<xwin folder> -DNX_LLVM=<LLVM bin>.
-# Not used on Windows: there the build keeps using clang-cl from the PATH and the VS environment, as always.
+# Also on a Windows host (AP_TOOLCHAIN_XWIN): install_requirements.ps1 -Toolchain xwin builds the game with it, without
+# VS Build Tools (step 9 of recomp: -DCMAKE_TOOLCHAIN_FILE=<this file> -DNX_XWIN -DNX_LLVM + the prebuilt libraries).
 #
 # NX_XWIN: output folder of "xwin splat" (contains "VC" and "Windows Kits").
 # NX_LLVM: bin folder of the LLVM with clang-cl (by default, the one in the PATH).
@@ -29,7 +30,7 @@ foreach(_nx_var NX_XWIN NX_LLVM)
     endif()
 endforeach()
 # try_compile reads this file again in a separate project: the two paths are passed to it.
-list(APPEND CMAKE_TRY_COMPILE_PLATFORM_VARIABLES NX_XWIN NX_LLVM NX_AR_GNU)
+list(APPEND CMAKE_TRY_COMPILE_PLATFORM_VARIABLES NX_XWIN NX_LLVM)
 
 if(NOT NX_XWIN OR NOT EXISTS "${NX_XWIN}/VC/Tools/MSVC")
     message(FATAL_ERROR "clangcl-xwin.cmake: NX_XWIN='${NX_XWIN}' is not an output of 'xwin splat --use-winsysroot-style' (VC/Tools/MSVC is missing)")
@@ -42,8 +43,14 @@ else()
 endif()
 find_program(NX_CLANG_CL clang-cl ${_nx_hint} REQUIRED)
 get_filename_component(_nx_bin "${NX_CLANG_CL}" DIRECTORY)
+# AP_TOOLCHAIN_XWIN: on a Windows host the tools end in .exe
+if(CMAKE_HOST_WIN32)
+    set(_nx_x ".exe")
+else()
+    set(_nx_x "")
+endif()
 foreach(_nx_tool lld-link llvm-lib llvm-ar llvm-rc llvm-mt)
-    if(NOT EXISTS "${_nx_bin}/${_nx_tool}")
+    if(NOT EXISTS "${_nx_bin}/${_nx_tool}${_nx_x}")
         message(FATAL_ERROR "clangcl-xwin.cmake: ${_nx_bin}/${_nx_tool} is missing (incomplete LLVM)")
     endif()
 endforeach()
@@ -53,17 +60,12 @@ set(CMAKE_CXX_COMPILER "${NX_CLANG_CL}")
 # No CMAKE_<LANG>_COMPILER_TARGET: clang-cl already targets x86_64-pc-windows-msvc on an x86_64 host, and the --target
 # CMake would add also reaches the LDFLAGS of the ports that do not use CMake; lld-link ignores it with a warning and
 # the ffmpeg configure treats that warning as a failure ("C compiler test failed").
-set(CMAKE_LINKER "${_nx_bin}/lld-link" CACHE FILEPATH "")
-# CMAKE_AR: llvm-lib (lib.exe style, what CMake expects with clang-cl). Exception: with NX_AR_GNU (only the ffmpeg
-# triplet) llvm-ar. ffmpeg does not use CMake to build; its compat/windows/makedef does "$AR rcs tmp.lib objs" to
-# get the symbols for the .def, and with llvm-lib that fails ("rcs: no such file"). On Windows vcpkg wraps it in ar-lib.
-if(NX_AR_GNU)
-    set(CMAKE_AR "${_nx_bin}/llvm-ar" CACHE FILEPATH "")
-else()
-    set(CMAKE_AR "${_nx_bin}/llvm-lib" CACHE FILEPATH "")
-endif()
-set(CMAKE_RC_COMPILER "${_nx_bin}/llvm-rc" CACHE FILEPATH "")
-set(CMAKE_MT "${_nx_bin}/llvm-mt" CACHE FILEPATH "")
+set(CMAKE_LINKER "${_nx_bin}/lld-link${_nx_x}" CACHE FILEPATH "")
+# CMAKE_AR: llvm-lib (lib.exe style, what CMake expects with clang-cl). AP_DROP_UNUSED: the llvm-ar exception of the
+# ffmpeg triplet (NX_AR_GNU) is gone: FFmpeg is prebuilt and no other port needed it.
+set(CMAKE_AR "${_nx_bin}/llvm-lib${_nx_x}" CACHE FILEPATH "")
+set(CMAKE_RC_COMPILER "${_nx_bin}/llvm-rc${_nx_x}" CACHE FILEPATH "")
+set(CMAKE_MT "${_nx_bin}/llvm-mt${_nx_x}" CACHE FILEPATH "")
 
 # SDK version (a single folder in the xwin output) for the llvm-rc include paths.
 file(GLOB _nx_sdk LIST_DIRECTORIES true "${NX_XWIN}/Windows Kits/10/Include/10.*")

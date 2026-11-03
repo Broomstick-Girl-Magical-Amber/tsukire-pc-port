@@ -33,6 +33,19 @@ void video_started(const void* key, const char* romfs_rel);
 void video_ended(const void* key);
 }  // namespace tsuki_discord
 
+// AP_TITLE_BG (apply_title_bg.py): which titlebg<N>.mp4 to serve (games/tsukihime_common/title_bg.cpp).
+// "" = the one the game asked for.
+namespace tsuki_title {
+std::string remap(const std::string& rel);
+// AP_TITLE_SCOPE (apply_title_scope.py): the music changes only while the title screen is up (title_bg.cpp).
+void video_started(const void* key, const char* rel);
+void video_ended(const void* key);
+// AP_TITLE_LIVE (apply_title_live.py): the video chosen with F5 / F6 (title_bg.cpp), taken at SeekTo.
+bool take_swap(const void* key, std::string* rel, std::string* data);
+// AP_TITLE_FADE (apply_title_fade.py): 1 = the frame as it is, 0 = black.
+float video_gain();
+}  // namespace tsuki_title
+
 using namespace movie_host;
 
 namespace {
@@ -241,6 +254,22 @@ std::string romfs_relative(const char* guest_path) {
     return p;
 }
 
+// AP_TITLE_BG (apply_title_bg.py): reads the video, but a titlebg<N> may be replaced by the one title.ini says. If the
+// replacement does not exist the game's own file is used. `rel` ends up being the file that was actually served.
+std::string read_video(std::string& rel) {
+    const std::string alt = tsuki_title::remap(rel);
+    if (!alt.empty() && alt != rel) {
+        std::string data = nx::read_game_file(alt);
+        if (!data.empty()) {
+            nx::log("title: %s -> %s", rel.c_str(), alt.c_str());
+            rel = alt;
+            return data;
+        }
+        nx::log("title: %s does not exist, using %s", alt.c_str(), rel.c_str());
+    }
+    return nx::read_game_file(rel);
+}
+
 // ============================================================================================== funciones libres
 
 void SetAllocator(nx::CPU&) {}  // usamos el heap del host
@@ -365,6 +394,7 @@ void Extractor_ctor(nx::CPU& c) {
 }
 void Extractor_D2(nx::CPU& c) {
     tsuki_discord::video_ended(ext(c.x[0]));  // AP_DISCORD
+    tsuki_title::video_ended(ext(c.x[0]));  // AP_TITLE_SCOPE
     delete ext(c.x[0]);
     slot8<Extractor>(c.x[0]) = nullptr;
 }
@@ -375,9 +405,10 @@ void Extractor_D0(nx::CPU& c) {
 }
 void Extractor_SetDataSource_path(nx::CPU& c) {
     std::string rel = romfs_relative(reinterpret_cast<const char*>(c.x[1]));
-    std::string data = nx::read_game_file(rel);
+    std::string data = read_video(rel);  // AP_TITLE_BG
     nx::log("movie: SetDataSource(\"%s\") -> %zu bytes", rel.c_str(), data.size());
     if (!data.empty()) tsuki_discord::video_started(ext(c.x[0]), rel.c_str());  // AP_DISCORD
+    if (!data.empty()) tsuki_title::video_started(ext(c.x[0]), rel.c_str());  // AP_TITLE_SCOPE
     ret(c, data.empty() ? kIoError : ext(c.x[0])->open_memory(std::move(data)));
 }
 void Extractor_SetDataSource_mem(nx::CPU& c) {
@@ -392,10 +423,11 @@ void Extractor_SetDataSource_reader(nx::CPU& c) {
     // directo por la ruta y el lector no se usa (no hace falta reconstruir la vtable de ClientStreamReader).
     const char* path = reinterpret_cast<const char*>(c.x[2]);
     std::string rel = romfs_relative(path);
-    std::string data = rel.empty() ? std::string() : nx::read_game_file(rel);
+    std::string data = rel.empty() ? std::string() : read_video(rel);  // AP_TITLE_BG
     nx::log("movie: SetDataSource(ClientStreamReader=%llx, \"%s\") -> abierto por ruta, %zu bytes",
             (unsigned long long)c.x[1], path ? path : "(null)", data.size());
     if (!data.empty()) tsuki_discord::video_started(ext(c.x[0]), rel.c_str());  // AP_DISCORD
+    if (!data.empty()) tsuki_title::video_started(ext(c.x[0]), rel.c_str());  // AP_TITLE_SCOPE
     ret(c, data.empty() ? kIoError : ext(c.x[0])->open_memory(std::move(data)));
 }
 void Extractor_GetTrackCount(nx::CPU& c) {
@@ -412,14 +444,36 @@ void Extractor_UnselectTrack(nx::CPU& c) { ret(c, ext(c.x[0])->unselect_track(in
 // salia a tirones). Cada vez que avanza el Extractor se avisa "entrada disponible" SOLO al decoder de la pista de la
 // proxima muestra (avisar a todos dejo el audio mudo: el juego parece leer la muestra al despertar, sea de quien sea).
 void wake_track_input(nx::CPU& c, Extractor* e);
+// AP_TITLE_SYNC (apply_title_sync.py): the video decoders at a swap of the title video.
+void title_video_clock(int64_t* base_us);
+void title_video_drop();
 
 void Extractor_SeekTo(nx::CPU& c) {
     Extractor* e = ext(c.x[0]);
+    {  // AP_TITLE_LIVE: the loop of the title video is the moment to show the one the player chose with F5 / F6
+        std::string swap_rel, swap_data;
+        if (tsuki_title::take_swap(e, &swap_rel, &swap_data)) {
+            const Status r = e->replace_memory(std::move(swap_data));
+            if (r == kOk) nx::log("title: video changed to %s", swap_rel.c_str());
+            else nx::log("title: %s could not replace the video that is playing (status %d): it stays", swap_rel.c_str(), int(r));
+        }
+    }
     Status s = e->seek_to(int64_t(c.x[1]));
     wake_track_input(c, e);
     ret(c, s);
 }
 void Extractor_GetTrackIndexForAvailableData(nx::CPU& c) {
+    {  // AP_TITLE_FADE: at black the video chosen with F5 / F6 takes the place of the one that is playing
+        std::string swap_rel, swap_data;
+        if (tsuki_title::take_swap(ext(c.x[0]), &swap_rel, &swap_data)) {
+            int64_t base = -1;  // AP_TITLE_SYNC: go on from the frame on screen, not from what is queued
+            title_video_clock(&base);
+            const Status r = ext(c.x[0])->replace_memory(std::move(swap_data), base);
+            if (r == kOk) title_video_drop();
+            if (r == kOk) nx::log("title: video changed to %s", swap_rel.c_str());
+            else nx::log("title: %s could not replace the video that is playing (status %d): it stays", swap_rel.c_str(), int(r));
+        }
+    }
     ret(c, ext(c.x[0])->track_index_for_available_data(reinterpret_cast<uint64_t*>(c.x[1])));
 }
 void Extractor_Read(nx::CPU& c) {
@@ -540,6 +594,18 @@ void notify(nx::CPU& c, uint64_t obj, bool try_output) {
 // Decoders con eventos registrados (para wake_all_inputs).
 std::mutex g_slots_m;
 std::vector<DecoderSlot*> g_slots;
+
+// AP_TITLE_SYNC
+void title_video_clock(int64_t* base_us) {
+    std::lock_guard<std::mutex> lk(g_slots_m);
+    for (DecoderSlot* sl : g_slots)
+        if (sl->d->is_video()) *base_us = std::max(*base_us, sl->d->last_output_us());
+}
+void title_video_drop() {
+    std::lock_guard<std::mutex> lk(g_slots_m);
+    for (DecoderSlot* sl : g_slots)
+        if (sl->d->is_video()) sl->d->drop_pending();
+}
 
 void forget_slot(DecoderSlot* sl) {
     std::lock_guard<std::mutex> lk(g_slots_m);
@@ -726,6 +792,14 @@ Status write_frame_to_texture(Decoder* d, int index, uint64_t guest_buf) {
     tw.level = 0, tw.x = 0, tw.y = 0, tw.z = 0, tw.w = cw, tw.h = ch, tw.d = 1;
     tw.data.resize(size_t(cw) * ch * 4);
     for (uint32_t y = 0; y < ch; y++) std::memcpy(tw.data.data() + size_t(y) * cw * 4, rgba + size_t(y) * w * 4, cw * 4);
+#ifdef NX_TITLE_LIVE
+    if (const float g = tsuki_title::video_gain(); g < 0.999f) {  // AP_TITLE_FADE: towards black
+        const uint32_t k = uint32_t(g > 0 ? g * 256.0f : 0.0f);
+        uint8_t* px = tw.data.data();
+        for (size_t i = 0, n = size_t(cw) * ch; i < n; i++, px += 4)
+            px[0] = uint8_t(px[0] * k >> 8), px[1] = uint8_t(px[1] * k >> 8), px[2] = uint8_t(px[2] * k >> 8);
+    }
+#endif
     std::lock_guard lk(nx::nvn::objects_lock());
     // Un frame que cubre la textura entera reemplaza a los que no alcanzaron a aplicarse (si el juego no la dibuja,
     // no se acumulan 8 MB por frame).

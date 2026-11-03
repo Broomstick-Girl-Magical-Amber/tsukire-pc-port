@@ -23,9 +23,9 @@ This project is a fork of [SuperMarioWonderRecomp](https://github.com/BelmanteGu
 
 - The game is playable in both editions. Scenes from the middle of both the Arcueid and Ciel routes were tested in each edition, including playing the final scene. Both routes were also fast-forwarded from the prologue to their endings with no errors, but the game has not actually been played through in full, and a few scenes were not tested. All of the "Teach Me, Ciel-sensei" sections were tried.
 
-- Automatic installation and build scripts for both Windows and Linux. You must provide your own game dump and keys: put them where the scripts look for them (`data/prod.keys` and the `.xci`/`.nsp` in the repository root) and the output is the `.exe`. See [Rebuild from scratch on Windows](#rebuild-from-scratch-on-windows) or [Rebuild on Linux and play with Proton](#rebuild-on-linux-and-play-with-proton) for more information.
+- One command installs everything and builds the game, on both Windows and Linux. You must provide your own game dump and keys: put them where the script looks for them (`data/prod.keys` and the `.xci`/`.nsp` in the repository root) and the output is the `.exe`. On Windows it takes about 10 minutes on a clean PC, needs no Visual Studio and no administrator. See [Rebuild from scratch on Windows](#rebuild-from-scratch-on-windows) or [Rebuild on Linux and play with Proton](#rebuild-on-linux-and-play-with-proton) for more information.
 
-- Community patches in .nsp format: drop them in updates\ and recompile. Only the changed files are extracted to mods\<edition>\, and the game is recompiled from the patch’s own executable when it has one. Tested with translation patches on the Japanese edition. See [Updates and patches](#updates-and-patches).
+- Community patches in .nsp format: drop them in updates\ and recompile. Only the changed files are extracted to `mods\<edition>\`, and the game is recompiled from the patch’s own executable when it has one. Tested with translation patches on the Japanese edition. See [Updates and patches](#updates-and-patches).
 
 - Save data is stored in `<root>/data/tsuki/user/save` for the Japanese edition and `<root>/data/tsuki_global/user/save` for the global edition. The `data/<edition>` folder is created by the recompilation process, and the `user/save` folder appears once the game runs and saves. Back it up before updating or rebuilding. Saves from an emulator or from a Nintendo Switch save data dump can be imported and were tested to work.
 
@@ -50,8 +50,6 @@ This project is a fork of [SuperMarioWonderRecomp](https://github.com/BelmanteGu
       <img src="./media/xbox_layout.png" width="60%" />
     </p>
 
-
-- Mouse as touch screen (click = tap, drag = held tap).
 - Keyboard and mouse with a Fate/stay night-style layout by default, and remapping of keyboard, controller and mouse with `input.ini`. A commented example is in `<root>/framework/games/tsukihime_common/input.ini.example`. **[See Controls section for more details](#Controls)**
 - Fixed 16:9 picture with black bars; F11 / Alt+Enter fullscreen.
 - Discord Rich Presence, tested on both editions on Windows. It has not been tested on Linux.
@@ -112,47 +110,36 @@ Some heroines and scenes. Hisui comes first by arbitrary choice.
    cd tsukire-pc-port
    ```
 
-2. **Put your files in place.**
-   - Create a `data` folder in the repository root and copy your `prod.keys` into it (`data\prod.keys`). The scripts only check that it exists and pass its path to `nstool`; they never read, copy or print it.
+2. **Put your files in place** (before running the script: it checks them first).
+   - Copy your `prod.keys` into (`data\prod.keys`). The scripts only check that it exists and pass its path to `nsextract`; they never read, copy or print it.
    - Copy your `.xci` / `.nsp` into the repository root. It does not matter which file is which edition: the script recognises the container by its header and the edition by the program ID. Or keep it elsewhere and use `-InputFile`.
 
+3. **Install the requirements and recompile, in one command.** `-Edition` is `global`, `japan` or `both` (one dump per edition). A normal, non-administrator console is fine.
 
-3. **Install the requirements.** This takes about 30 to 60 minutes, and more on slower PCs (building `ffmpeg` is the longest part). The console may look stuck on a step; that is normal, so do not close it.
-   > **Warning:** Windows Defender scans every file the `ffmpeg` build creates, which can make the build several times slower. Before running the script, you can exclude the vcpkg folder from scanning. Open a new PowerShell tab **as administrator** and run:
-   >
-   > ```powershell
-   > Add-MpPreference -ExclusionPath 'C:\dev\vcpkg'
-   > ```
-   > If `Add-MpPreference` fails (for example with error `0x800106ba`), Windows Defender is not active on that PC, usually because another antivirus is installed. Skip this step: the installation works the same. That other antivirus may slow the build in the same way; if so, exclude `C:\dev\vcpkg` in that program.
-
-   Then run the script (a normal, non-administrator console is fine; it asks for administrator permission once by itself):
-
-    **Note: You must be in the root folder to run this script (tsukire-pc-port)**
-      ```powershell
-      powershell -ExecutionPolicy Bypass -File .\tools\install_requirements.ps1
-      ```
-    The console may stay quiet for long periods while ffmpeg builds. If it seems frozen, do not click inside the window: clicking pauses output in the Windows console. Press Esc or Enter and it continues.
- 
-
-
-4. **Recompile an edition.** `-Edition` is mandatory. **Close the console and open a new one first**: the installer puts the tools in the system `PATH`, but a console that was already open does not see them. This takes about 20 minutes or more on slower PCs.
-
-    **Note: You must be in the root folder to run this script (tsukire-pc-port) and I recommend install/update your GPU drivers before launching the game**
+    **Note: You must be in the root folder to run this script (tsukire-pc-port). I recommend installing/updating your GPU drivers before launching the game.**
 
    ```powershell
-   powershell -ExecutionPolicy Bypass -File .\tools\recomp_tsukihime.ps1 -Edition global
-
-   powershell -ExecutionPolicy Bypass -File .\tools\recomp_tsukihime.ps1 -Edition japan
+   powershell -ExecutionPolicy Bypass -File .\tools\install_requirements.ps1 -Recomp -Edition global
    ```
+
+   It asks you once to accept the Microsoft license of the Windows CRT/SDK. It takes about **10 minutes** or more for one edition (limited by your PC specs). The console may look quiet on a step; that is normal, so do not close it. At the end it prints a table with the time of every step.
+
    The final `.exe` is `<root>/framework/build/tsukihime/tsukihime.exe` (Japanese) or `<root>/framework/build/tsukihime_global/tsukihime_global.exe` (global).
 
-   Community patches are also supported. See [Updates and patches](#updates-and-patches-experimental) for more details.
+    **Community patches are also supported. See [Updates and patches](#updates-and-patches) for more details.**
 
+    Everything goes to `%LOCALAPPDATA%\tsuki-tools` (about 5 GB), for your user only, with no installers and no administrator. 
+
+   **Later recompilations** (another edition, a patch, a new version of the repository) only need the recompilation script. The tools are already installed:
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\tools\recomp_tsukihime.ps1 -Edition japan
+   ```
 
 
 ## Rebuild on Linux and play with Proton
 
-The Linux scripts are thin wrappers that bring PowerShell 7 and run the same scripts as Windows, so the options are the same (`-Check`, `-From`, `-To`, `-Edition`, ...). Call them with `bash`.
+The Linux scripts are thin wrappers that bring PowerShell 7 and run the same scripts as Windows, so the options are the same (`-Recomp`, `-Check`, `-From`, `-To`, `-Edition`, ...). Call them with `bash`.
 
 ```bash
 # Install if you don't have it
@@ -161,25 +148,17 @@ sudo apt install curl tar coreutils git
 # Skip this if you already cloned the repo
 git clone https://github.com/Broomstick-Girl-Magical-Amber/tsukire-pc-port.git && cd tsukire-pc-port
 
-# Install the requirements. It takes about 20 minutes or more on slower PCs.
+# Put your keys and your dump (.nsp or .xci) in place first (keys in data folder, and the dump in the root folder)
+# Install the requirements and recompile one edition: -Edition japan, global or both.
 # It asks for sudo once (system packages) and asks you to accept the Microsoft license for the Windows CRT/SDK (xwin).
-
 # Note: You must be in the root folder to run this script (tsukire-pc-port)
-bash tools/linux/install_requirements_linux.sh
-
-# Put your keys and your dump (.nsp or .xci) in place
-mkdir -p data && cp /path/to/prod.keys data/prod.keys
-cp /path/to/your-dump.xci .
-
-# Recompile one edition: -Edition japan or -Edition global (about 20 minutes or more on slower PCs)
-
-# Note: You must be in the root folder to run this script (tsukire-pc-port)
-bash tools/linux/recomp_linux.sh -Edition japan
+bash tools/linux/install_requirements_linux.sh -Recomp -Edition japan
 ```
 
-Community patches are also supported. See [Updates and patches](#updates-and-patches-experimental) for more details, but not tested in Linux.
+On Linux the process it takes about 8 minutes or more. Later recompilations only need `bash tools/linux/recomp_linux.sh -Edition japan` (or `global`).
 
-Step 9 cross-compiles the **same Windows `.exe`** with `clang-cl` + `lld-link` against the Windows CRT/SDK fetched by `xwin`; it ends up in `framework/build/tsukihime/` or `framework/build/tsukihime_global/` exactly as on Windows. Long runs use `systemd-inhibit` when it works, so the machine does not suspend in the middle.
+Community patches are also supported. See [Updates and patches](#updates-and-patches) for more details, but not tested in Linux.
+
 
 **Playing with Proton**
 
@@ -194,10 +173,13 @@ Without a GPU (a VM with `llvmpipe`) set `NX_GPU_HANG_MS` in the launch options,
 
 | Option | Meaning |
 |---|---|
+| `-Recomp` | After installing, recompile the chosen edition(s) (`recomp_tsukihime.ps1` from start to finish). |
+| `-Edition global\|japan\|both` | Which edition(s) to recompile with `-Recomp`, and to size the space check and summary for (default `both`). |
+| `-InputFile <path>` / `-Keys <path>` | Passed to the recompilation, as in `recomp_tsukihime.ps1`. |
+| `-Toolchain auto\|xwin\|vs` | Windows only. `auto` (default) = no Visual Studio, per-user tools and the prebuilt pack; `vs` = Visual Studio Build Tools, Vulkan SDK and vcpkg as before. |
 | `-Check` | Only verify; install, download and create nothing. Exit code 1 if something is missing. |
-| `-From N` / `-To N` | Run steps N to M (0 to 11). |
-| `-Edition global\|japan\|both` | Which edition(s) to size the space check and summary for (default `both`). |
-| `-Vcpkg <folder>` | vcpkg location (default `C:\dev\vcpkg`; `~/dev/vcpkg` on Linux). |
+| `-From N` / `-To N` | Run steps N to M (0 to 11). If a step fails, the script says from which step to resume; what was done is kept. |
+| `-Vcpkg <folder>` | vcpkg location, only for `-Toolchain vs` and Linux (default `C:\dev\vcpkg`; `~/dev/vcpkg` on Linux). |
 
 ### Some `recomp_tsukihime.ps1` options
 
@@ -215,7 +197,7 @@ Without a GPU (a VM with `llvmpipe`) set `NX_GPU_HANG_MS` in the launch options,
 General support for official updates and community patches distributed as an installable `.nsp`. Tested so far only with translation patches for the Japanese edition. No updates or patches are distributed here.
 
 1. Create an `updates` folder in the repository root and copy the `.nsp` into it, as downloaded. Both editions can share the folder: each recompilation takes only the ones for its edition. A name starting with `_` is ignored.
-2. Run the recompilation again for that edition (`recomp_tsukihime.ps1 -Edition japan` or `global`, or `recomp_linux.sh` on Linux). **Important: if you recompiled before update support existed and deleted your dump, put it back for this first update recompilation. After that you can delete it again.**
+2. Run the recompilation again for that edition (`recomp_tsukihime.ps1 -Edition japan` or `global`, or `recomp_linux.sh` on Linux; the requirements are already installed). **Important: if you recompiled before update support existed and deleted your dump, put it back for this first update recompilation. After that you can delete it again.**
 3. Step 3 extracts only what the update changes. The changed game files go to `mods\<edition>\<name>\`. If the update brings its own executable, the game is recompiled from it. When it finishes, the `.nsp` can be deleted.
 
 - For turning one off, rename its folder in `mods\<edition>\` to `_<name>` and recompile. Delete the folder to remove it.
@@ -229,7 +211,7 @@ You provide:
 
 - A legal dump of the game, **base version v0 (1.0.0) only**, as `.xci` or `.nsp`, one per edition. The container format does not matter: either edition works in either format. An `.nsp` that bundles an update, or a dump that is already an updated version, is rejected as the base game (standalone updates and patches go in `updates\`, see [Updates and patches](#updates-and-patches)). (An `.xci` with an update partition is fine: only its base game is read.) Step 3 of `recomp_tsukihime.ps1` also refuses a binary other than the one the port was measured against.
 - Your own `prod.keys`.
-- On the working drive (`data\` + `build\`) you need about **22 GB for `japan edition`, 24 GB for `global edition` and 46 GB for both**. I recommend having 60 GB free. Keep the dumps on another drive if you can (use `-InputFile` to point to them). If they are on the same drive, add their size, because the scripts never delete them.
+- On the working drive (`data\` + `build\`) you need about **22 GB for `japan edition`, 24 GB for `global edition` and 46 GB for both**. On Windows the tools that `install_requirements.ps1` installs take about **5 GB more on `C:`** (`%LOCALAPPDATA%\tsuki-tools`. If the repository is also on `C:`, plan for about 30 GB for one edition and 55 GB for both. Keep the dumps on another drive if you can (use `-InputFile` to point to them). If they are on the same drive, add their size, because the scripts never delete them.
 
 
 ## Playing
@@ -240,7 +222,7 @@ You provide:
 
 ### Controls
 
-Defaults. The keyboard and mouse follow the layout of *Fate/stay night [Realta Nua]*. The controller layout follows the Nintendo one by **position**, so the right-hand button (B on an Xbox pad) advances the text.
+Defaults. The keyboard and mouse follow the layout of *Fate/stay night*. The controller layout follows the Nintendo one by **position**, so the right-hand button (B on an Xbox pad) advances the text.
 
 | Action in game | Keyboard | Xbox controller |
 |---|---|---|
@@ -309,11 +291,13 @@ The recompilation framework itself is not mine and not Claude's: it comes from B
 This repository is under the **MIT License** ([LICENSE](LICENSE)). [NOTICE.md](NOTICE.md) documents the third-party material that is included in the repository.
 
 - **SuperMarioWonderRecomp** by BelmanteGu, MIT: the base of `framework/`. Its license and copyright notice are kept in `framework/LICENSE` and must stay with any copy of that code. Reference (currently offline): <https://github.com/BelmanteGu/SuperMarioWonderRecomp>. The Wonder-specific launcher art and icons were removed from the fork.
-- **Ryujinx / Ryubing**: Ryujinx is a Nintendo Switch emulator, and Ryubing is the project the pinned source comes from. This port is not an emulator and does not use the emulator itself: only its shader translator is used, offline, to turn the game's Maxwell shaders into SPIR-V. It is not included in this repository: the install script downloads a pinned tarball from [Codeberg](https://codeberg.org/Software_arch/Ryubing), verifies it, and builds the translator locally with the patches in `framework/tools/maxwell/spirv_harness/translator/`. The harness describes it as MIT-licensed.
-- **FFmpeg, libopus, SDL3, libjpeg-turbo, libpng and zlib**: installed through vcpkg, not included in this repository, and each one is under its own license. The built `.exe` is placed next to their DLLs.
-- **Vulkan SDK** (LunarG): installed by the script for the headers and `spirv-val`, under its own license.
+- **Ryujinx / Ryubing**: Ryujinx is a Nintendo Switch emulator, and Ryubing is the project the pinned source comes from. This port is not an emulator and does not use the emulator itself: only its shader translator is used, offline, to turn the game's Maxwell shaders into SPIR-V. It is not included in this repository. On Windows the translator comes prebuilt (`spirv_harness`, a self-contained executable) in this repository's releases, built from the pinned source with the patches in `framework/tools/maxwell/spirv_harness/translator/`; with `-Toolchain vs`, on Linux, or when those sources change, the install script downloads the pinned tarball from [Codeberg](https://codeberg.org/Software_arch/Ryubing), verifies it, and builds the translator locally. The harness describes it as MIT-licensed.
+- **libopus, SDL3, libjpeg-turbo, libpng and zlib**: built with vcpkg, not included in this repository, and each one is under its own license. On Windows they are downloaded prebuilt from this repository's releases (with their license files); on Linux, and with `-Toolchain vs`, vcpkg builds them. The built `.exe` is placed next to their DLLs.
+- **Microsoft Visual C++ runtime** (`msvcp140.dll`, `vcruntime140.dll`, ...): redistributable files of Visual Studio, included in the prebuilt pack of the releases and placed next to the `.exe`, so the game starts on a PC without Visual C++ installed. The **Windows CRT/SDK** used to compile is downloaded from Microsoft by `xwin` on each PC after you accept Microsoft's license; it is never redistributed.
+- **FFmpeg** (LGPL): the install script downloads the prebuilt, unmodified FFmpeg 9.0 "shared" LGPL build published by [BtbN](https://github.com/BtbN/FFmpeg-Builds) (fixed URL and SHA-256, checked before it is unpacked). It is not included in this repository. The built `.exe` is placed next to its DLLs.
+- **Vulkan SDK** (LunarG): only its headers and `spirv-val` are used, under its own license. On Windows they come in the prebuilt pack of the releases; with `-Toolchain vs` the script installs the SDK.
 - **Noto Sans JP** (`resources/fonts`): SIL Open Font License 1.1, with `OFL.txt` next to the font.
-- Build tools such as LLVM, CMake, Ninja, `nstool` and `xwin` are downloaded by the install scripts from their official sources and are not redistributed here.
+- Build tools such as LLVM, CMake, Ninja, Python ([python-build-standalone](https://github.com/astral-sh/python-build-standalone)), the .NET SDK and `xwin` are downloaded by the install scripts from their official sources, checked against a pinned checksum, and are not redistributed here.
 - **Screenshots and intro animation** (`media/`): captures of the game, property of **TYPE-MOON / Aniplex** and the other rights holders. They are included only to show the port working. If you are a rights holder and want it removed, open an issue and the folder will be removed.
 - ***Tsukihime -A piece of blue glass moon-*** and its artwork belong to **TYPE-MOON / Aniplex** and the other rights holders. The icon `framework/games/tsukihime_common/tsukihime.ico` derives from artwork of the game; it is included only to identify the executable. If you are a rights holder and want it removed, open an issue and it will be replaced.
 

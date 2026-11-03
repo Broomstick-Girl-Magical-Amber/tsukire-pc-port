@@ -11,9 +11,10 @@
 #
 # Steps (each one checks its result; if it is already done and verified, it is skipped):
 #   0 precheck       tools, framework patches (markers of each apply_*.py), keys, space
-#   1 identify       CNMT of the Meta NCA: program ID, Application type, version v0, program NCA. The container is
+#   1 identify       program ID of the base application, read with tools\nsextract (C#, LibHac). The container is
 #                    recognized by its header (PFS0 = NSP, HEAD = XCI), not by the extension or the edition.
-#   2 extract        program NCA -> exefs + romfs (in _recomp\, moved at the end); deletes the intermediate NCA
+#   2 extract        exefs + romfs straight from the input with nsextract (in _recomp\, moved at the end); AP_DROP_UNUSED:
+#                    nstool, the fallback until 2026-11-02, is gone
 #   3 verify         program ID of main.npdm and build ID of main (+0x40) against the measured ones; then updates\ (below)
 #   4 structure      japan: games\tsukihime; global: create_tsukihime_global.ps1 (idempotent)
 #   5 analysis       tools\nso2bin.py -> analysis\main.bin and sdk.bin
@@ -29,7 +30,7 @@
 # Never deletes from data\ what it did not create: what is replaced is kept as *.old. Keys are never copied or printed.
 # -Replace redoes extraction and recomp even if they are done. -Root to point to another copy of the port.
 # Keys: <root>\data\prod.keys (never copied or printed).
-# -ProgressSeconds: how often the progress of long extractions is reported (30 by default).
+# -ProgressSeconds: how often the progress of the extraction (step 2) is reported (30 by default).
 # Linux (PowerShell 7, via tools/linux/recomp_linux.sh): same steps; step 9 cross-compiles the SAME Windows exe
 # (clang-cl + lld-link + llvm-rc against the xwin CRT/SDK; tools/linux/clangcl-xwin.cmake) to play it with
 # Proton. The tools are installed by tools/linux/install_requirements_linux.sh. Nothing changes on Windows.
@@ -58,10 +59,10 @@ param(
     [string]$Fonts = '',
     [string]$Compare = '',
     [switch]$Replace,
-    [switch]$NoNsExtract,
     [switch]$ForceBuildId,
     [switch]$NoUpdates,
-    [ValidateRange(2, 600)][int]$ProgressSeconds = 30
+    [ValidateRange(2, 600)][int]$ProgressSeconds = 30,
+    [ValidateRange(0, 512)][int]$Jobs = 0   # AP_RECOMP_PARALLEL: compile jobs of step 9 (0 = ninja's default, CPUs + 2)
 )
 
 $ErrorActionPreference = 'Stop'
@@ -137,6 +138,27 @@ $Markers = @(
     @('both', 'framework\games\tsukihime_common\input_tsuki.cpp', 'AP_SDL_PAD', 'apply_sdl_pad.py', $false),
     @('both', 'framework\games\tsukihime_common\pad_sdl.cpp', 'AP_SDL_PAD', 'pad_sdl.cpp and pad_sdl.h (copy them to games\tsukihime_common)', $false),
     @('both', 'framework\games\tsukihime_common\input_tsuki.cpp', 'AP_MOUSE_INI', 'apply_mouse_ini.py', $false),
+    @('both', 'framework\games\tsukihime_common\hle_movie.cpp', 'AP_TITLE_BG', 'apply_title_bg.py', $false),
+    @('both', 'framework\games\tsukihime_common\title_bg.cpp', 'AP_TITLE_BG', 'title_bg.cpp (copy it to games\tsukihime_common)', $false),
+    @('both', 'framework\runtime\src\hle_fs.cpp', 'AP_TITLE_MUSIC', 'apply_title_music.py', $false),
+    @('both', 'framework\games\tsukihime_common\title_bg.cpp', 'AP_TITLE_MUSIC', 'title_bg.cpp (copy it to games\tsukihime_common)', $false),
+    @('both', 'framework\games\tsukihime_common\hle_movie.cpp', 'AP_TITLE_SCOPE', 'apply_title_scope.py', $false),
+    @('both', 'framework\games\tsukihime_common\title_bg.cpp', 'AP_TITLE_SCOPE', 'title_bg.cpp (copy it to games\tsukihime_common)', $false),
+    @('both', 'framework\games\tsukihime_common\hle_movie.cpp', 'AP_TITLE_LIVE', 'apply_title_live.py', $false),
+    @('both', 'framework\games\tsukihime_common\movie_core.cpp', 'AP_TITLE_LIVE', 'apply_title_live.py', $false),
+    @('both', 'framework\runtime\src\platform_win.cpp', 'AP_TITLE_LIVE', 'apply_title_live.py', $false),
+    @('both', 'framework\games\tsukihime_common\title_bg.cpp', 'AP_TITLE_LIVE', 'title_bg.cpp (copy it to games\tsukihime_common)', $false),
+    @('both', 'framework\games\tsukihime_common\hle_codec.cpp', 'AP_TITLE_LIVE_OPUS', 'apply_title_live_opus.py', $false),
+    @('both', 'framework\games\tsukihime_common\title_bg.cpp', 'AP_TITLE_LIVE_OPUS', 'title_bg.cpp (copy it to games\tsukihime_common)', $false),
+    @('both', 'framework\games\tsukihime_common\hle_movie.cpp', 'AP_TITLE_FADE', 'apply_title_fade.py', $false),
+    @('both', 'framework\games\tsukihime_common\movie_core.cpp', 'AP_TITLE_FADE', 'apply_title_fade.py', $false),
+    @('both', 'framework\games\tsukihime_common\hle_codec.cpp', 'AP_TITLE_FADE', 'apply_title_fade.py', $false),
+    @('both', 'framework\games\tsukihime_common\title_bg.cpp', 'AP_TITLE_FADE', 'title_bg.cpp (copy it to games\tsukihime_common)', $false),
+    @('both', 'framework\games\tsukihime_common\hle_movie.cpp', 'AP_TITLE_SYNC', 'apply_title_sync.py', $false),
+    @('both', 'framework\games\tsukihime_common\movie_core.cpp', 'AP_TITLE_SYNC', 'apply_title_sync.py', $false),
+    @('both', 'framework\games\tsukihime_common\title_bg.cpp', 'AP_TITLE_SYNC', 'title_bg.cpp (copy it to games\tsukihime_common)', $false),
+    @('both', 'framework\runtime\src\hle_fs.cpp', 'AP_TITLE_LIVE_MUSIC', 'apply_title_live_music.py', $false),
+    @('both', 'framework\games\tsukihime_common\title_bg.cpp', 'AP_TITLE_LIVE_MUSIC', 'title_bg.cpp (copy it to games\tsukihime_common)', $false),
     @('both', 'framework\runtime\src\nvn\nvn_vk.cpp', 'AP_GPU_HANG', 'apply_gpu_hang.py', $false),
     @('both', 'framework\runtime\src\nvn\nvn_frames.cpp', 'AP_GPU_HANG', 'apply_gpu_hang.py', $false),
     @('both', 'framework\runtime\src\nvn\nvn_vk.cpp', 'AP_VK_REQ', 'apply_vk_requirements.py', $false),
@@ -149,6 +171,8 @@ $Markers = @(
     @('both', 'framework\runtime\src\nvn\nvn_upload.cpp', 'AP_HUD_GLYPHS', 'apply_hud_glyphs.py', $false),
     @('both', 'framework\games\tsukihime_common\input_tsuki.cpp', 'AP_HUD_GLYPHS', 'apply_hud_glyphs.py', $false),
     @('both', 'framework\games\tsukihime_common\tsukihime_common.cmake', 'AP_HUD_GLYPHS', 'apply_hud_glyphs.py', $false),
+    @('both', 'framework\games\tsukihime_common\tsukihime_common.cmake', 'AP_FFMPEG_PREBUILT', 'apply_ffmpeg_prebuilt.py', $false),
+    @('both', 'tools\install_requirements.ps1', 'AP_FFMPEG_PREBUILT', 'apply_ffmpeg_prebuilt.py', $false),
     @('japan', 'framework\games\tsukihime\game.cmake', 'tsukihime_common/tsukihime_common.cmake', 'games\tsukihime_common (shared code, in the repo)', $false),
     @('japan', 'framework\games\tsukihime\game.cmake', 'NX_DEFAULT_ORIGIN_LOWER_LEFT', 'apply_origin_default.py', $false),
     @('japan', 'framework\games\tsukihime\game.cmake', 'NX_FIXED_ASPECT', 'apply_aspect.py', $false),
@@ -193,24 +217,77 @@ $Nso2bin = Under $Framework 'tools\nso2bin.py'
 $Maxwell = Under $Framework 'tools\maxwell'
 $Harness = Under $Framework 'private\build\spirv_harness\bin\Release\net10.0\spirv_harness.dll'
 $ShadersPy = Under $Tools 'internal\tsuki_shaders_offline.py'
-$Nstool = if ($OnLinux) { Under $Tools 'nstool' } else { Under $Tools 'nstool.exe' }   # Linux: built by install_requirements_linux.sh
-# nsextract (tools\nsextract, C# + LibHac): reads exefs and romfs straight from the NSP/XCI, without the intermediate copy.
-# If it is not built (dotnet build tools/nsextract/nsextract.csproj -c Release) or -NoNsExtract is given, nstool is used as before.
+# AP_DROP_UNUSED: nsextract (tools\nsextract, C# + LibHac) is the only extractor: it reads exefs and romfs straight from the
+# NSP/XCI, without the intermediate copy. nstool (the fallback until 2026-11-02) is gone.
 $NsExtract = Under $Tools 'nsextract\bin\Release\net10.0\nsextract.dll'
 $NsProj = Under $Tools 'nsextract\nsextract.csproj'
-$script:NsBroken = $false   # the build failed: nstool is used
-function UseNsExtract { return ((-not $NoNsExtract) -and (-not $script:NsBroken) -and (Test-Path -LiteralPath $NsExtract) -and [bool](Get-Command dotnet -ErrorAction SilentlyContinue)) }
-# Builds nsextract if the dll is missing or older than its sources (needs dotnet and network the first time, for the LibHac
-# package). If the build fails it only warns: the script goes on with nstool (what it did before).
+# AP_TOOLCHAIN_XWIN: Windows without VS Build Tools (install_requirements.ps1 -Toolchain xwin) leaves its tools in
+# <root>\_prepare\toolchain.json: prebuilt nsextract / spirv_harness (exe, no .NET needed) and, for step 9, clang-cl + xwin
+# + the prebuilt libraries. NX_TOOLCHAIN=vs ignores it (VS Build Tools + vcpkg, as before).
+$Toolchain = $null
+if (-not $OnLinux -and $env:NX_TOOLCHAIN -ne 'vs' -and (Test-Path -LiteralPath (InRoot '_prepare\toolchain.json'))) {
+    try { $tcj = Get-Content -LiteralPath (InRoot '_prepare\toolchain.json') -Raw | ConvertFrom-Json; if ($tcj.mode -eq 'xwin') { $Toolchain = $tcj } } catch { }
+}
+# Fingerprint of the sources a prebuilt tool was built from (the same function is in tools\dev\build_prebuilt.ps1 and
+# recomp_tsukihime.ps1): SHA-256 over "path SHA-256(text without CR)" of every source file ($SrcExt), bin\ and obj\ excluded.
+$SrcExt = @('.cs', '.csproj', '.props', '.targets', '.patch', '.py')
+function SourceStamp([string]$root, [string[]]$rels) {
+    $sha = [Security.Cryptography.SHA256]::Create(); $enc = New-Object Text.UTF8Encoding($false); $lines = @()
+    foreach ($rel in $rels) {
+        $p = Join-Path $root $rel
+        if (-not (Test-Path -LiteralPath $p)) { $lines += "missing $rel"; continue }
+        $base = (Resolve-Path -LiteralPath $root).Path.TrimEnd('\', '/')
+        foreach ($f in @(Get-ChildItem -LiteralPath $p -Recurse -File -Force | Where-Object { $_.Extension -in $SrcExt -and $_.FullName.Substring($base.Length) -notmatch '[\\/](bin|obj)[\\/]' })) {
+            $t = [IO.File]::ReadAllText($f.FullName, $enc).Replace("`r", '')
+            $h = [BitConverter]::ToString($sha.ComputeHash($enc.GetBytes($t))).Replace('-', '')
+            $lines += ($f.FullName.Substring($base.Length + 1).Replace('\', '/') + ' ' + $h)
+        }
+    }
+    $sorted = [string[]]$lines; [Array]::Sort($sorted, [StringComparer]::Ordinal)
+    return [BitConverter]::ToString($sha.ComputeHash($enc.GetBytes(($sorted -join "`n")))).Replace('-', '')
+}
+# A prebuilt exe only while the repo has the sources it was built from (after a git pull with other ones: the local build).
+function PrebuiltTool([string]$k, [string[]]$rels) {
+    $exe = "$($Toolchain.$k)"; $src = if ($Toolchain.PSObject.Properties["${k}_source"]) { "$($Toolchain."${k}_source")" } else { '' }
+    if (-not $exe -or -not (Test-Path -LiteralPath $exe)) { return $null }
+    if ($src -and (SourceStamp $Root $rels) -ne $src) { Write-Host "   WARNING: the prebuilt $k is from other sources than this repo: the local build is used (tools\install_requirements.ps1 builds it)" -ForegroundColor Yellow; return $null }
+    return $exe
+}
+if ($Toolchain) {
+    $nxP = PrebuiltTool 'nsextract' @('tools/nsextract'); if ($nxP) { $NsExtract = $nxP }
+    $nxP = PrebuiltTool 'harness' @('framework/tools/maxwell/spirv_harness', 'framework/tools/maxwell/apply_patch.py'); if ($nxP) { $Harness = $nxP }
+}
+# A .NET tool as a command: the prebuilt exe alone, or dotnet + the dll built here.
+function ToolCmd([string]$p) { if ($p -like '*.exe') { return , @($p) } else { return , @('dotnet', $p) } }
+# AP_XWIN_RUNTIME: the game and the vcpkg DLLs use the Visual C++ runtime (/MD). VS Build Tools installs it in Windows; the
+# xwin flow does not, so the copy of the prebuilt pack (redist\) goes next to the exe (app-local, as Microsoft allows).
+function CopyVcRuntime([string]$dir) {
+    $rd = if ($Toolchain.PSObject.Properties['redist']) { "$($Toolchain.redist)" } else { '' }
+    if ($rd -and (Test-Path -LiteralPath (Join-Path $rd 'msvcp140.dll'))) {
+        $n = 0
+        foreach ($f in @(Get-ChildItem -LiteralPath $rd -Filter '*.dll' -File)) {
+            $d = Join-Path $dir $f.Name
+            $same = $false
+            if (Test-Path -LiteralPath $d) { $g = Get-Item -LiteralPath $d; $same = ($g.Length -eq $f.Length -and $g.LastWriteTimeUtc -eq $f.LastWriteTimeUtc) }
+            if (-not $same) { Copy-Item -LiteralPath $f.FullName -Destination $d -Force; $n++ }
+        }
+        Info "Visual C++ runtime next to the exe ($rd): $n DLL(s) copied"
+    } elseif (-not (Test-Path -LiteralPath (Join-Path $env:SystemRoot 'System32\msvcp140.dll'))) {
+        Warn 'the game needs the Visual C++ runtime (msvcp140.dll, vcruntime140.dll) and neither Windows nor the prebuilt pack has it: install vc_redist.x64.exe from Microsoft, or run tools\install_requirements.ps1 -From 1 with a pack made by the current tools\dev\build_prebuilt.ps1'
+    }
+}
+# Builds nsextract if the dll is missing or older than its sources (needs dotnet, and network the first time for the
+# LibHac package; tools\install_requirements.ps1 step 7 already builds it).
 function EnsureNsExtract {
-    if ($NoNsExtract -or -not (Test-Path -LiteralPath $NsProj)) { return }
-    if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) { Warn 'dotnet not found: nsextract cannot be built, using nstool'; return }
+    if ($NsExtract -like '*.exe') { Info "nsextract: $NsExtract (prebuilt)"; return }   # AP_TOOLCHAIN_XWIN
+    if (-not (Test-Path -LiteralPath $NsProj)) { Fail "$NsProj is missing (it comes with the repo)" }
+    if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) { Fail 'dotnet (.NET SDK 10) not found: it builds and runs tools\nsextract (tools\install_requirements.ps1 installs it)' }
     $src = @(Get-ChildItem -LiteralPath (Split-Path -Parent $NsProj) -File | Where-Object { $_.Extension -in '.cs', '.csproj' })
     $newest = ($src | Measure-Object LastWriteTimeUtc -Maximum).Maximum
     if ((Test-Path -LiteralPath $NsExtract) -and (Get-Item -LiteralPath $NsExtract).LastWriteTimeUtc -ge $newest) { Info 'nsextract already built'; return }
     Info 'building nsextract (tools\nsextract)'
-    try { RunVisible 'dotnet' @('build', $NsProj, '-c', 'Release', '--nologo', '-v', 'q') 'dotnet build nsextract' }
-    catch { $script:NsBroken = $true; Warn "nsextract was not built ($($_.Exception.Message)): using nstool (-NoNsExtract to skip this)" }
+    RunVisible 'dotnet' @('build', $NsProj, '-c', 'Release', '--nologo', '-v', 'q', '-p:NuGetAudit=false') 'dotnet build nsextract'
+    if (-not (Test-Path -LiteralPath $NsExtract)) { Fail "the build finished but $NsExtract does not appear" }
 }
 $Regen = Under $Tools "internal\$($V.Regen)"
 $UpdatesIn = InRoot 'updates'                       # the .nsp the user drops (both editions)
@@ -230,7 +307,7 @@ function Info([string]$t) { Write-Host "   $t" }
 function Warn([string]$t) { Write-Host "   WARNING: $t" -ForegroundColor Yellow }
 function Fail([string]$t) { throw $t }
 
-# External program; captures the output without printing it (nstool: none of its output goes to the console or a file).
+# External program; captures the output without printing it.
 function RunCapture([string]$exe, [string[]]$arguments) {
     $prev = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
@@ -238,23 +315,16 @@ function RunCapture([string]$exe, [string[]]$arguments) {
     finally { $ErrorActionPreference = $prev }
     return @{ Code = $code; Output = $out }
 }
-function Nstool([string[]]$arguments, [string]$what) {
-    $r = RunCapture $Nstool (@('-k', $Keys) + $arguments)
-    if ($r.Code -ne 0) {
-        $err = @($r.Output | Where-Object { $_ -match 'ERROR' } | Select-Object -First 3)
-        Fail "nstool failed to $what (code $($r.Code)): $($err -join ' | ')"
-    }
-    return $r.Output
-}
+# AP_DROP_UNUSED: function Nstool removed (nstool is gone)
 # External program with its output visible (recomp, harness, cmake).
 function RunVisible([string]$exe, [string[]]$arguments, [string]$what) {
     & $exe @arguments
     if ($LASTEXITCODE -ne 0) { Fail "$what failed (code $LASTEXITCODE)" }
 }
 
-# nstool for long extractions: runs separately and every -ProgressSeconds reports how much it has written (I/O counter
-# of the process; if it cannot be read, the size of the destination folder). Its output goes to two temporary files in
-# _recomp\ that are read only to look for ERROR lines and deleted right away (they are not shown).
+# nsextract for the extraction (step 2): runs separately and every -ProgressSeconds reports how much it has written (I/O
+# counter of the process; if it cannot be read, the size of the destination folder). Its output goes to two temporary
+# files in _recomp\ that are read only to look for ERROR lines and deleted right away (they are not shown).
 function Quote([string]$a) { if ($a -match '[\s"]' -or $a -eq '') { '"' + $a + '"' } else { $a } }
 function BytesWritten([int]$id, [string]$dest) {
     if ($OnLinux) {
@@ -270,11 +340,13 @@ function BytesWritten([int]$id, [string]$dest) {
     }
     return [int64]0
 }
-function NstoolLong([string[]]$arguments, [string]$what, [string]$dest, [int64]$total) {
+function ExtractLong([string[]]$arguments, [string]$what, [string]$dest, [int64]$total) {   # AP_DROP_UNUSED: was NstoolLong
     $id = [guid]::NewGuid().ToString('N')
-    $fo = Under $Stage "nstool_$id.out"; $fe = Under $Stage "nstool_$id.err"
-    $argStr = ((@('-k', $Keys) + $arguments) | ForEach-Object { Quote $_ }) -join ' '
-    $p = Start-Process -FilePath $Nstool -ArgumentList $argStr -NoNewWindow -PassThru -RedirectStandardOutput $fo -RedirectStandardError $fe
+    $fo = Under $Stage "nsextract_$id.out"; $fe = Under $Stage "nsextract_$id.err"
+    $nc = ToolCmd $NsExtract   # AP_TOOLCHAIN_XWIN: the prebuilt exe, or dotnet + the dll
+    $argStr = ((@($nc | Select-Object -Skip 1) + $arguments) | ForEach-Object { Quote $_ }) -join ' '
+    $dotnet = if ($nc[0] -eq 'dotnet') { (Get-Command dotnet -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source } else { $nc[0] }
+    $p = Start-Process -FilePath $dotnet -ArgumentList $argStr -NoNewWindow -PassThru -RedirectStandardOutput $fo -RedirectStandardError $fe
     $null = $p.Handle   # without this ExitCode can stay empty in PowerShell 5.1
     $t0 = Get-Date; $before = [int64]0; $tBefore = $t0
     while (-not $p.WaitForExit($ProgressSeconds * 1000)) {
@@ -291,7 +363,7 @@ function NstoolLong([string[]]$arguments, [string]$what, [string]$dest, [int64]$
     foreach ($f in $fo, $fe) { if (Test-Path -LiteralPath $f) { $lines += @(Get-Content -LiteralPath $f); Remove-Item -LiteralPath $f -Force } }
     if ($code -ne 0) {
         $err = @($lines | Where-Object { $_ -match 'ERROR' } | Select-Object -First 3)
-        Fail "nstool failed to $what (code $code): $($err -join ' | ')"
+        Fail "nsextract failed to $what (code $code): $($err -join ' | ')"
     }
     Info ('{0}: done in {1:mm\:ss}' -f $what, ((Get-Date) - $t0))
 }
@@ -372,23 +444,7 @@ function FunctionCount([string]$m) {
     if ($l -match '^functions (\d+)') { return [int]$Matches[1] } else { return '?' }
 }
 
-# ---------------------------------------------------------------------------------------------- CNMT
-# Format (binary, already decrypted by nstool -x /0 of the Meta NCA): +0x00 title ID u64, +0x08 version u32,
-# +0x0C type u8 (0x80 Application), +0x0E size of the extended header u16, +0x10 number of contents u16;
-# records of 0x38 at 0x20 + ext: hash 0x20, NCA ID 0x10, size 6 bytes, type u8 (1 = Program).
-function ReadCnmt([string]$p) {
-    $b = [IO.File]::ReadAllBytes($p)
-    $r = @{ TitleId = (U64 $b 0); Version = (U32 $b 8); Type = $b[0x0C]; Contents = @() }
-    $ext = [BitConverter]::ToUInt16($b, 0x0E); $n = [BitConverter]::ToUInt16($b, 0x10)
-    for ($i = 0; $i -lt $n; $i++) {
-        $o = 0x20 + $ext + $i * 0x38
-        if ($o + 0x38 -gt $b.Length) { Fail "short CNMT ($p)" }
-        $id = (($b[($o + 0x20)..($o + 0x2F)] | ForEach-Object { $_.ToString('x2') }) -join '')
-        $size = [int64]0; for ($k = 5; $k -ge 0; $k--) { $size = $size * 256 + $b[$o + 0x30 + $k] }
-        $r.Contents += @{ Id = $id; Size = $size; Type = $b[$o + 0x36] }
-    }
-    return $r
-}
+# AP_DROP_UNUSED: ReadCnmt removed (it read the CNMT that nstool extracted)
 
 # ---------------------------------------------------------------------------------------------- steps
 $script:Ident = $null
@@ -427,7 +483,7 @@ function FindInputs {
     return , $ok
 }
 
-# The keys do not leave data\: only their path is passed to nstool, nsextract and mods_nsp.py.
+# The keys do not leave data\: only their path is passed to nsextract and mods_nsp.py.
 function CheckKeys {
     $k = [IO.Path]::GetFullPath($Keys)
     $allowed = [IO.Path]::GetFullPath((InRoot 'data')) + $Sep
@@ -449,12 +505,13 @@ function Step0 {
     # stay in this process (your console does not change).
     $toolsMissing = -not (Get-Command cmake -ErrorAction SilentlyContinue) -or -not (Get-Command clang-cl -ErrorAction SilentlyContinue)
     $builds = ($From -le 9 -and $To -ge 9)
-    if ($toolsMissing -or $builds) {
+    if ($toolsMissing -or $builds -or $Toolchain) {   # AP_TOOLCHAIN_XWIN: in that mode spirv-val and the tools come from dev_env.ps1
         if ($DevLocal) {
             Info "loading $DevLocal"
             LoadDevLocal
             if ($builds -and $OnLinux -and (-not $env:NX_XWIN -or -not $env:VCPKG_ROOT)) { Warn 'after loading the environment NX_XWIN or VCPKG_ROOT are still empty: step 9 may fail' }
-            elseif ($builds -and -not $OnLinux -and (-not $env:INCLUDE -or -not $env:VCPKG_ROOT)) { Warn 'after loading the environment INCLUDE or VCPKG_ROOT are still empty: step 9 may fail' }
+            elseif ($builds -and -not $OnLinux -and $Toolchain -and -not $env:NX_XWIN) { Warn 'after loading the environment NX_XWIN is still empty (_prepare\toolchain.json): step 9 may fail' }   # AP_TOOLCHAIN_XWIN
+            elseif ($builds -and -not $OnLinux -and -not $Toolchain -and (-not $env:INCLUDE -or -not $env:VCPKG_ROOT)) { Warn 'after loading the environment INCLUDE or VCPKG_ROOT are still empty: step 9 may fail' }
         } elseif ($toolsMissing) {
             Fail "no cmake/clang-cl in the PATH and no build environment (dev.local.ps1 or tools\dev_env.ps1; searched in $Framework and $Tools)"
         } else {
@@ -466,10 +523,10 @@ function Step0 {
         if (-not (Test-Path -LiteralPath $p)) { $missing += $p }
     }
     if ($Edition -eq 'global' -and -not (Test-Path -LiteralPath $Create)) { $missing += $Create }
-    if ($From -le 2 -and $To -ge 1 -and -not (Test-Path -LiteralPath $Nstool)) { $missing += $Nstool }
+    if ($From -le 2 -and $To -ge 1 -and $NsExtract -notlike '*.exe' -and -not (Get-Command dotnet -ErrorAction SilentlyContinue)) { $missing += 'dotnet (.NET SDK 10: builds and runs tools\nsextract)' }   # AP_DROP_UNUSED, AP_TOOLCHAIN_XWIN
     if ($To -ge 8) {
         if (-not (Test-Path -LiteralPath $Harness)) { $missing += "$Harness (dotnet build tools/maxwell/spirv_harness/SpirvHarness.csproj -c Release -m:2)" }
-        if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) { $missing += 'dotnet (.NET SDK 10)' }
+        if ($Harness -notlike '*.exe' -and -not (Get-Command dotnet -ErrorAction SilentlyContinue)) { $missing += 'dotnet (.NET SDK 10)' }   # AP_TOOLCHAIN_XWIN
         if (-not (SpirvVal) -or -not (Test-Path -LiteralPath (SpirvVal))) { $missing += 'spirv-val (VULKAN_SDK\Bin)' }
     }
     if ($To -ge 9 -and -not (Get-Command cmake -ErrorAction SilentlyContinue)) { $missing += 'cmake' }
@@ -491,73 +548,7 @@ function Step0 {
     }
 }
 
-# nstool -x <internal path of a file> <output>: depending on the version it leaves <output> as a file or as a folder
-# with the file inside; both are accepted. Returns the path of the file or $null if nstool failed.
-$script:LastNstoolError = ''
-function ExtractFile([string]$internal, [string]$output, [string]$container) {
-    $r = RunCapture $Nstool @('-k', $Keys, '-x', $internal, $output, $container)
-    $script:LastNstoolError = "code $($r.Code): " + ((@($r.Output | Where-Object { $_ -match 'ERROR' } | Select-Object -First 3)) -join ' | ')
-    if ($r.Code -ne 0) { return $null }
-    if (Test-Path -LiteralPath $output -PathType Leaf) { return $output }
-    $inside = Under $output (Split-Path $internal -Leaf)
-    if (Test-Path -LiteralPath $inside -PathType Leaf) { return $inside }
-    $script:LastNstoolError += ' (finished without error but left neither the file nor a folder with it)'
-    return $null
-}
-
-# nstool 1.9.2 on Windows does not extract a single file from a PFS0 (tested 20:27: with a missing output it fails in
-# getDirectoryListing, with an existing folder FileStream::open "Access denied"). Folders do work (/0, /1, /):
-# if the single file fails, the whole partition (NSP: /, XCI: /secure) is extracted once to _recomp\container
-# and step 2 takes the program NCA from there (same space: the NCA was going to be copied anyway).
-# Size of what -x <partition> writes: NSP = the whole file; XCI = the secure partition, read from the root HFS0 of
-# the header (an untrimmed XCI is padded up to the cartridge size, and it may carry update and normal partitions).
-# Root HFS0: offset u64 at 0x130; 'HFS0', file count u32, string table size u32, reserved u32, then entries of
-# 0x40 bytes (offset u64, size u64, name offset u32, ...) and the string table; data after the table.
-# Only used to estimate free space: if anything does not fit, the size of the whole file (as before).
-function PartitionSize([string]$p) {
-    $len = (Get-Item -LiteralPath $p).Length
-    if ((ContainerType $p) -ne 'xci') { return $len }
-    try {
-        $fs = [IO.File]::OpenRead($p)
-        try {
-            $br = New-Object IO.BinaryReader($fs)
-            $fs.Position = 0x130; $off = $br.ReadInt64()
-            if ($off -le 0 -or $off + 0x10 -gt $len) { return $len }
-            $fs.Position = $off
-            if ([Text.Encoding]::ASCII.GetString($br.ReadBytes(4)) -ne 'HFS0') { return $len }
-            $count = $br.ReadInt32(); $strSize = $br.ReadInt32()
-            if ($count -lt 1 -or $count -gt 8 -or $strSize -lt 0 -or $strSize -gt 0x10000) { return $len }
-            $fs.Position = $off + 0x10
-            $ents = @(); for ($i = 0; $i -lt $count; $i++) { $ents += , @($br.ReadInt64(), $br.ReadInt64(), $br.ReadInt32()); [void]$br.ReadBytes(0x2C) }
-            $strs = $br.ReadBytes($strSize)
-            foreach ($e in $ents) {
-                $end = [Array]::IndexOf($strs, [byte]0, $e[2]); if ($end -lt 0) { $end = $strs.Length }
-                if ([Text.Encoding]::ASCII.GetString($strs, $e[2], $end - $e[2]) -eq 'secure' -and $e[1] -gt 0 -and $e[1] -le $len) { return [int64]$e[1] }
-            }
-        } finally { $fs.Dispose() }
-    } catch { }
-    return $len
-}
-
-$script:Container = $null
-function FromContainer([string]$name, [string]$dest) {
-    if (-not $script:Container) {
-        $f = ExtractFile ($script:Prefix + $name) $dest $InputFile
-        if ($f) { return $f }
-        $size = PartitionSize $InputFile
-        $needed = [int64]$size * 2 + 2GB    # container (the partition) + romfs/exefs (smaller than the partition)
-        $free = FreeOn $Data
-        if ($free -lt $needed) { Fail "~$(GB $needed) free are needed on the drive of $Data and there are $(GB $free)" }
-        Info "space: $(GB $free) free, ~$(GB $needed) needed"
-        $c = Under $Stage 'container'
-        NstoolLong @('-x', $script:Partition, $c, $InputFile) "extract $($script:Partition) from the input" $c $size
-        $script:Container = $c
-    }
-    $f = Under $script:Container $name
-    if (Test-Path -LiteralPath $f -PathType Leaf) { return $f }
-    return $null
-}
-
+# AP_DROP_UNUSED: ExtractFile, PartitionSize and FromContainer removed (nstool)
 $script:WrongEdition = $false
 function Step1 {
     if ((ExtractedOk) -and -not $Replace) {
@@ -577,96 +568,29 @@ function Step1 {
     }
 }
 
-# Meta NCAs inside a partition of the nstool --fstree tree (by indentation: "  secure/" and its files further in).
-function MetasOfPartition([string[]]$tree, [string]$partition) {
-    $inside = $false; $indent = -1; $r = @()
-    foreach ($l in $tree) {
-        if ($l -notmatch '^(\s*)(\S.*?)\s*$') { continue }
-        $ind = $Matches[1].Length; $nm = $Matches[2]
-        if ($inside -and $ind -le $indent) { $inside = $false }
-        if (-not $inside -and $nm -eq "$partition/") { $inside = $true; $indent = $ind; continue }
-        if ($inside) { foreach ($m in [regex]::Matches($nm, '[0-9a-f]{32}\.cnmt\.nca')) { $r += $m.Value } }
-    }
-    return @($r | Sort-Object -Unique)
-}
-
+# AP_DROP_UNUSED: MetasOfPartition removed (nstool --fstree)
 function IdentifyInput {
     NewStage
-    $script:Container = $null
-    if (UseNsExtract) {
-        # Direct path: nsextract reports the program ID of the base application; the NCA is not extracted.
-        $r = RunCapture 'dotnet' @($NsExtract, 'info', '--keys', $Keys, '--input', $InputFile)
-        if ($r.Code -ne 0) {
-            $err = @($r.Output | Where-Object { $_ -match 'ERROR' } | Select-Object -First 3)
-            Fail "nsextract failed to read $(Split-Path -Leaf $InputFile) (code $($r.Code)): $($err -join ' | ')"
-        }
-        $kv = @{}
-        foreach ($l in $r.Output) { if ($l -match '^([A-Z]+)=(.*)$') { $kv[$Matches[1]] = $Matches[2].Trim() } }
-        if (-not $kv.ContainsKey('PROGRAMID')) { Fail 'nsextract did not report a PROGRAMID' }
-        $progId = [Convert]::ToUInt64($kv['PROGRAMID'], 16)
-        if ($progId -ne $V.ProgramId) {
-            $other = ($Editions.GetEnumerator() | Where-Object { $_.Value.ProgramId -eq $progId } | Select-Object -First 1)
-            $extra = if ($other) { " (it is the $($other.Key) edition)" } else { '' }
-            $script:WrongEdition = $true
-            Fail "$(Split-Path -Leaf $InputFile): program ID $(Hex16 $progId)$extra, not $(Hex16 $V.ProgramId) of the $Edition edition"
-        }
-        $script:Ident = @{ Direct = $true; Size = (Get-Item -LiteralPath $InputFile).Length; Nca = ''; Path = '' }
-        Info "program ID $(Hex16 $progId); exefs and romfs will be read straight from the input (nsextract)"
-        $Summary['Input'] = "$InputFile (program ID $(Hex16 $progId))"
-        return
+    # nsextract reports the program ID of the base application; the NCA is not extracted.
+    $nc = ToolCmd $NsExtract   # AP_TOOLCHAIN_XWIN
+    $r = RunCapture $nc[0] (@($nc | Select-Object -Skip 1) + @('info', '--keys', $Keys, '--input', $InputFile))
+    if ($r.Code -ne 0) {
+        $err = @($r.Output | Where-Object { $_ -match 'ERROR' } | Select-Object -First 3)
+        Fail "nsextract failed to read $(Split-Path -Leaf $InputFile) (code $($r.Code)): $($err -join ' | ')"
     }
-    $isXci = (ContainerType $InputFile) -eq 'xci'
-    $tree = Nstool @('--fstree', $InputFile) 'list the input'
-    $metas = @($tree | ForEach-Object { [regex]::Matches($_, '[0-9a-f]{32}\.cnmt\.nca') } | ForEach-Object { $_.Value } | Sort-Object -Unique)
-    $ncas = @($tree | ForEach-Object { [regex]::Matches($_, '[0-9a-f]{32}\.nca') } | ForEach-Object { $_.Value } | Sort-Object -Unique)
-    if (-not $metas.Count) { Fail 'the input has no Meta NCA (*.cnmt.nca)' }
-    # XCI: only the Meta NCAs of secure/ (update/ has ~100 system ones). Without this filter, the first one tried could
-    # be from update/: nstool 1.9.2 on Linux does not find it in /secure, exits with 0 leaving nothing and it was
-    # concluded that it does not extract single files (extraction of the whole /secure, ~2x the XCI in space). On
-    # Windows the result does not change: there nstool fails with any single file and /secure is extracted as before.
-    if ($isXci) {
-        $sec = @(MetasOfPartition $tree 'secure')
-        if ($sec.Count) { Info "Meta NCAs in secure/: $($sec.Count) of $($metas.Count)"; $metas = $sec }
-        else { Warn "secure/ not found in the nstool --fstree tree: trying the $($metas.Count) Meta NCAs" }
-    }
-    # In an XCI the update partition has other CNMTs (system ones): all those of /secure are read and the
-    # Application one is kept. In an NSP there must be only one.
-    $prefix = if ($isXci) { '/secure/' } else { '/' }
-    $script:Prefix = $prefix
-    $script:Partition = if ($isXci) { '/secure' } else { '/' }
-    if (-not $isXci -and $metas.Count -ne 1) { Fail "the NSP has $($metas.Count) Meta NCAs: only the base is expected (no update or DLC together)" }
-    $apps = @(); $others = @(); $k = 0
-    foreach ($m in $metas) {
-        $k++
-        $meta = FromContainer $m (Under $Stage "meta$k")
-        if (-not $meta) {
-            if ($isXci) { continue }   # not in /secure (update or normal)
-            Fail "nstool could not extract $prefix$m ($script:LastNstoolError)"
-        }
-        $dir = Under $Stage "cnmt$k"
-        Nstool @('-x', '/0', $dir, $meta) "open $m" | Out-Null
-        $cnmt = @(Get-ChildItem -LiteralPath $dir -Recurse -Filter '*.cnmt' -File)
-        if ($cnmt.Count -ne 1) { Fail "1 .cnmt was expected inside $m and there are $($cnmt.Count)" }
-        $c = ReadCnmt $cnmt[0].FullName
-        if ($c.Type -eq 0x80) { $apps += , $c } else { $others += ('{0} type 0x{1:x2} v{2}' -f (Hex16 $c.TitleId), $c.Type, $c.Version) }
-    }
-    if ($others.Count) { Info ("other CNMTs in the input (ignored): " + ($others -join ', ')) }
-    if ($apps.Count -ne 1) { Fail "1 Application CNMT was expected and there are $($apps.Count)$(if ($isXci) { ' in /secure (if it is 0, send me the output of nstool --fstree of the XCI)' })" }
-    $c = $apps[0]
-    if ($c.TitleId -ne $V.ProgramId) {
-        $other = ($Editions.GetEnumerator() | Where-Object { $_.Value.ProgramId -eq $c.TitleId } | Select-Object -First 1)
+    $kv = @{}
+    foreach ($l in $r.Output) { if ($l -match '^([A-Z]+)=(.*)$') { $kv[$Matches[1]] = $Matches[2].Trim() } }
+    if (-not $kv.ContainsKey('PROGRAMID')) { Fail 'nsextract did not report a PROGRAMID' }
+    $progId = [Convert]::ToUInt64($kv['PROGRAMID'], 16)
+    if ($progId -ne $V.ProgramId) {
+        $other = ($Editions.GetEnumerator() | Where-Object { $_.Value.ProgramId -eq $progId } | Select-Object -First 1)
         $extra = if ($other) { " (it is the $($other.Key) edition)" } else { '' }
         $script:WrongEdition = $true
-        Fail "$(Split-Path -Leaf $InputFile): program ID $(Hex16 $c.TitleId)$extra, not $(Hex16 $V.ProgramId) of the $Edition edition"
+        Fail "$(Split-Path -Leaf $InputFile): program ID $(Hex16 $progId)$extra, not $(Hex16 $V.ProgramId) of the $Edition edition"
     }
-    if ($c.Version -ne 0) { Fail "CNMT version $($c.Version), not the base v0" }
-    $prog = @($c.Contents | Where-Object { $_.Type -eq 1 })
-    if ($prog.Count -ne 1) { Fail "1 program NCA was expected in the CNMT and there are $($prog.Count)" }
-    $name = "$($prog[0].Id).nca"
-    if ($ncas -notcontains $name) { Fail "the CNMT names $name and the input does not have it" }
-    $script:Ident = @{ Nca = $name; Size = $prog[0].Size; Path = ($prefix + $name) }
-    Info "program ID $(Hex16 $c.TitleId), Application, v0; program NCA $name ($(GB $prog[0].Size))"
-    $Summary['Input'] = "$InputFile (program ID $(Hex16 $c.TitleId), v0)"
+    $script:Ident = @{ Direct = $true; Size = (Get-Item -LiteralPath $InputFile).Length; Nca = ''; Path = '' }
+    Info "program ID $(Hex16 $progId); exefs and romfs will be read straight from the input (nsextract)"
+    $Summary['Input'] = "$InputFile (program ID $(Hex16 $progId))"
 }
 
 function ExtractedOk {
@@ -695,37 +619,14 @@ function Step2 {
     foreach ($p in @($exefs, $romfs)) {   # before extracting ~23 GB: what SetAside would reject at the end
         if ((Test-Path -LiteralPath $p) -and (Test-Path -LiteralPath "$p.old")) { Fail "$p.old already exists (from a previous run): delete or rename it by hand" }
     }
-    if ($script:Ident.Direct) {
-        # exefs and romfs go straight from the input to _recomp\: only their own size is written (no copy of the NCA).
-        $needed = [int64]$script:Ident.Size + 2GB    # upper bound: romfs + exefs are smaller than the input
-        $free = FreeOn $Data
-        if ($free -lt $needed) { Fail "~$(GB $needed) free are needed on the drive of $Data and there are $(GB $free)" }
-        Info "space: $(GB $free) free, ~$(GB $needed) needed at most"
-        Info 'extracting exefs and romfs straight from the input (nsextract)'
-        $t0 = Get-Date
-        RunVisible 'dotnet' @($NsExtract, 'extract', '--keys', $Keys, '--input', $InputFile, '--program-id', (Hex16 $V.ProgramId),
-                              '--exefs', (Under $Stage 'exefs'), '--romfs', (Under $Stage 'romfs')) 'nsextract'
-        Info ('extracted in {0:mm\:ss}' -f ((Get-Date) - $t0))
-    } else {
-        if (-not $script:Container) {
-            $needed = [int64]$script:Ident.Size * 2 + 2GB    # intermediate NCA + romfs/exefs
-            $free = FreeOn $Data
-            if ($free -lt $needed) { Fail "~$(GB $needed) free are needed on the drive of $Data and there are $(GB $free)" }
-            Info "space: $(GB $free) free, ~$(GB $needed) needed (~$(GB $script:Ident.Size) are freed at the end)"
-            Info 'extracting the program NCA'
-        }
-        New-Item -ItemType Directory -Path (Under $Stage 'nca') -Force | Out-Null
-        $nca = FromContainer $script:Ident.Nca (Under $Stage "nca\$($script:Ident.Nca)")
-        if (-not $nca) { Fail "nstool could not extract $($script:Ident.Path) ($script:LastNstoolError)" }
-        if ((Get-Item -LiteralPath $nca).Length -ne $script:Ident.Size) {
-            Fail "the extracted program NCA does not have the size of the CNMT ($($script:Ident.Size) bytes)"
-        }
-        Info 'extracting exefs (/0) and romfs (/1)'
-        Nstool @('-x', '/0', (Under $Stage 'exefs'), $nca) 'extract exefs' | Out-Null
-        NstoolLong @('-x', '/1', (Under $Stage 'romfs'), $nca) 'extract romfs' (Under $Stage 'romfs') ((Get-Item -LiteralPath $nca).Length)
-        Remove-Item -LiteralPath (Under $Stage 'nca') -Recurse -Force
-        if ($script:Container) { Remove-Item -LiteralPath $script:Container -Recurse -Force; $script:Container = $null }
-    }
+    # exefs and romfs go straight from the input to _recomp\: only their own size is written (no copy of the NCA).
+    $needed = [int64]$script:Ident.Size + 2GB    # upper bound: romfs + exefs are smaller than the input
+    $free = FreeOn $Data
+    if ($free -lt $needed) { Fail "~$(GB $needed) free are needed on the drive of $Data and there are $(GB $free)" }
+    Info "space: $(GB $free) free, ~$(GB $needed) needed at most"
+    Info 'extracting exefs and romfs straight from the input (nsextract)'
+    ExtractLong @('extract', '--keys', $Keys, '--input', $InputFile, '--program-id', (Hex16 $V.ProgramId),
+                  '--exefs', (Under $Stage 'exefs'), '--romfs', (Under $Stage 'romfs')) 'extract exefs and romfs' (Under $Stage 'romfs') ([int64]$script:Ident.Size)
     foreach ($f in 'main', 'main.npdm', 'sdk') { if (-not (Test-Path -LiteralPath (Under $Stage "exefs\$f"))) { Fail "exefs without $f" } }
     if (-not (Test-Path -LiteralPath (Under $Stage 'romfs\shader'))) { Fail 'romfs without the shader folder' }
     if ((ProgramIdOf (Under $Stage 'exefs\main.npdm')) -ne $V.ProgramId) { Fail 'the extracted main.npdm is from another program ID' }
@@ -964,6 +865,39 @@ function Step5 {
     RemoveStage
 }
 
+# AP_RECOMP_PARALLEL: main and sdk are independent: each one in its own process (the regen script with -Modules <module>),
+# at the same time; the output of each one is shown when it finishes. NX_RECOMP_SERIAL=1: one after the other, as before.
+function RegenParallel([string]$regen) {
+    $host_ = (Get-Process -Id $PID).Path
+    $runs = @()
+    foreach ($m in 'main', 'sdk') {
+        $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $regen, '-Modules', $m, '-Root', $Root)
+        if ($m -eq 'main' -and $script:UpdateMain) { $a += @('-MainNso', $script:UpdateMain) }
+        $log = Join-Path ([IO.Path]::GetTempPath()) "tsuki_regen_$($m)_$([guid]::NewGuid().ToString('N')).log"
+        $p = Start-Process -FilePath $host_ -ArgumentList (($a | ForEach-Object { Quote $_ }) -join ' ') -NoNewWindow -PassThru `
+             -RedirectStandardOutput $log -RedirectStandardError "$log.err"
+        $null = $p.Handle   # without this ExitCode can stay empty in PowerShell 5.1
+        $runs += @{ M = $m; P = $p; Log = $log }
+    }
+    Info 'recompiling main and sdk at the same time (the output of each one is shown when it finishes)'
+    $failed = @()
+    foreach ($r in $runs) {
+        $r.P.WaitForExit()
+        $code = -1; try { $code = $r.P.ExitCode } catch { }
+        if ($null -eq $code) { $code = -1 }
+        $took = ''; try { $took = ' in {0:mm\:ss}' -f ($r.P.ExitTime - $r.P.StartTime) } catch { }
+        Info "-- recomp $($r.M)$took$(if ($code -ne 0) { " FAILED (code $code)" })"
+        foreach ($f in @($r.Log, "$($r.Log).err")) {
+            if (Test-Path -LiteralPath $f) {
+                foreach ($l in @(Get-Content -LiteralPath $f)) { if ($l -match '\S') { Info "   $l" } }
+                Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue
+            }
+        }
+        if ($code -ne 0) { $failed += $r.M }
+    }
+    if ($failed.Count) { Fail "recompiling $($failed -join ' and ') failed (output above)" }
+}
+
 function Step6 {
     $gen = Under $Data 'gen'
     # gen\main_source.txt: SHA-256 of the NSO main was generated from. Without it (made before updates\ existed): the base one.
@@ -982,9 +916,11 @@ function Step6 {
     $regenToRun = $Regen
     $previous = SetAside $gen
     try {
-        $ra = @{ Modules = @('main', 'sdk'); Root = $Root }
-        if ($script:UpdateMain) { $ra['MainNso'] = $script:UpdateMain }
-        & $regenToRun @ra
+        if ($env:NX_RECOMP_SERIAL) {
+            $ra = @{ Modules = @('main', 'sdk'); Root = $Root }
+            if ($script:UpdateMain) { $ra['MainNso'] = $script:UpdateMain }
+            & $regenToRun @ra
+        } else { RegenParallel $regenToRun }   # AP_RECOMP_PARALLEL: main and sdk at the same time
         if (-not (GenComplete)) { Fail "$($V.Regen) finished but gen\ is incomplete" }
         [IO.File]::WriteAllText((Under $gen 'main_source.txt'), $want + "`r`n")
     } catch {
@@ -1052,7 +988,9 @@ function Step8 {
         $c2 = CountShaders $in
         if ($c2.without_spv -ne $c.without_spv) { Fail 'the shader count changed between two runs' }
         Info "translating $($c.without_spv) with the harness"
-        RunVisible 'dotnet' @($Harness, '--batch', $in, '--out', $out, '--jobs', '3', '--spirv-val', (SpirvVal)) 'spirv_harness'
+        $hj = [Math]::Max(3, [Environment]::ProcessorCount - 1)   # AP_RECOMP_PARALLEL: was a fixed 3
+        $hc = ToolCmd $Harness   # AP_TOOLCHAIN_XWIN: the prebuilt exe, or dotnet + the dll
+        RunVisible $hc[0] (@($hc | Select-Object -Skip 1) + @('--batch', $in, '--out', $out, '--jobs', "$hj", '--spirv-val', (SpirvVal))) 'spirv_harness'
         $res = Under $out 'results.tsv'
         if (-not (Test-Path -LiteralPath $res)) { Fail 'the harness did not write results.tsv' }
         $lines = @(Get-Content -LiteralPath $res)
@@ -1106,9 +1044,26 @@ function Step8 {
     if ($c.without_spv -gt 0) { Warn ("without .spv: " + ($c.missing -join ', ')) }
 }
 
+# AP_RECOMP_PARALLEL: summary of what one build appended to .ninja_log (tools\dev\ninja_times.py); never fatal.
+function BuildTimes([string]$log, [int64]$offset) {
+    $nt = Under $Tools 'dev\ninja_times.py'
+    if (-not (Test-Path -LiteralPath $nt) -or -not (Test-Path -LiteralPath $log)) { return }
+    try { $r = RunCapture $Python @($nt, $log, '--offset', "$offset"); if ($r.Code -eq 0) { foreach ($l in $r.Output) { Info $l } } } catch { }
+}
+
 function CacheValue([string]$cache, [string]$k) {
     $l = Select-String -LiteralPath $cache -Pattern "^$k(:[A-Z]+)?=(.*)$" | Select-Object -First 1
     if ($l) { return $l.Matches[0].Groups[2].Value } else { return '' }
+}
+
+# AP_FFMPEG_PREBUILT: folder of the prebuilt FFmpeg that install_requirements.ps1 (step 5) leaves in _prepare\ffmpeg (the most
+# recent one that has lib\avcodec.lib), with forward slashes for CMake; '' if there is none (CMake then uses the vcpkg one).
+function FfmpegPrebuilt {
+    $base = InRoot '_prepare\ffmpeg'
+    if (-not (Test-Path -LiteralPath $base)) { return '' }
+    $d = @(Get-ChildItem -LiteralPath $base -Directory | Where-Object { Test-Path -LiteralPath (Under $_.FullName 'lib\avcodec.lib') -PathType Leaf } | Sort-Object LastWriteTime -Descending)
+    if (-not $d.Count) { return '' }
+    return ($d[0].FullName -replace '\\', '/')
 }
 
 # Linux: the framework CMakeLists (WIN32 branch) includes "${NX_VULKAN_SDK}/Include" as in the Windows SDK; the
@@ -1134,17 +1089,50 @@ function VulkanView {
 
 # HUD button icons by device (AP_HUD_GLYPHS, hud_glyphs.cpp): <data>\hud from the romfs and its mod layers (only hashes
 # of the game's atlas) and from the icon packs in utils\. Never fatal: without them the game keeps its own icons.
+# AP_RECOMP_PARALLEL: the HUD icons need only the romfs, the mod layers (final after step 3) and utils\: when the run goes
+# on to step 9 they are built in the background from the first of steps 5-8 that runs, and joined at the start of step 9.
+$script:HudJob = $null
+$script:HudDone = $false
+function StartHudBackground {
+    if ($script:HudJob -or $script:HudDone -or $env:NX_RECOMP_SERIAL) { return }
+    $py = Under $Tools 'hud\build_hud_assets.py'
+    if (-not (Test-Path -LiteralPath $py) -or -not (Test-Path -LiteralPath $Python)) { return }
+    $log = Join-Path ([IO.Path]::GetTempPath()) "tsuki_hud_$($Edition)_$([guid]::NewGuid().ToString('N')).log"
+    try {
+        $p = Start-Process -FilePath $Python -ArgumentList ((@($py, '--edition', $Edition, '--root', $Root) | ForEach-Object { Quote $_ }) -join ' ') `
+             -NoNewWindow -PassThru -RedirectStandardOutput $log -RedirectStandardError "$log.err"
+        $null = $p.Handle
+        $script:HudJob = @{ P = $p; Log = $log }
+        Info 'HUD icons by device: building in the background meanwhile (shown at the start of step 9, or at the end of this run)'   # AP_TOOLCHAIN_XWIN
+    } catch { }
+}
+
 function HudAssets {
+    if ($script:HudDone) { return }   # AP_RECOMP_PARALLEL: already done (in the background, joined before the build)
+    $script:HudDone = $true
     $script = Under $Tools 'hud\build_hud_assets.py'
     if (-not (Test-Path -LiteralPath $script)) { Warn "$script is missing: HUD icons by device skipped"; return }
-    Info 'HUD icons by device (tools\hud\build_hud_assets.py; the keyboard tiles take about a minute the first time)'
-    $r = RunCapture $Python @($script, '--edition', $Edition, '--root', $Root)
+    if ($script:HudJob) {
+        $j = $script:HudJob; $script:HudJob = $null
+        if (-not $j.P.HasExited) { Info 'HUD icons by device: waiting for the background build...' }
+        $j.P.WaitForExit()
+        $code = -1; try { $code = $j.P.ExitCode } catch { }
+        if ($null -eq $code) { $code = -1 }
+        Info 'HUD icons by device (tools\hud\build_hud_assets.py, built in the background)'
+        $lines = @()
+        foreach ($f in @($j.Log, "$($j.Log).err")) { if (Test-Path -LiteralPath $f) { $lines += @(Get-Content -LiteralPath $f); Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue } }
+        $r = @{ Code = $code; Output = $lines }
+    } else {
+        Info 'HUD icons by device (tools\hud\build_hud_assets.py)'
+        $r = RunCapture $Python @($script, '--edition', $Edition, '--root', $Root)
+    }
     foreach ($l in $r.Output) { Info $l }
     if ($r.Code -ne 0) { Warn "build_hud_assets.py failed (code $($r.Code)): the game keeps its own icons"; return }
     $Summary['HUD'] = Under $Data 'hud'
 }
 
 function Step9 {
+    if ($script:HudJob) { HudAssets }   # AP_RECOMP_PARALLEL: the background HUD build ends before the compile starts
     $cache = Under $Build 'CMakeCache.txt'
     $gen = ((Under $Data 'gen') -replace '\\', '/')
     Push-Location $Framework
@@ -1153,6 +1141,12 @@ function Step9 {
             $g = (CacheValue $cache 'NX_GEN_DIR') -replace '\\', '/'
             if ($g -ne $gen) { Fail "$Build uses NX_GEN_DIR=$g, not $gen (in a test copy: delete that build\ of the copy, it is configured again)" }
             Info "$Build already configured"
+            # AP_FFMPEG_PREBUILT: a build configured before this patch (or with another FFmpeg folder) changes only this variable
+            $ffRoot = FfmpegPrebuilt
+            if ($ffRoot -and (CacheValue $cache 'NX_FFMPEG_ROOT') -ne $ffRoot) {
+                Info "NX_FFMPEG_ROOT -> $ffRoot (reconfiguring; the rest of the cache stays the same)"
+                RunVisible 'cmake' @('-B', $Build, "-DNX_FFMPEG_ROOT=$ffRoot") 'cmake (reconfigure NX_FFMPEG_ROOT)'
+            }
             if ($OnLinux) {
                 $vk = VulkanView
                 if ((CacheValue $cache 'NX_VULKAN_SDK') -ne $vk) {
@@ -1169,11 +1163,25 @@ function Step9 {
                 Info "parameters from $other"
                 $cacheKeys = @('CMAKE_GENERATOR', 'CMAKE_TOOLCHAIN_FILE', 'CMAKE_BUILD_TYPE', 'CMAKE_C_COMPILER', 'CMAKE_CXX_COMPILER', 'VCPKG_TARGET_TRIPLET', 'NX_OPUS_ROOT')
                 if ($OnLinux) { $cacheKeys += @('VCPKG_CHAINLOAD_TOOLCHAIN_FILE', 'VCPKG_HOST_TRIPLET', 'VCPKG_OVERLAY_TRIPLETS', 'NX_XWIN', 'NX_LLVM') }
+                if ($Toolchain) { $cacheKeys += @('NX_XWIN', 'NX_LLVM', 'CMAKE_PREFIX_PATH') }   # AP_TOOLCHAIN_XWIN
                 foreach ($k in $cacheKeys) {
                     $value = CacheValue $other $k
                     if ($value) { if ($k -eq 'CMAKE_GENERATOR') { $a += @('-G', $value) } else { $a += "-D$k=$value" } }
                 }
                 if ($OnLinux) { $a += "-DNX_VULKAN_SDK=$(VulkanView)" }
+            } elseif ($Toolchain) {
+                # AP_TOOLCHAIN_XWIN: Windows without VS: clang-cl + lld-link + llvm-rc against the xwin CRT/SDK (the toolchain file
+                # of the Linux cross build, which also works on a Windows host) and the prebuilt libraries (no vcpkg).
+                $tc = ((Under $Tools 'linux\clangcl-xwin.cmake') -replace '\\', '/')
+                $deps = ("$($Toolchain.deps)" -replace '\\', '/').TrimEnd('/')
+                $xw = ("$($Toolchain.xwin)" -replace '\\', '/').TrimEnd('/')
+                $llvm = ("$($Toolchain.llvm_bin)" -replace '\\', '/').TrimEnd('/')
+                foreach ($f in @($tc, "$deps/include", "$deps/share/sdl3", "$xw/VC/Tools/MSVC", "$llvm/clang-cl.exe")) {
+                    if (-not (Test-Path -LiteralPath $f)) { Fail "$f does not exist (tools\install_requirements.ps1 -Toolchain xwin)" }
+                }
+                Info 'no previous CMakeCache: clang-cl + xwin, prebuilt libraries (Ninja, Release; no VS Build Tools, no vcpkg)'
+                $a += @('-G', 'Ninja', "-DCMAKE_TOOLCHAIN_FILE=$tc", "-DNX_XWIN=$xw", "-DNX_LLVM=$llvm", '-DCMAKE_BUILD_TYPE=Release',
+                        "-DCMAKE_PREFIX_PATH=$deps", "-DNX_OPUS_ROOT=$deps")
             } else {
                 # New PC, without any build: the same values the CMakeCache files have today, taken from the
                 # environment of dev.local.ps1 (VCPKG_ROOT, clang-cl from the PATH).
@@ -1203,10 +1211,21 @@ function Step9 {
                         "-DCMAKE_C_COMPILER=$cc", "-DCMAKE_CXX_COMPILER=$cc", '-DVCPKG_TARGET_TRIPLET=x64-windows', "-DNX_OPUS_ROOT=$vcpkg/installed/x64-windows")
                 }
             }
+            # AP_FFMPEG_PREBUILT: prebuilt FFmpeg of install_requirements.ps1 (step 5); without it CMake uses the vcpkg one
+            $ffRoot = FfmpegPrebuilt
+            if ($ffRoot) { $a += "-DNX_FFMPEG_ROOT=$ffRoot" }
             Info "cmake $($a -join ' ')"
             RunVisible 'cmake' $a 'cmake (configure)'
         }
-        RunVisible 'cmake' @('--build', $Build) 'cmake --build'
+        # AP_RECOMP_PARALLEL: -Jobs N limits the compile jobs; afterwards, where the time of this build went
+        $nlog = Under $Build '.ninja_log'
+        $nOff = [int64]0; if (Test-Path -LiteralPath $nlog) { $nOff = (Get-Item -LiteralPath $nlog).Length }
+        $ba = @('--build', $Build); if ($Jobs -gt 0) { $ba += @('--parallel', "$Jobs") }
+        $t0 = Get-Date
+        RunVisible 'cmake' $ba 'cmake --build'
+        Info ('cmake --build: {0:hh\:mm\:ss}' -f ((Get-Date) - $t0))
+        BuildTimes $nlog $nOff
+        if ($Toolchain) { CopyVcRuntime $Build }   # AP_XWIN_RUNTIME
     } finally { Pop-Location }
     $exe = Under $Build "$($V.Game).exe"
     if (-not (Test-Path -LiteralPath $exe)) { Fail "$exe does not appear" }
@@ -1281,8 +1300,10 @@ try {
     for ($n = $start; $n -le $To; $n++) {
         $script:CurrentStep = $n
         Step $n $StepNames[$n]
+        if ($n -ge 5 -and $n -le 8 -and $To -ge 8) { StartHudBackground }   # AP_RECOMP_PARALLEL (AP_TOOLCHAIN_XWIN: also when the run ends at 8)
         & "Step$n"
     }
+    if ($script:HudJob) { HudAssets }   # AP_TOOLCHAIN_XWIN: a run that ends before step 9 (R1 of -Recomp) waits for the background HUD build
     if ($Compare) { $script:CurrentStep = 11; CompareInventory $Compare }
 } catch {
     Write-Host ''

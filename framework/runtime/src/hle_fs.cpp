@@ -28,6 +28,19 @@
 
 namespace fs = std::filesystem;
 
+#ifdef NX_TITLE_MUSIC
+// AP_TITLE_MUSIC (apply_title_music.py): the title screen tracks (games/tsukihime_common/title_bg.cpp). "" = no change.
+namespace tsuki_title {
+std::string remap_stream(const std::string& path);
+}  // namespace tsuki_title
+#endif
+#ifdef NX_TITLE_LIVE
+// AP_TITLE_LIVE_MUSIC (apply_title_live_music.py): the track to switch to when the title music starts over. "" = none.
+namespace tsuki_title {
+std::string music_swap(const std::string& path, int64_t off);
+}  // namespace tsuki_title
+#endif
+
 namespace nx {
 
 namespace {
@@ -370,6 +383,17 @@ void GetEntryType(CPU& c) {  // (DirectoryEntryType* out, path)
 void OpenFile(CPU& c) {  // (FileHandle* out, path, int mode: 1 read, 2 write, 4 append)
     std::lock_guard lk(g_fs);
     std::string guest = cstr(c.x[1]);
+#ifdef NX_TITLE_MUSIC
+    if (!(int(c.x[2]) & 2)) {  // AP_TITLE_MUSIC: the title screen music may be another track (read only)
+        const std::string alt = tsuki_title::remap_stream(guest);
+        if (!alt.empty()) {
+            std::error_code ec0;
+            const fs::path q = resolve(alt);
+            if (!q.empty() && fs::is_regular_file(q, ec0)) guest = alt;
+            else log("title: %s does not exist, using %s", alt.c_str(), guest.c_str());
+        }
+    }
+#endif
     fs::path p = resolve(guest);
     int mode = int(c.x[2]);
     if (const std::string* v = find_virtual(p)) {  // served from memory, through a temporary file
@@ -456,12 +480,44 @@ uint64_t read_at(const File& file, int64_t off, uint64_t buf, uint64_t size) {
     return n;
 }
 
+#ifdef NX_TITLE_LIVE
+// AP_TITLE_LIVE_MUSIC: the title music starts over (read at offset 0) and the player chose another track with F5 / F6:
+// the handle now points at that file. Readers that still hold the old one finish with it (shared_ptr).
+std::shared_ptr<File> live_music(uint64_t h, std::shared_ptr<File> file, int64_t off) {
+    if (file->path.find("MOON01_BGM") == std::string::npos) return file;
+    if (trace_fs()) {
+        static std::mutex m;
+        static std::map<std::string, int> seen;
+        std::lock_guard lk(m);
+        if (++seen[file->path] <= 12) log("fs: music read %s at %lld", file->path.c_str(), (long long)off);
+    }
+    if (off != 0) return file;
+    const std::string alt = tsuki_title::music_swap(file->path, off);
+    if (alt.empty()) return file;
+    std::lock_guard lk(g_fs);
+    std::error_code ec;
+    const fs::path q = resolve(alt);
+    FILE* f = (q.empty() || !fs::is_regular_file(q, ec)) ? nullptr : plat::fopen_utf8(utf8(q), "rb");
+    if (!f) {
+        log("title: %s could not be opened: the music stays", alt.c_str());
+        return file;
+    }
+    auto nf = std::make_shared<File>(f, alt);
+    g_files[h] = nf;
+    log("title: music %s -> %s (the game started it over)", file->path.c_str(), alt.c_str());
+    return nf;
+}
+#endif
+
 void ReadFileOut(CPU& c) {  // (size_t* out, FileHandle, s64 off, void* buf, size_t size)
     auto file = open_file(c.x[1]);
     if (!file) {
         c.x[0] = kTargetNotFound;
         return;
     }
+#ifdef NX_TITLE_LIVE
+    file = live_music(c.x[1], file, int64_t(c.x[2]));  // AP_TITLE_LIVE_MUSIC
+#endif
     st<uint64_t>(c.x[0], read_at(*file, int64_t(c.x[2]), c.x[3], c.x[4]));
     c.x[0] = kOk;
 }
@@ -472,6 +528,9 @@ void ReadFile(CPU& c) {  // (FileHandle, s64 off, void* buf, size_t size)
         c.x[0] = kTargetNotFound;
         return;
     }
+#ifdef NX_TITLE_LIVE
+    file = live_music(c.x[0], file, int64_t(c.x[1]));  // AP_TITLE_LIVE_MUSIC
+#endif
     read_at(*file, int64_t(c.x[1]), c.x[2], c.x[3]);
     c.x[0] = kOk;
 }
