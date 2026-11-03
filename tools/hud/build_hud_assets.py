@@ -46,6 +46,26 @@ def scripts(*names):
     return [os.path.join(HERE, n) for n in names]
 
 
+def from_other_edition(root, out, inputs, indent="  "):
+    """AP_HUD_FAST: keyboard_tiles.bin, help_key_<pad>.bc7 and manual_<hash>.bin do not depend on the edition: if the
+    other edition has an up-to-date copy, it is copied (the date is kept, so `newer` stays true). True if copied."""
+    import shutil
+    for d in DATA_DIRS.values():
+        other = os.path.join(root, d, "hud", os.path.basename(out))
+        if os.path.normcase(os.path.abspath(other)) == os.path.normcase(os.path.abspath(out)) or not newer(other, inputs):
+            continue
+        try:
+            os.makedirs(os.path.dirname(out), exist_ok=True)
+            shutil.copy2(other, out + ".tmp")
+            os.replace(out + ".tmp", out)
+        except OSError as e:
+            print(f"{indent}{os.path.basename(out)}: could not copy it from {d} ({e}): building it")
+            return False
+        print(f"{indent}{os.path.basename(out)}: copied from {d} (same inputs)")
+        return True
+    return False
+
+
 def layers(root, edition):
     """Romfs folders, lowest first: the base romfs, then <root>/mods/<edition>/<name>/romfs in name order (a name
     starting with _ is disabled), like the exe."""
@@ -133,7 +153,9 @@ def build_manual_variant(root, lin, w, h, digest, out_dir, archives, force):
     if not force and newer(out, inputs):
         print(f"    {os.path.basename(out)}: up to date")
         return
-    print(f"    {os.path.basename(out)}: building (about half a minute)...")
+    if not force and from_other_edition(root, out, inputs, "    "):  # AP_HUD_FAST
+        return
+    print(f"    {os.path.basename(out)}: building...")
     if build_manual.build(lin, w, h, root, out):
         print(f"    {os.path.basename(out)}: {os.path.getsize(out)} bytes")
 
@@ -152,9 +174,12 @@ def build_pad_atlas(root, dev, out, force):
     if not force and newer(out, inputs):
         print(f"  {os.path.basename(out)}: up to date")
         return
+    if not force and from_other_edition(root, out, inputs):  # AP_HUD_FAST
+        return
     table = {"xbox": build_help_key.XBOX, "ps": build_help_key.PS}[dev]
     atlas = build_help_key.build(sliced, dev, table)
     data = bc7.encode_bc7(bc7.bleed_rgb(np.array(atlas)))
+    os.makedirs(os.path.dirname(out), exist_ok=True)  # AP_HUD_FAST: the folder may not exist yet (no manifest written)
     with open(out, "wb") as f:
         f.write(data)
     print(f"  {os.path.basename(out)}: {len(data)} bytes")
@@ -171,7 +196,9 @@ def build_keyboard(root, out, force):
     if not force and newer(out, inputs):
         print(f"  {os.path.basename(out)}: up to date")
         return
-    print("  keyboard_tiles.bin: encoding (about a minute)...")
+    if not force and from_other_edition(root, out, inputs):  # AP_HUD_FAST
+        return
+    print("  keyboard_tiles.bin: encoding...")
     slots, _, tiles = build_keyboard_tiles.build_library(icons, out)
     print(f"  keyboard_tiles.bin: {len(slots)} slots, {len(tiles)} tiles, {os.path.getsize(out)} bytes")
 

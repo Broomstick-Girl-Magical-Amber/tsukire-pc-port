@@ -29,7 +29,7 @@ foreach(_nx_var NX_XWIN NX_LLVM)
     endif()
 endforeach()
 # try_compile reads this file again in a separate project: the two paths are passed to it.
-list(APPEND CMAKE_TRY_COMPILE_PLATFORM_VARIABLES NX_XWIN NX_LLVM NX_AR_GNU)
+list(APPEND CMAKE_TRY_COMPILE_PLATFORM_VARIABLES NX_XWIN NX_LLVM)
 
 if(NOT NX_XWIN OR NOT EXISTS "${NX_XWIN}/VC/Tools/MSVC")
     message(FATAL_ERROR "clangcl-xwin.cmake: NX_XWIN='${NX_XWIN}' is not an output of 'xwin splat --use-winsysroot-style' (VC/Tools/MSVC is missing)")
@@ -54,14 +54,9 @@ set(CMAKE_CXX_COMPILER "${NX_CLANG_CL}")
 # CMake would add also reaches the LDFLAGS of the ports that do not use CMake; lld-link ignores it with a warning and
 # the ffmpeg configure treats that warning as a failure ("C compiler test failed").
 set(CMAKE_LINKER "${_nx_bin}/lld-link" CACHE FILEPATH "")
-# CMAKE_AR: llvm-lib (lib.exe style, what CMake expects with clang-cl). Exception: with NX_AR_GNU (only the ffmpeg
-# triplet) llvm-ar. ffmpeg does not use CMake to build; its compat/windows/makedef does "$AR rcs tmp.lib objs" to
-# get the symbols for the .def, and with llvm-lib that fails ("rcs: no such file"). On Windows vcpkg wraps it in ar-lib.
-if(NX_AR_GNU)
-    set(CMAKE_AR "${_nx_bin}/llvm-ar" CACHE FILEPATH "")
-else()
-    set(CMAKE_AR "${_nx_bin}/llvm-lib" CACHE FILEPATH "")
-endif()
+# CMAKE_AR: llvm-lib (lib.exe style, what CMake expects with clang-cl). AP_DROP_UNUSED: the llvm-ar exception of the
+# ffmpeg triplet (NX_AR_GNU) is gone: FFmpeg is prebuilt and no other port needed it.
+set(CMAKE_AR "${_nx_bin}/llvm-lib" CACHE FILEPATH "")
 set(CMAKE_RC_COMPILER "${_nx_bin}/llvm-rc" CACHE FILEPATH "")
 set(CMAKE_MT "${_nx_bin}/llvm-mt" CACHE FILEPATH "")
 

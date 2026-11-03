@@ -116,15 +116,33 @@ def compose(sliced, dev, spec):
     raise ValueError(op)
 
 
+_FIT_SOURCES = {}  # AP_HUD_FAST: id(image) -> (image, premultiplied RGBX source); the image is kept so its id stays its own
+
+
+def _fit_source(im):
+    hit = _FIT_SOURCES.get(id(im))
+    if hit is not None and hit[0] is im:
+        return hit[1]
+    a = np.array(im).astype(np.float64)
+    pm = a[..., :3] * (a[..., 3:4] / 255.0)  # premultiplied resampling: no dark/light halos
+    four = np.ascontiguousarray(np.dstack([np.clip(pm, 0, 255).astype(np.uint8), a[..., 3].astype(np.uint8)]))
+    src = Image.frombytes("RGBX", (four.shape[1], four.shape[0]), four.tobytes())
+    if len(_FIT_SOURCES) >= 256:
+        _FIT_SOURCES.clear()
+    _FIT_SOURCES[id(im)] = (im, src)
+    return src
+
+
 def fit(im, w, h, margin=0):
     """Scale keeping the aspect ratio so the icon fits (w,h); upscaling keeps edges crisp (alpha contrast)."""
     s = min((w - margin) / im.width, (h - margin) / im.height)
     nw, nh = max(1, round(im.width * s)), max(1, round(im.height * s))
-    a = np.array(im).astype(np.float64)
-    pm = a[..., :3] * (a[..., 3:4] / 255.0)  # premultiplied resampling: no dark/light halos
-    chans = [Image.fromarray(np.clip(pm[..., i], 0, 255).astype(np.uint8)).resize((nw, nh), Image.Resampling.LANCZOS) for i in range(3)]
-    a0 = np.array(Image.fromarray(a[..., 3].astype(np.uint8)).resize((nw, nh), Image.Resampling.LANCZOS)).astype(np.float64) / 255.0
-    pmr = np.stack([np.array(c).astype(np.float64) for c in chans], axis=2)
+    # AP_HUD_FAST: the 3 premultiplied channels and alpha resampled in ONE call: RGBX = 4 independent bands that
+    # Pillow does not premultiply, byte for byte the same as one call per channel (checked), 4x fewer resizes; and
+    # the premultiplied source is made once per source image (the keyboard tiles fit each key to ~40 sizes).
+    r4 = np.array(_fit_source(im).resize((nw, nh), Image.Resampling.LANCZOS))
+    a0 = r4[..., 3].astype(np.float64) / 255.0
+    pmr = r4[..., :3].astype(np.float64)
     rgb = np.where(a0[..., None] > 0.02, pmr / np.maximum(a0[..., None], 0.02), 0)  # un-premultiply
     al = np.clip((a0 - 0.5) * 1.7 + 0.5, 0, 1) if s > 1.15 else a0  # sharpen enlarged flat icons
     out = np.dstack([np.clip(rgb, 0, 255), al * 255])

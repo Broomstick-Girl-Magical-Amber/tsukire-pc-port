@@ -1,5 +1,5 @@
 # dev_env.ps1 - Tsukihime build environment on this PC: VS Build Tools (DevShell x64), LLVM/clang-cl,
-# CMake and Ninja from winget, Vulkan SDK, vcpkg and nstool. It is in the repo (<root>\tools); it is the portable
+# CMake and Ninja from winget, Vulkan SDK and vcpkg (AP_DROP_UNUSED: no nstool). It is in the repo (<root>\tools); it is the portable
 # version of the personal dev.local.ps1 (which is not uploaded). If a dev.local.ps1 exists, recomp_tsukihime.ps1 uses that one.
 #
 #   . .\dev_env.ps1                # with a dot: the variables stay in your console
@@ -19,7 +19,7 @@ if ((Test-Path variable:IsLinux) -and $IsLinux) {
     $nxT = if ($env:NX_TOOLS_DIR) { $env:NX_TOOLS_DIR } else { Join-Path $HOME '.local/tsuki-tools' }
     $nxPin = @{ llvm = 'llvm-23.1.3'; cmake = 'cmake-4.4.4'; ninja = 'ninja-1.13.2'; dotnet = 'dotnet-10.0.401'; vulkan = 'vulkan-1.4.363.0' }
     $nxLlvm = if ($env:NX_LLVM) { $env:NX_LLVM } else { Join-Path $nxT "$($nxPin.llvm)/bin" }
-    $nxPaths = @($nxLlvm, (Join-Path $nxT "$($nxPin.cmake)/bin"), (Join-Path $nxT $nxPin.ninja), (Join-Path $nxT $nxPin.dotnet), $nxTools)
+    $nxPaths = @($nxLlvm, (Join-Path $nxT "$($nxPin.cmake)/bin"), (Join-Path $nxT $nxPin.ninja), (Join-Path $nxT $nxPin.dotnet))
     foreach ($nxP in $nxPaths) { if ((Test-Path -LiteralPath $nxP) -and (($env:PATH -split ':') -notcontains $nxP)) { $env:PATH = "${nxP}:$env:PATH" } }
     if (Test-Path -LiteralPath (Join-Path $nxT $nxPin.dotnet)) { $env:DOTNET_ROOT = Join-Path $nxT $nxPin.dotnet }
     $env:DOTNET_SYSTEM_GLOBALIZATION_INVARIANT = '1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'; $env:DOTNET_NOLOGO = '1'
@@ -53,7 +53,7 @@ $nxLlvm = if ($env:NX_LLVM) { $env:NX_LLVM } else { Join-Path $env:ProgramFiles 
 if (Test-Path -LiteralPath $nxLlvm) { $env:PATH = "$nxLlvm;$env:PATH" }
 $nxWinget = Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Links'     # cmake and ninja (winget)
 if (Test-Path -LiteralPath $nxWinget) { $env:PATH = "$nxWinget;$env:PATH" }
-$env:PATH = "$nxTools;$env:PATH"                                      # nstool
+# AP_DROP_UNUSED: tools\ is no longer put in the PATH (it was there for nstool)
 
 if (-not $env:VULKAN_SDK) {
     $nxVk = [Environment]::GetEnvironmentVariable('VULKAN_SDK', 'Machine')

@@ -113,7 +113,7 @@ Some heroines and scenes. Hisui comes first by arbitrary choice.
    ```
 
 2. **Put your files in place.**
-   - Copy your `prod.keys` into (`data\prod.keys`). The scripts only check that it exists and pass its path to `nstool`; they never read, copy or print it.
+   - Copy your `prod.keys` into (`data\prod.keys`). The scripts only check that it exists and pass its path to `nsextract`; they never read, copy or print it.
    - Copy your `.xci` / `.nsp` into the repository root. It does not matter which file is which edition: the script recognises the container by its header and the edition by the program ID. Or keep it elsewhere and use `-InputFile`.
 
 
@@ -307,7 +307,7 @@ This repository is under the **MIT License** ([LICENSE](LICENSE)). [NOTICE.md](N
 - **FFmpeg** (LGPL): the install script downloads the prebuilt, unmodified FFmpeg 9.0 "shared" LGPL build published by [BtbN](https://github.com/BtbN/FFmpeg-Builds) (fixed URL and SHA-256, checked before it is unpacked). It is not included in this repository. The built `.exe` is placed next to its DLLs.
 - **Vulkan SDK** (LunarG): installed by the script for the headers and `spirv-val`, under its own license.
 - **Noto Sans JP** (`resources/fonts`): SIL Open Font License 1.1, with `OFL.txt` next to the font.
-- Build tools such as LLVM, CMake, Ninja, `nstool` and `xwin` are downloaded by the install scripts from their official sources and are not redistributed here.
+- Build tools such as LLVM, CMake, Ninja and `xwin`<!-- AP_DROP_UNUSED: no nstool --> are downloaded by the install scripts from their official sources and are not redistributed here.
 - **Screenshots and intro animation** (`media/`): captures of the game, property of **TYPE-MOON / Aniplex** and the other rights holders. They are included only to show the port working. If you are a rights holder and want it removed, open an issue and the folder will be removed.
 - ***Tsukihime -A piece of blue glass moon-*** and its artwork belong to **TYPE-MOON / Aniplex** and the other rights holders. The icon `framework/games/tsukihime_common/tsukihime.ico` derives from artwork of the game; it is included only to identify the executable. If you are a rights holder and want it removed, open an issue and it will be replaced.
 

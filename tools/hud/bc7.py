@@ -48,8 +48,22 @@ def _indices(px, e0, e1, wt):
     """px (n,16,4); e0,e1 (n,4) 8-bit endpoints; wt (n,16,4) error weights -> idx (n,16), weighted error (n,)."""
     pal = ((64 - _W)[None, :, None] * e0[:, None, :] + _W[None, :, None] * e1[:, None, :] + 32) // 64  # (n,16,4)
     pal = pal.astype(np.float32)
-    d = (((px[:, :, None, :] - pal[:, None, :, :]) ** 2) * wt[:, :, None, :]).sum(axis=3)  # (n,16px,16idx)
-    return d.argmin(axis=2).astype(np.int32), d.min(axis=2).sum(axis=1)
+    # AP_HUD_FAST: one palette entry at a time instead of an (n,16px,16idx,4) array (about 1 GB for a 63720-block
+    # table). Same arithmetic per element, the 4 channels added in the order numpy's sum used (checked equal with the
+    # pinned numpy), and the first minimum wins, as argmin: same indices and errors.
+    best_d, best_i = None, None
+    for k in range(16):
+        t = px - pal[:, None, k, :]
+        np.multiply(t, t, out=t)
+        t *= wt
+        dk = t[..., 0] + t[..., 1] + t[..., 2] + t[..., 3]  # (n,16px)
+        if best_d is None:
+            best_d, best_i = dk, np.zeros(dk.shape, np.int32)
+        else:
+            m = dk < best_d
+            best_d = np.where(m, dk, best_d)
+            best_i[m] = k
+    return best_i, best_d.sum(axis=1)
 
 
 def bleed_rgb(rgba, min_alpha=1):
@@ -58,8 +72,26 @@ def bleed_rgb(rgba, min_alpha=1):
     return imgops.bleed_rgb(rgba, min_alpha)
 
 
+def encode_bc7_many(images):
+    """AP_HUD_FAST: several images in one pass; every block is encoded on its own, so each item is the same bytes
+    encode_bc7 gives for that image alone. Returns a list of bytes."""
+    parts = [_blocks(np.asarray(im, np.uint8))[0] for im in images]
+    if not parts:
+        return []
+    data = _encode_px(np.concatenate(parts))
+    out, pos = [], 0
+    for p in parts:
+        out.append(data[pos * 16:(pos + len(p)) * 16])
+        pos += len(p)
+    return out
+
+
 def encode_bc7(rgba):
-    px, (bh, bw) = _blocks(np.asarray(rgba, np.uint8))
+    return _encode_px(_blocks(np.asarray(rgba, np.uint8))[0])
+
+
+def _encode_px(px):
+    """(n,16,4) float32 pixel blocks -> bytes of n BC7 blocks (AP_HUD_FAST: the body of the former encode_bc7)."""
     n = len(px)
     # Error weights per pixel and channel: colour counts as much as the pixel is visible (premultiplied error, so
     # invisible pixels do not steer the endpoints), alpha always and more (alpha errors show as halos and ghost quads).
