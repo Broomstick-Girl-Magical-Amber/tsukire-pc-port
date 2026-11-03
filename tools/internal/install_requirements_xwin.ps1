@@ -282,6 +282,25 @@ function InstallPrebuilt([string]$k) {
     Remove-Item -LiteralPath $arch -Force -ErrorAction SilentlyContinue
     Info "$($PrebuiltParts[$k].Name) in $dst"
 }
+# xwin.exe (Rust, msvc target) needs VCRUNTIME140.dll, which a Windows without Visual C++ installed does not have
+# (measured 2026-11-02 on a clean VM: code -1073741515 = 0xC0000135, DLL not found). The Python of this flow brings it
+# (python-build-standalone ships vcruntime140.dll and vcruntime140_1.dll): a copy goes next to xwin.exe. The python
+# chain unpacks it in parallel, so this waits for it (a few seconds; the archive is small).
+function XwinRuntime {
+    $xd = WinDir 'xwin'
+    if (Test-Path -LiteralPath (Join-Path $xd 'vcruntime140.dll')) { return }
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    while (-not (DetectWin 'python')) {
+        if ($sw.Elapsed.TotalMinutes -gt 10) { Fail "Python ($(WinDir 'python')) did not appear in 10 min: xwin.exe needs its vcruntime140.dll (see the python chain)" }
+        Start-Sleep -Seconds 2
+    }
+    foreach ($n in 'vcruntime140.dll', 'vcruntime140_1.dll') {
+        $s = Join-Path (WinDir 'python') $n
+        if (Test-Path -LiteralPath $s) { Copy-Item -LiteralPath $s -Destination (Join-Path $xd $n) -Force }
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $xd 'vcruntime140.dll'))) { Fail "$(WinDir 'python') has no vcruntime140.dll (needed by xwin.exe)" }
+    Info "vcruntime140.dll (from the Python of this flow) next to xwin.exe$(if ($sw.Elapsed.TotalSeconds -ge 1) { ' (waited {0:N0} s for Python)' -f $sw.Elapsed.TotalSeconds })"
+}
 # MSVC CRT/STL + Windows SDK with xwin (as on Linux, without the case overlay: Windows is not case sensitive). The license
 # question is asked by step 1 in the main window (the chains run without a console of their own).
 function XwinSplat {
@@ -314,6 +333,7 @@ function WriteToolchainJson {
         llvm_bin = (Join-Path (WinDir 'llvm') 'bin'); cmake_bin = (Join-Path (WinDir 'cmake') 'bin'); ninja_dir = (WinDir 'ninja')
         python = (WinDir 'python'); xwin = (XwinDir)
         deps = $(if ($deps) { Join-Path $deps 'deps' } else { '' }); vulkan = $(if ($deps) { Join-Path $deps 'vulkan' } else { '' })
+        redist = $(if ($deps -and (Test-Path -LiteralPath (Join-Path $deps 'redist\msvcp140.dll'))) { Join-Path $deps 'redist' } else { '' })
         harness = $(if (DetectPrebuilt 'harness') { Join-Path (PrebuiltDir 'harness') 'spirv_harness\spirv_harness.exe' } else { '' })
         nsextract = $(if (DetectPrebuilt 'nsextract') { Join-Path (PrebuiltDir 'nsextract') 'nsextract\nsextract.exe' } else { '' })
         harness_source = $(if ((DetectPrebuilt 'harness') -and (PrebuiltAsset 'harness').PSObject.Properties['source']) { "$((PrebuiltAsset 'harness').source)" } else { '' })
@@ -328,7 +348,7 @@ function WriteToolchainJson {
 # Each chain runs in its own process (this script with -Chain <name>); they do not depend on each other.
 $XwinChains = [ordered]@{
     llvm   = { InstallWin 'llvm' }
-    crt    = { InstallWin 'xwin'; XwinSplat }
+    crt    = { InstallWin 'xwin'; if (-not (XwinOk)) { XwinRuntime }; XwinSplat }
     python = { InstallWin 'python'; if ($From -le 6 -and $To -ge 6) { Step6 } }
     misc   = { InstallWin 'cmake'; InstallWin 'ninja'; foreach ($k in $PrebuiltParts.Keys) { InstallPrebuilt $k }
                if (NeedDotnet) { InstallWin 'dotnet' }
@@ -467,6 +487,10 @@ function Step5 {
     $d = DetectPrebuilt 'deps'
     if (-not $d) { Problem "prebuilt libraries missing ($(PrebuiltDir 'deps')): step 1"; return }
     Info "libraries: $(Join-Path $d.Path 'deps') (prebuilt pack $($d.Text))"
+    # The game and the vcpkg DLLs use the Visual C++ runtime (/MD); VS Build Tools used to install it, this flow does not.
+    if (Test-Path -LiteralPath (Join-Path $d.Path 'redist\msvcp140.dll')) { Info "Visual C++ runtime: $(Join-Path $d.Path 'redist') (recomp copies it next to the exe)" }
+    elseif (Test-Path -LiteralPath "$env:SystemRoot\System32\msvcp140.dll") { Info 'Visual C++ runtime: installed in Windows (the pack does not bring it)' }
+    else { Warn 'the game needs the Visual C++ runtime (msvcp140.dll, vcruntime140.dll): neither Windows nor this prebuilt pack has it (older pack). Install vc_redist.x64.exe from Microsoft, or use a pack made by the current tools\dev\build_prebuilt.ps1' }
     $script:Done.Add("libraries (prebuilt pack $($d.Text))")
 }
 function Step7 {

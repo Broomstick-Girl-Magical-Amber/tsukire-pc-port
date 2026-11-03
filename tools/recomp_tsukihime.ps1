@@ -259,6 +259,23 @@ if ($Toolchain) {
 }
 # A .NET tool as a command: the prebuilt exe alone, or dotnet + the dll built here.
 function ToolCmd([string]$p) { if ($p -like '*.exe') { return , @($p) } else { return , @('dotnet', $p) } }
+# AP_XWIN_RUNTIME: the game and the vcpkg DLLs use the Visual C++ runtime (/MD). VS Build Tools installs it in Windows; the
+# xwin flow does not, so the copy of the prebuilt pack (redist\) goes next to the exe (app-local, as Microsoft allows).
+function CopyVcRuntime([string]$dir) {
+    $rd = if ($Toolchain.PSObject.Properties['redist']) { "$($Toolchain.redist)" } else { '' }
+    if ($rd -and (Test-Path -LiteralPath (Join-Path $rd 'msvcp140.dll'))) {
+        $n = 0
+        foreach ($f in @(Get-ChildItem -LiteralPath $rd -Filter '*.dll' -File)) {
+            $d = Join-Path $dir $f.Name
+            $same = $false
+            if (Test-Path -LiteralPath $d) { $g = Get-Item -LiteralPath $d; $same = ($g.Length -eq $f.Length -and $g.LastWriteTimeUtc -eq $f.LastWriteTimeUtc) }
+            if (-not $same) { Copy-Item -LiteralPath $f.FullName -Destination $d -Force; $n++ }
+        }
+        Info "Visual C++ runtime next to the exe ($rd): $n DLL(s) copied"
+    } elseif (-not (Test-Path -LiteralPath (Join-Path $env:SystemRoot 'System32\msvcp140.dll'))) {
+        Warn 'the game needs the Visual C++ runtime (msvcp140.dll, vcruntime140.dll) and neither Windows nor the prebuilt pack has it: install vc_redist.x64.exe from Microsoft, or run tools\install_requirements.ps1 -From 1 with a pack made by the current tools\dev\build_prebuilt.ps1'
+    }
+}
 # Builds nsextract if the dll is missing or older than its sources (needs dotnet, and network the first time for the
 # LibHac package; tools\install_requirements.ps1 step 7 already builds it).
 function EnsureNsExtract {
@@ -1208,6 +1225,7 @@ function Step9 {
         RunVisible 'cmake' $ba 'cmake --build'
         Info ('cmake --build: {0:hh\:mm\:ss}' -f ((Get-Date) - $t0))
         BuildTimes $nlog $nOff
+        if ($Toolchain) { CopyVcRuntime $Build }   # AP_XWIN_RUNTIME
     } finally { Pop-Location }
     $exe = Under $Build "$($V.Game).exe"
     if (-not (Test-Path -LiteralPath $exe)) { Fail "$exe does not appear" }

@@ -10,6 +10,8 @@
 # Output in <root>\_prepare\prebuilt\<tag>\ (zips) and tools\internal\prebuilt.json (URL + SHA-256 + size of each zip):
 #   tsukire-deps-win-x64.zip       deps\ (include, lib, bin, share\sdl3 of opus, libjpeg-turbo, libpng, zlib, sdl3: x64-windows
 #                                  Release from vcpkg), vulkan\Bin\spirv-val.exe, vulkan\Include\ (vulkan, vk_video headers),
+#                                  redist\ (Visual C++ runtime DLLs: the game and those DLLs are /MD; VS Build Tools used to
+#                                  install the runtime, the xwin flow does not: recomp copies them next to the exe),
 #                                  licenses\, MANIFEST.txt (versions and SHA-256 of every file)
 #   tsukire-harness-win-x64.zip    spirv_harness\spirv_harness.exe (self-contained .NET 10, single file; Ryujinx shader
 #                                  translator, MIT) + licenses\
@@ -24,7 +26,8 @@ param(
     [string]$Vcpkg = 'C:\dev\vcpkg',
     [switch]$NoHarness,
     [switch]$WithNsExtract,
-    [string]$Root = ''
+    [string]$Root = '',
+    [string]$MinCrt = '14.51'   # the xwin CRT of install_requirements.ps1 (-XwinCrt): the runtime DLLs must not be older
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2
@@ -88,6 +91,11 @@ function SourceStamp([string]$root, [string[]]$rels) {
 }
 $PrebuiltSources = @{ harness = @('framework/tools/maxwell/spirv_harness', 'framework/tools/maxwell/apply_patch.py'); nsextract = @('tools/nsextract') }
 
+# A copy of vcruntime140*.dll next to a tool (harmless if it does not use them; a PC without Visual C++ cannot start a
+# /MD program without them: that is how xwin.exe failed on the clean VM, 2026-11-02).
+function VcRuntimeNextTo([string]$dir) {
+    foreach ($f in @($rdFiles | Where-Object { $_.Name -match '^vcruntime140(_1)?\.dll$' })) { Copy-Item -LiteralPath $f.FullName -Destination (Join-Path $dir $f.Name) -Force }
+}
 if (-not $Root) { $Root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot) }   # <root>\tools\dev -> <root>
 $Root = [IO.Path]::GetFullPath($Root).TrimEnd('\')
 if (-not $BaseUrl) {
@@ -145,6 +153,43 @@ foreach ($port in 'opus', 'libjpeg-turbo', 'libpng', 'zlib', 'sdl3') {
     if (Test-Path -LiteralPath $c) { Copy-Item -LiteralPath $c -Destination (Join-Path $stage "licenses\$port.txt") } else { Warn "no license file for $port ($c)" }
 }
 foreach ($n in 'LICENSE.txt', 'license.txt') { $l = Join-Path $vk $n; if (Test-Path -LiteralPath $l) { Copy-Item -LiteralPath $l -Destination (Join-Path $stage 'licenses\VulkanSDK-spirv-val-headers.txt'); break } }
+# Visual C++ runtime (app-local deployment, allowed by the VS license for the redist files): from the VC\Redist folder of
+# VS (the newest one), otherwise the copies installed in System32.
+$rdSrc = $null; $rdVer = ''
+$vsw = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+if (Test-Path -LiteralPath $vsw) {
+    foreach ($vsPath in @(& $vsw -all -products * -property installationPath 2>$null)) {
+        $base = Join-Path "$vsPath" 'VC\Redist\MSVC'
+        if (-not (Test-Path -LiteralPath $base)) { continue }
+        foreach ($vd in @(Get-ChildItem -LiteralPath $base -Directory | Where-Object { $_.Name -match '^\d+\.\d+\.\d+$' } | Sort-Object { [version]$_.Name } -Descending)) {
+            $crt = @(Get-ChildItem -LiteralPath (Join-Path $vd.FullName 'x64') -Directory -Filter 'Microsoft.VC*.CRT' -ErrorAction SilentlyContinue)
+            if ($crt.Count -and (Test-Path -LiteralPath (Join-Path $crt[0].FullName 'msvcp140.dll'))) {
+                if (-not $rdSrc -or [version]$vd.Name -gt [version]$rdVer) { $rdSrc = $crt[0].FullName; $rdVer = $vd.Name }
+                break
+            }
+        }
+    }
+}
+$rdFiles = @()
+if ($rdSrc) { $rdFiles = @(Get-ChildItem -LiteralPath $rdSrc -Filter '*.dll' -File) }
+else {
+    Warn 'no VC\Redist folder in VS: the Visual C++ runtime is taken from System32'
+    $rdFiles = @('vcruntime140.dll', 'vcruntime140_1.dll', 'msvcp140.dll', 'msvcp140_1.dll', 'msvcp140_2.dll', 'msvcp140_atomic_wait.dll', 'msvcp140_codecvt_ids.dll', 'concrt140.dll') |
+               ForEach-Object { Join-Path "$env:SystemRoot\System32" $_ } | Where-Object { Test-Path -LiteralPath $_ } | ForEach-Object { Get-Item -LiteralPath $_ }
+}
+if (-not @($rdFiles | Where-Object { $_.Name -eq 'msvcp140.dll' }).Count -or -not @($rdFiles | Where-Object { $_.Name -eq 'vcruntime140.dll' }).Count) { throw 'Visual C++ runtime (msvcp140.dll, vcruntime140.dll) not found in VS nor in System32' }
+New-Item -ItemType Directory -Path (Join-Path $stage 'redist') -Force | Out-Null
+foreach ($f in $rdFiles) {
+    Copy-Item -LiteralPath $f.FullName -Destination (Join-Path $stage "redist\$($f.Name)")
+    # spirv-val too (if it is /MD it would not start on a PC without the runtime)
+    if ($f.Name -match '^(vcruntime140(_1)?|msvcp140)\.dll$') { Copy-Item -LiteralPath $f.FullName -Destination (Join-Path $stage "vulkan\Bin\$($f.Name)") }
+}
+$msvcp = (Get-Item -LiteralPath (Join-Path $stage 'redist\msvcp140.dll')).VersionInfo.FileVersion
+$rdText = "Visual C++ runtime $msvcp ($(if ($rdSrc) { $rdSrc } else { 'System32' }); $(@($rdFiles).Count) DLLs)"
+Info $rdText
+$mv = [version]'0.0'; if ("$msvcp" -match '^(\d+)\.(\d+)') { $mv = [version]"$($Matches[1]).$($Matches[2])" }
+if ($mv -lt [version]$MinCrt) { Warn "msvcp140.dll $msvcp is older than the xwin CRT ${MinCrt}: the STL headers of the build could need a newer runtime (update VS Build Tools)" }
+[IO.File]::WriteAllText((Join-Path $stage 'licenses\VisualCpp-runtime.txt'), "redist\*.dll: Microsoft Visual C++ runtime ($msvcp), redistributable files of Visual Studio deployed next to the application (https://learn.microsoft.com/cpp/windows/redistributing-visual-cpp-files).`r`n")
 # spirv-val must run without the SDK in the PATH (no DLL of the SDK next to it)
 $savedPath = $env:PATH
 $code = -1; $v = '?'
@@ -162,7 +207,7 @@ try {
     $vcpkgHead = if ($git) { "$(& git -C $Vcpkg rev-parse HEAD 2>$null)" } else { '?' }
     $ports = @(& (Join-Path $Vcpkg 'vcpkg.exe') list 2>$null | ForEach-Object { "$_" } | Where-Object { $_ -match ':x64-windows' })
 } finally { $ErrorActionPreference = $prev }
-Manifest $stage (@("tsukire prebuilt deps $Tag (x64-windows, Release)", "built $(Get-Date -Format s) on $env:COMPUTERNAME by tools\dev\build_prebuilt.ps1",
+Manifest $stage (@("tsukire prebuilt deps $Tag (x64-windows, Release)", "built $(Get-Date -Format s) by tools\dev\build_prebuilt.ps1", $rdText,
                   "vcpkg $vcpkgHead", "Vulkan SDK $(Split-Path -Leaf $vk) (spirv-val: $v)", '', 'vcpkg list:') + $ports)
 $zip = Join-Path $Out 'tsukire-deps-win-x64.zip'
 Zip $stage $zip
@@ -183,6 +228,7 @@ if (-not $NoHarness) {
                          '-p:IncludeNativeLibrariesForSelfExtract=true', "-p:PatchPython=$py", '-p:NuGetAudit=false', '-o', (Join-Path $stage 'spirv_harness')) 'dotnet publish (spirv_harness)'
     Get-ChildItem -LiteralPath (Join-Path $stage 'spirv_harness') -Filter '*.pdb' | Remove-Item -Force
     SmokeTest (Join-Path $stage 'spirv_harness\spirv_harness.exe') 'spirv_harness --batch'
+    VcRuntimeNextTo (Join-Path $stage 'spirv_harness')
     New-Item -ItemType Directory -Path (Join-Path $stage 'licenses') -Force | Out-Null
     foreach ($n in 'LICENSE.txt', 'LICENSE') { $l = Join-Path $ry $n; if (Test-Path -LiteralPath $l) { Copy-Item -LiteralPath $l -Destination (Join-Path $stage 'licenses\Ryujinx-shader-translator-MIT.txt'); break } }
     [IO.File]::WriteAllText((Join-Path $stage 'licenses\dotnet-runtime.txt'), "This exe embeds the .NET 10 runtime (MIT License): https://github.com/dotnet/runtime/blob/main/LICENSE.TXT`r`n")
@@ -206,6 +252,7 @@ if ($WithNsExtract) {
                          '-p:PublishSingleFile=true', '-p:IncludeNativeLibrariesForSelfExtract=true', '-p:NuGetAudit=false', '-o', (Join-Path $stage 'nsextract')) 'dotnet publish (nsextract)'
     Get-ChildItem -LiteralPath (Join-Path $stage 'nsextract') -Filter '*.pdb' | Remove-Item -Force
     SmokeTest (Join-Path $stage 'nsextract\nsextract.exe') 'usage: nsextract'
+    VcRuntimeNextTo (Join-Path $stage 'nsextract')
     New-Item -ItemType Directory -Path (Join-Path $stage 'licenses') -Force | Out-Null
     [IO.File]::WriteAllText((Join-Path $stage 'licenses\README.txt'), "nsextract (tools\nsextract of the repo) embeds LibHac 0.19.0 (NuGet) and the .NET 10 runtime (MIT). Add LibHac's license file here before publishing.`r`n")
     Manifest $stage @("tsukire prebuilt nsextract $Tag (win-x64, self-contained)", "built $(Get-Date -Format s) by tools\dev\build_prebuilt.ps1")
