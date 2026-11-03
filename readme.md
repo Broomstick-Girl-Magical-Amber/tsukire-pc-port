@@ -155,7 +155,7 @@ git clone https://github.com/Broomstick-Girl-Magical-Amber/tsukire-pc-port.git &
 bash tools/linux/install_requirements_linux.sh -Recomp -Edition japan
 ```
 
-On Linux the libraries are still built from source with vcpkg, so it takes longer than on Windows (about 20 minutes or more). Later recompilations only need `bash tools/linux/recomp_linux.sh -Edition japan` (or `global`).
+On Linux the process it takes about 8 minutes or more. Later recompilations only need `bash tools/linux/recomp_linux.sh -Edition japan` (or `global`).
 
 Community patches are also supported. See [Updates and patches](#updates-and-patches) for more details, but not tested in Linux.
 
