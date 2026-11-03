@@ -15,6 +15,9 @@
 #   Every run prints the time of each step and appends it to <root>\_prepare\step_times.log
 #   .\install_requirements.ps1 -Edition global         # only one edition (global | japan | both): space, cross check and summary
 #   .\install_requirements.ps1 -VcpkgCache D:\vcpkgbin # vcpkg binary cache (another copy of %LOCALAPPDATA%\vcpkg\archives)
+#   .\install_requirements.ps1 -Toolchain xwin         # AP_TOOLCHAIN_XWIN: no VS Build Tools (tools\internal\install_requirements_xwin.ps1):
+#       clang-cl + xwin + the prebuilt pack of tools\internal\prebuilt.json, per user, no administrator. -Toolchain auto (the
+#       default) uses it when prebuilt.json has the pack; -Toolchain vs = VS Build Tools, .NET, Vulkan SDK and vcpkg as before
 #
 # Steps (if what the step does is already there and meets the rule, it is skipped):
 #   0 precheck       Windows, PowerShell, winget, network, space; status of each tool
@@ -65,7 +68,10 @@ param(
     # AP_INSTALL_PARALLEL (internal): -AdminChild = one tool installed in parallel by the elevated instance;
     # -Worker = step 5 in the background (StartVcpkgWorker)
     [switch]$AdminChild,
-    [switch]$Worker
+    [switch]$Worker,
+    # AP_TOOLCHAIN_XWIN: auto | xwin | vs (see above); -Chain is internal (one chain of step 1 in the xwin flow)
+    [ValidateSet('auto', 'xwin', 'vs')][string]$Toolchain = 'auto',
+    [string]$Chain = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -497,7 +503,7 @@ function AdminInstallOne([string]$c, $r) {
 function StartParallelInstalls([string[]]$all) {
     $kids = @{}
     if ($AdminChild -or $env:NX_SERIAL_INSTALL -or -not $OnWindows) { return $kids }
-    $par = @($all | Where-Object { $_ -in 'llvm', 'vulkan' })
+    $par = @($all | Where-Object { $_ -in 'vulkan' })   # AP_TOOLCHAIN_XWIN: LLVM 23 is an MSI: it waits for the MSIs of VS anyway
     if (-not $par.Count -or $par.Count -eq $all.Count) { return $kids }   # nothing to overlap with
     $host_ = (Get-Process -Id $PID).Path
     foreach ($c in $par) {
@@ -1341,6 +1347,7 @@ function Main {
     $script:WorkDir = if ((Test-Path -LiteralPath $script:Root) -or -not $Check) { PathOf $script:Root '_prepare' } else { PathOf ([IO.Path]::GetTempPath()) 'tsuki_prepare' }
     New-Item -ItemType Directory -Path $script:WorkDir -Force | Out-Null
     if ($AdminOnly) { AdminMode; return 0 }
+    if ($Chain) { return (RunChain $Chain) }   # AP_TOOLCHAIN_XWIN: one chain of step 1 (xwin); its output is captured by the parent
     $log = PathOf $script:WorkDir "install_requirements_$(Stamp).log"
     try { Start-Transcript -Path $log | Out-Null } catch { $log = '(no log)' }
     Write-Host "install_requirements: root $script:Root, edition $Edition, steps $From..$To$(if ($Check) { ', check only' })$(if ($NonInteractive) { ', no questions' }); log $log"
@@ -1428,6 +1435,18 @@ function RestoreConsoleMode($old) {
     try { [void][NxConsoleMode]::Set(([long]$old -bor 0x80)) } catch { }
 }
 
+# AP_TOOLCHAIN_XWIN: Windows without VS Build Tools, only when chosen (-Toolchain xwin, or auto with the prebuilt pack
+# pinned). Loaded here, after every function of this script, because it redefines some of them (steps, StartVcpkgWorker).
+$script:UseXwin = $false
+if ($OnWindows) {
+    $nxXwin = Join-Path $PSScriptRoot 'internal/install_requirements_xwin.ps1'
+    if (Test-Path -LiteralPath $nxXwin) { . $nxXwin }
+    elseif ($Toolchain -eq 'xwin') { Write-Host "ERROR: $nxXwin is missing (is it in the repo?)" -ForegroundColor Red; exit 1 }
+}
+if ($script:UseXwin) {
+    $StepNames[1] = 'tools (per user, in parallel; xwin)'; $StepNames[4] = 'vcpkg (not needed)'; $StepNames[5] = 'libraries (prebuilt pack)'
+    $StepNames[8] = 'spirv_harness'
+}
 if ($FunctionsOnly) { return }
 $nxConsoleMode = DisableQuickEdit
 try { $c = Main } finally { RestoreConsoleMode $nxConsoleMode }

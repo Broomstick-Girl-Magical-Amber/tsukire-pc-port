@@ -39,6 +39,29 @@ if ((Test-Path variable:IsLinux) -and $IsLinux) {
     return
 }
 
+# AP_TOOLCHAIN_XWIN: Windows without VS Build Tools (install_requirements.ps1 -Toolchain xwin): the tools of
+# <root>\_prepare\toolchain.json instead of the VS DevShell. NX_TOOLCHAIN=vs (environment) ignores it.
+$nxTc = Join-Path (Split-Path -Parent $nxTools) '_prepare\toolchain.json'
+if ($env:NX_TOOLCHAIN -ne 'vs' -and (Test-Path -LiteralPath $nxTc)) {
+    $nxJ = $null
+    try { $nxJ = Get-Content -LiteralPath $nxTc -Raw | ConvertFrom-Json } catch { Write-Warning "$nxTc cannot be read: using VS Build Tools" }
+    if ($nxJ -and $nxJ.mode -eq 'xwin') {
+        foreach ($nxP in @($nxJ.dotnet_root, $nxJ.python, $nxJ.ninja_dir, $nxJ.cmake_bin, $nxJ.llvm_bin)) {
+            if ("$nxP" -and (Test-Path -LiteralPath "$nxP")) { $env:PATH = "$nxP;$env:PATH" }
+        }
+        if ("$($nxJ.dotnet_root)") { $env:DOTNET_ROOT = "$($nxJ.dotnet_root)" }
+        $env:NX_XWIN = "$($nxJ.xwin)"; $env:NX_LLVM = "$($nxJ.llvm_bin)"; $env:NX_DEPS = "$($nxJ.deps)"
+        $env:VULKAN_SDK = "$($nxJ.vulkan)"   # spirv-val (Bin) and the Vulkan headers (Include) of the prebuilt pack
+        Remove-Item Env:NX_DATA_ROOT -ErrorAction SilentlyContinue
+        $nxInfo = 'dev env (xwin, no VS):'
+        if (Get-Command clang-cl -ErrorAction SilentlyContinue) { $nxInfo += ' clang-cl ' + ((clang-cl --version)[0] -replace '.*version (\S+).*', '$1') }
+        if (Get-Command cmake -ErrorAction SilentlyContinue) { $nxInfo += ' | cmake ' + ((cmake --version)[0] -replace 'cmake version ', '') }
+        $nxInfo += ' | CRT/SDK ' + $env:NX_XWIN + ' | prebuilt ' + "$($nxJ.prebuilt_tag)"
+        Write-Host $nxInfo
+        return
+    }
+}
+
 $nxVswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
 if (-not (Test-Path -LiteralPath $nxVswhere)) { throw "cannot find vswhere ($nxVswhere): install VS Build Tools (install_requirements.ps1)." }
 $nxVs = & $nxVswhere -products * -latest -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath

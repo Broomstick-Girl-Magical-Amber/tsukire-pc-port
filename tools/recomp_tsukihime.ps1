@@ -221,9 +221,48 @@ $ShadersPy = Under $Tools 'internal\tsuki_shaders_offline.py'
 # NSP/XCI, without the intermediate copy. nstool (the fallback until 2026-11-02) is gone.
 $NsExtract = Under $Tools 'nsextract\bin\Release\net10.0\nsextract.dll'
 $NsProj = Under $Tools 'nsextract\nsextract.csproj'
+# AP_TOOLCHAIN_XWIN: Windows without VS Build Tools (install_requirements.ps1 -Toolchain xwin) leaves its tools in
+# <root>\_prepare\toolchain.json: prebuilt nsextract / spirv_harness (exe, no .NET needed) and, for step 9, clang-cl + xwin
+# + the prebuilt libraries. NX_TOOLCHAIN=vs ignores it (VS Build Tools + vcpkg, as before).
+$Toolchain = $null
+if (-not $OnLinux -and $env:NX_TOOLCHAIN -ne 'vs' -and (Test-Path -LiteralPath (InRoot '_prepare\toolchain.json'))) {
+    try { $tcj = Get-Content -LiteralPath (InRoot '_prepare\toolchain.json') -Raw | ConvertFrom-Json; if ($tcj.mode -eq 'xwin') { $Toolchain = $tcj } } catch { }
+}
+# Fingerprint of the sources a prebuilt tool was built from (the same function is in tools\dev\build_prebuilt.ps1 and
+# recomp_tsukihime.ps1): SHA-256 over "path SHA-256(text without CR)" of every source file ($SrcExt), bin\ and obj\ excluded.
+$SrcExt = @('.cs', '.csproj', '.props', '.targets', '.patch', '.py')
+function SourceStamp([string]$root, [string[]]$rels) {
+    $sha = [Security.Cryptography.SHA256]::Create(); $enc = New-Object Text.UTF8Encoding($false); $lines = @()
+    foreach ($rel in $rels) {
+        $p = Join-Path $root $rel
+        if (-not (Test-Path -LiteralPath $p)) { $lines += "missing $rel"; continue }
+        $base = (Resolve-Path -LiteralPath $root).Path.TrimEnd('\', '/')
+        foreach ($f in @(Get-ChildItem -LiteralPath $p -Recurse -File -Force | Where-Object { $_.Extension -in $SrcExt -and $_.FullName.Substring($base.Length) -notmatch '[\\/](bin|obj)[\\/]' })) {
+            $t = [IO.File]::ReadAllText($f.FullName, $enc).Replace("`r", '')
+            $h = [BitConverter]::ToString($sha.ComputeHash($enc.GetBytes($t))).Replace('-', '')
+            $lines += ($f.FullName.Substring($base.Length + 1).Replace('\', '/') + ' ' + $h)
+        }
+    }
+    $sorted = [string[]]$lines; [Array]::Sort($sorted, [StringComparer]::Ordinal)
+    return [BitConverter]::ToString($sha.ComputeHash($enc.GetBytes(($sorted -join "`n")))).Replace('-', '')
+}
+# A prebuilt exe only while the repo has the sources it was built from (after a git pull with other ones: the local build).
+function PrebuiltTool([string]$k, [string[]]$rels) {
+    $exe = "$($Toolchain.$k)"; $src = if ($Toolchain.PSObject.Properties["${k}_source"]) { "$($Toolchain."${k}_source")" } else { '' }
+    if (-not $exe -or -not (Test-Path -LiteralPath $exe)) { return $null }
+    if ($src -and (SourceStamp $Root $rels) -ne $src) { Write-Host "   WARNING: the prebuilt $k is from other sources than this repo: the local build is used (tools\install_requirements.ps1 builds it)" -ForegroundColor Yellow; return $null }
+    return $exe
+}
+if ($Toolchain) {
+    $nxP = PrebuiltTool 'nsextract' @('tools/nsextract'); if ($nxP) { $NsExtract = $nxP }
+    $nxP = PrebuiltTool 'harness' @('framework/tools/maxwell/spirv_harness', 'framework/tools/maxwell/apply_patch.py'); if ($nxP) { $Harness = $nxP }
+}
+# A .NET tool as a command: the prebuilt exe alone, or dotnet + the dll built here.
+function ToolCmd([string]$p) { if ($p -like '*.exe') { return , @($p) } else { return , @('dotnet', $p) } }
 # Builds nsextract if the dll is missing or older than its sources (needs dotnet, and network the first time for the
 # LibHac package; tools\install_requirements.ps1 step 7 already builds it).
 function EnsureNsExtract {
+    if ($NsExtract -like '*.exe') { Info "nsextract: $NsExtract (prebuilt)"; return }   # AP_TOOLCHAIN_XWIN
     if (-not (Test-Path -LiteralPath $NsProj)) { Fail "$NsProj is missing (it comes with the repo)" }
     if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) { Fail 'dotnet (.NET SDK 10) not found: it builds and runs tools\nsextract (tools\install_requirements.ps1 installs it)' }
     $src = @(Get-ChildItem -LiteralPath (Split-Path -Parent $NsProj) -File | Where-Object { $_.Extension -in '.cs', '.csproj' })
@@ -287,8 +326,9 @@ function BytesWritten([int]$id, [string]$dest) {
 function ExtractLong([string[]]$arguments, [string]$what, [string]$dest, [int64]$total) {   # AP_DROP_UNUSED: was NstoolLong
     $id = [guid]::NewGuid().ToString('N')
     $fo = Under $Stage "nsextract_$id.out"; $fe = Under $Stage "nsextract_$id.err"
-    $argStr = ((@($NsExtract) + $arguments) | ForEach-Object { Quote $_ }) -join ' '
-    $dotnet = (Get-Command dotnet -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+    $nc = ToolCmd $NsExtract   # AP_TOOLCHAIN_XWIN: the prebuilt exe, or dotnet + the dll
+    $argStr = ((@($nc | Select-Object -Skip 1) + $arguments) | ForEach-Object { Quote $_ }) -join ' '
+    $dotnet = if ($nc[0] -eq 'dotnet') { (Get-Command dotnet -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source } else { $nc[0] }
     $p = Start-Process -FilePath $dotnet -ArgumentList $argStr -NoNewWindow -PassThru -RedirectStandardOutput $fo -RedirectStandardError $fe
     $null = $p.Handle   # without this ExitCode can stay empty in PowerShell 5.1
     $t0 = Get-Date; $before = [int64]0; $tBefore = $t0
@@ -448,12 +488,13 @@ function Step0 {
     # stay in this process (your console does not change).
     $toolsMissing = -not (Get-Command cmake -ErrorAction SilentlyContinue) -or -not (Get-Command clang-cl -ErrorAction SilentlyContinue)
     $builds = ($From -le 9 -and $To -ge 9)
-    if ($toolsMissing -or $builds) {
+    if ($toolsMissing -or $builds -or $Toolchain) {   # AP_TOOLCHAIN_XWIN: in that mode spirv-val and the tools come from dev_env.ps1
         if ($DevLocal) {
             Info "loading $DevLocal"
             LoadDevLocal
             if ($builds -and $OnLinux -and (-not $env:NX_XWIN -or -not $env:VCPKG_ROOT)) { Warn 'after loading the environment NX_XWIN or VCPKG_ROOT are still empty: step 9 may fail' }
-            elseif ($builds -and -not $OnLinux -and (-not $env:INCLUDE -or -not $env:VCPKG_ROOT)) { Warn 'after loading the environment INCLUDE or VCPKG_ROOT are still empty: step 9 may fail' }
+            elseif ($builds -and -not $OnLinux -and $Toolchain -and -not $env:NX_XWIN) { Warn 'after loading the environment NX_XWIN is still empty (_prepare\toolchain.json): step 9 may fail' }   # AP_TOOLCHAIN_XWIN
+            elseif ($builds -and -not $OnLinux -and -not $Toolchain -and (-not $env:INCLUDE -or -not $env:VCPKG_ROOT)) { Warn 'after loading the environment INCLUDE or VCPKG_ROOT are still empty: step 9 may fail' }
         } elseif ($toolsMissing) {
             Fail "no cmake/clang-cl in the PATH and no build environment (dev.local.ps1 or tools\dev_env.ps1; searched in $Framework and $Tools)"
         } else {
@@ -465,10 +506,10 @@ function Step0 {
         if (-not (Test-Path -LiteralPath $p)) { $missing += $p }
     }
     if ($Edition -eq 'global' -and -not (Test-Path -LiteralPath $Create)) { $missing += $Create }
-    if ($From -le 2 -and $To -ge 1 -and -not (Get-Command dotnet -ErrorAction SilentlyContinue)) { $missing += 'dotnet (.NET SDK 10: builds and runs tools\nsextract)' }   # AP_DROP_UNUSED
+    if ($From -le 2 -and $To -ge 1 -and $NsExtract -notlike '*.exe' -and -not (Get-Command dotnet -ErrorAction SilentlyContinue)) { $missing += 'dotnet (.NET SDK 10: builds and runs tools\nsextract)' }   # AP_DROP_UNUSED, AP_TOOLCHAIN_XWIN
     if ($To -ge 8) {
         if (-not (Test-Path -LiteralPath $Harness)) { $missing += "$Harness (dotnet build tools/maxwell/spirv_harness/SpirvHarness.csproj -c Release -m:2)" }
-        if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) { $missing += 'dotnet (.NET SDK 10)' }
+        if ($Harness -notlike '*.exe' -and -not (Get-Command dotnet -ErrorAction SilentlyContinue)) { $missing += 'dotnet (.NET SDK 10)' }   # AP_TOOLCHAIN_XWIN
         if (-not (SpirvVal) -or -not (Test-Path -LiteralPath (SpirvVal))) { $missing += 'spirv-val (VULKAN_SDK\Bin)' }
     }
     if ($To -ge 9 -and -not (Get-Command cmake -ErrorAction SilentlyContinue)) { $missing += 'cmake' }
@@ -514,7 +555,8 @@ function Step1 {
 function IdentifyInput {
     NewStage
     # nsextract reports the program ID of the base application; the NCA is not extracted.
-    $r = RunCapture 'dotnet' @($NsExtract, 'info', '--keys', $Keys, '--input', $InputFile)
+    $nc = ToolCmd $NsExtract   # AP_TOOLCHAIN_XWIN
+    $r = RunCapture $nc[0] (@($nc | Select-Object -Skip 1) + @('info', '--keys', $Keys, '--input', $InputFile))
     if ($r.Code -ne 0) {
         $err = @($r.Output | Where-Object { $_ -match 'ERROR' } | Select-Object -First 3)
         Fail "nsextract failed to read $(Split-Path -Leaf $InputFile) (code $($r.Code)): $($err -join ' | ')"
@@ -930,7 +972,8 @@ function Step8 {
         if ($c2.without_spv -ne $c.without_spv) { Fail 'the shader count changed between two runs' }
         Info "translating $($c.without_spv) with the harness"
         $hj = [Math]::Max(3, [Environment]::ProcessorCount - 1)   # AP_RECOMP_PARALLEL: was a fixed 3
-        RunVisible 'dotnet' @($Harness, '--batch', $in, '--out', $out, '--jobs', "$hj", '--spirv-val', (SpirvVal)) 'spirv_harness'
+        $hc = ToolCmd $Harness   # AP_TOOLCHAIN_XWIN: the prebuilt exe, or dotnet + the dll
+        RunVisible $hc[0] (@($hc | Select-Object -Skip 1) + @('--batch', $in, '--out', $out, '--jobs', "$hj", '--spirv-val', (SpirvVal))) 'spirv_harness'
         $res = Under $out 'results.tsv'
         if (-not (Test-Path -LiteralPath $res)) { Fail 'the harness did not write results.tsv' }
         $lines = @(Get-Content -LiteralPath $res)
@@ -1043,7 +1086,7 @@ function StartHudBackground {
              -NoNewWindow -PassThru -RedirectStandardOutput $log -RedirectStandardError "$log.err"
         $null = $p.Handle
         $script:HudJob = @{ P = $p; Log = $log }
-        Info 'HUD icons by device: building in the background meanwhile (shown at the start of step 9)'
+        Info 'HUD icons by device: building in the background meanwhile (shown at the start of step 9, or at the end of this run)'   # AP_TOOLCHAIN_XWIN
     } catch { }
 }
 
@@ -1103,11 +1146,25 @@ function Step9 {
                 Info "parameters from $other"
                 $cacheKeys = @('CMAKE_GENERATOR', 'CMAKE_TOOLCHAIN_FILE', 'CMAKE_BUILD_TYPE', 'CMAKE_C_COMPILER', 'CMAKE_CXX_COMPILER', 'VCPKG_TARGET_TRIPLET', 'NX_OPUS_ROOT')
                 if ($OnLinux) { $cacheKeys += @('VCPKG_CHAINLOAD_TOOLCHAIN_FILE', 'VCPKG_HOST_TRIPLET', 'VCPKG_OVERLAY_TRIPLETS', 'NX_XWIN', 'NX_LLVM') }
+                if ($Toolchain) { $cacheKeys += @('NX_XWIN', 'NX_LLVM', 'CMAKE_PREFIX_PATH') }   # AP_TOOLCHAIN_XWIN
                 foreach ($k in $cacheKeys) {
                     $value = CacheValue $other $k
                     if ($value) { if ($k -eq 'CMAKE_GENERATOR') { $a += @('-G', $value) } else { $a += "-D$k=$value" } }
                 }
                 if ($OnLinux) { $a += "-DNX_VULKAN_SDK=$(VulkanView)" }
+            } elseif ($Toolchain) {
+                # AP_TOOLCHAIN_XWIN: Windows without VS: clang-cl + lld-link + llvm-rc against the xwin CRT/SDK (the toolchain file
+                # of the Linux cross build, which also works on a Windows host) and the prebuilt libraries (no vcpkg).
+                $tc = ((Under $Tools 'linux\clangcl-xwin.cmake') -replace '\\', '/')
+                $deps = ("$($Toolchain.deps)" -replace '\\', '/').TrimEnd('/')
+                $xw = ("$($Toolchain.xwin)" -replace '\\', '/').TrimEnd('/')
+                $llvm = ("$($Toolchain.llvm_bin)" -replace '\\', '/').TrimEnd('/')
+                foreach ($f in @($tc, "$deps/include", "$deps/share/sdl3", "$xw/VC/Tools/MSVC", "$llvm/clang-cl.exe")) {
+                    if (-not (Test-Path -LiteralPath $f)) { Fail "$f does not exist (tools\install_requirements.ps1 -Toolchain xwin)" }
+                }
+                Info 'no previous CMakeCache: clang-cl + xwin, prebuilt libraries (Ninja, Release; no VS Build Tools, no vcpkg)'
+                $a += @('-G', 'Ninja', "-DCMAKE_TOOLCHAIN_FILE=$tc", "-DNX_XWIN=$xw", "-DNX_LLVM=$llvm", '-DCMAKE_BUILD_TYPE=Release',
+                        "-DCMAKE_PREFIX_PATH=$deps", "-DNX_OPUS_ROOT=$deps")
             } else {
                 # New PC, without any build: the same values the CMakeCache files have today, taken from the
                 # environment of dev.local.ps1 (VCPKG_ROOT, clang-cl from the PATH).
@@ -1225,9 +1282,10 @@ try {
     for ($n = $start; $n -le $To; $n++) {
         $script:CurrentStep = $n
         Step $n $StepNames[$n]
-        if ($n -ge 5 -and $n -le 8 -and $To -ge 9) { StartHudBackground }   # AP_RECOMP_PARALLEL
+        if ($n -ge 5 -and $n -le 8 -and $To -ge 8) { StartHudBackground }   # AP_RECOMP_PARALLEL (AP_TOOLCHAIN_XWIN: also when the run ends at 8)
         & "Step$n"
     }
+    if ($script:HudJob) { HudAssets }   # AP_TOOLCHAIN_XWIN: a run that ends before step 9 (R1 of -Recomp) waits for the background HUD build
     if ($Compare) { $script:CurrentStep = 11; CompareInventory $Compare }
 } catch {
     Write-Host ''
