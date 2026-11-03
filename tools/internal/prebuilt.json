@@ -1,0 +1,20 @@
+{
+    "version":  1,
+    "tag":  "prebuilt-2026.11.02",
+    "note":  "Made by tools/dev/build_prebuilt.ps1; read by tools/install_requirements.ps1 (-Toolchain xwin).",
+    "assets":  {
+                   "deps":  {
+                                "file":  "tsukire-deps-win-x64.zip",
+                                "url":  "https://github.com/Broomstick-Girl-Magical-Amber/tsukire-pc-port/releases/download/prebuilt-2026.11.02/tsukire-deps-win-x64.zip",
+                                "sha256":  "3E70B77AB87AB43804DD93086356E55D0E50D99F2450BAF42D89D67E4704FCE9",
+                                "size":  6056261
+                            },
+                   "harness":  {
+                                   "file":  "tsukire-harness-win-x64.zip",
+                                   "url":  "https://github.com/Broomstick-Girl-Magical-Amber/tsukire-pc-port/releases/download/prebuilt-2026.11.02/tsukire-harness-win-x64.zip",
+                                   "sha256":  "50E69AB29A9B4386A3906525E6231566873F23118A25401FF9E940B93938A1B2",
+                                   "size":  33516384,
+                                   "source":  "549566A3535BDA10A94890F1A1DD97D53DB0353379F8624BB4BAEB9BD1B2A78C"
+                               }
+               }
+}
