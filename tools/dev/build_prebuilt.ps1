@@ -132,7 +132,7 @@ foreach ($port in 'opus', 'libjpeg-turbo', 'libpng', 'zlib', 'sdl3') {
     $lst = @(Get-ChildItem -LiteralPath $info -Filter "${port}_*_x64-windows.list" -File -ErrorAction SilentlyContinue)
     if ($lst.Count -ne 1) { throw "vcpkg list of the port $port in $info\${port}_*_x64-windows.list: $($lst.Count) files (1 expected)" }
     foreach ($l in [IO.File]::ReadAllLines($lst[0].FullName)) {
-        if ($l -notmatch '^x64-windows/((include|lib|bin)/.+|share/sdl3/.+)$' -or $l.EndsWith('/') -or $l -match '^x64-windows/lib/pkgconfig/' -or $l -match '\.pdb$') { continue }
+        if ($l -notmatch '^x64-windows/((include|lib|bin)/.+|share/sdl3/.+)$' -or $l.EndsWith('/') -or $l -match '^x64-windows/lib/pkgconfig/' -or $l -match '\.pdb$' -or $l -match '-debug\.cmake$') { continue }   # Release only: no deps\debug
         $rel = $Matches[1] -replace '/', '\'
         $src = Join-Path $inst $rel
         if (-not (Test-Path -LiteralPath $src -PathType Leaf)) { continue }

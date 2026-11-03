@@ -265,6 +265,16 @@ function InstallWin([string]$k) {
     Remove-Item -LiteralPath $arch -Force -ErrorAction SilentlyContinue   # the archive is not needed any more
     Info "$($h.Name) $($h.Pin) in $dst"
 }
+# A pack made from a vcpkg with Debug carries the Debug half of the CMake configs (share\sdl3\SDL3sharedTargets-debug.cmake)
+# without deps\debug: find_package(SDL3) then fails ("references the file .../debug/lib/SDL3.lib but this file does not
+# exist", 1st xwin VM run, 2026-11-03). Everything here is Release: those files go.
+function RepairDeps([string]$dir) {
+    $d = Join-Path $dir 'deps'
+    if (-not (Test-Path -LiteralPath (Join-Path $d 'share')) -or (Test-Path -LiteralPath (Join-Path $d 'debug'))) { return }
+    $junk = @(Get-ChildItem -LiteralPath (Join-Path $d 'share') -Recurse -File -Filter '*-debug.cmake')
+    foreach ($f in $junk) { Remove-Item -LiteralPath $f.FullName -Force }
+    if ($junk.Count) { Info "prebuilt libraries: $($junk.Count) Debug CMake file(s) removed ($(($junk | ForEach-Object { $_.Name }) -join ', '))" }
+}
 function InstallPrebuilt([string]$k) {
     $a = PrebuiltAsset $k
     if (-not $a) { return }
@@ -277,6 +287,7 @@ function InstallPrebuilt([string]$k) {
     if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Recurse -Force }
     UnpackTo $arch $tmp 0
     if (-not (Test-Path -LiteralPath (Join-Path $tmp $PrebuiltParts[$k].Probe))) { Fail "$file does not have $($PrebuiltParts[$k].Probe) (left in $tmp)" }
+    if ($k -eq 'deps') { RepairDeps $tmp }
     [IO.File]::WriteAllText((Join-Path $tmp '.nx-hash'), "SHA256 $("$($a.sha256)".ToUpper())")
     Move-Item -LiteralPath $tmp -Destination $dst
     Remove-Item -LiteralPath $arch -Force -ErrorAction SilentlyContinue
@@ -486,6 +497,7 @@ function Step5 {
     EnsureFfmpeg
     $d = DetectPrebuilt 'deps'
     if (-not $d) { Problem "prebuilt libraries missing ($(PrebuiltDir 'deps')): step 1"; return }
+    RepairDeps $d.Path   # also a pack installed before this check
     Info "libraries: $(Join-Path $d.Path 'deps') (prebuilt pack $($d.Text))"
     # The game and the vcpkg DLLs use the Visual C++ runtime (/MD); VS Build Tools used to install it, this flow does not.
     if (Test-Path -LiteralPath (Join-Path $d.Path 'redist\msvcp140.dll')) { Info "Visual C++ runtime: $(Join-Path $d.Path 'redist') (recomp copies it next to the exe)" }
