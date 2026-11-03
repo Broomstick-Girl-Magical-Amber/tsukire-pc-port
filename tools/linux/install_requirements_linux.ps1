@@ -174,7 +174,7 @@ function InstallTar([string]$k) {
     $tmp = "$dst.tmp"
     if (Test-Path -LiteralPath $tmp) { Fail "$tmp exists (from an interrupted run): set it aside by hand" }
     New-Item -ItemType Directory -Path $tmp | Out-Null
-    if ($h.ContainsKey('Zip')) { Expand-Archive -LiteralPath $arch -DestinationPath $tmp }
+    if ($h.ContainsKey('Zip')) { Unzip $arch $tmp }   # AP_UNZIP_DOTNET: .NET ZipFile, no Archive module
     else {
         $a = @('-xf', $arch, '-C', $tmp)
         if ($h.Strip -gt 0) { $a += "--strip-components=$($h.Strip)" }

@@ -207,10 +207,25 @@ function Unzip([string]$zip, [string]$dst) {
         New-Item -ItemType Directory -Path $dst -Force | Out-Null
         $r = RunCapture $tar @('-xf', $zip, '-C', $dst)
         if ($r.Code -eq 0) { return }
-        Warn "tar.exe could not unpack $(Split-Path -Leaf $zip) ($($r.Output | Select-Object -Last 1)): Expand-Archive"
+        Warn "tar.exe could not unpack $(Split-Path -Leaf $zip) ($($r.Output | Select-Object -Last 1)): .NET ZipFile"
         Remove-Item -LiteralPath $dst -Recurse -Force -ErrorAction SilentlyContinue
     }
-    Expand-Archive -LiteralPath $zip -DestinationPath $dst -Force
+    # AP_UNZIP_DOTNET: .NET directly instead of Expand-Archive (a background pwsh on Linux could not load the
+    # Microsoft.PowerShell.Archive module, 2026-11-03). Overwrites like Expand-Archive -Force.
+    Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Path $dst -Force | Out-Null
+    $full = [IO.Path]::GetFullPath($dst)
+    if ($PSVersionTable.PSVersion.Major -ge 6) { [IO.Compression.ZipFile]::ExtractToDirectory([IO.Path]::GetFullPath($zip), $full, $true); return }
+    $za = [IO.Compression.ZipFile]::OpenRead([IO.Path]::GetFullPath($zip))   # Windows PowerShell 5.1: no overwrite overload
+    try {
+        foreach ($e in $za.Entries) {
+            $out = [IO.Path]::GetFullPath((Join-Path $full $e.FullName))
+            if (-not $out.StartsWith($full, [StringComparison]::OrdinalIgnoreCase)) { Fail "$(Split-Path -Leaf $zip): entry outside the folder ($($e.FullName))" }
+            if ($e.FullName.EndsWith('/') -or $e.FullName.EndsWith('\')) { New-Item -ItemType Directory -Path $out -Force | Out-Null; continue }
+            New-Item -ItemType Directory -Path (Split-Path -Parent $out) -Force | Out-Null
+            [IO.Compression.ZipFileExtensions]::ExtractToFile($e, $out, $true)
+        }
+    } finally { $za.Dispose() }
 }
 
 function IsAdmin {
