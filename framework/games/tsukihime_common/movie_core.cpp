@@ -408,6 +408,16 @@ size_t pending_limit() {
     return n;
 }
 
+// AP_TITLE_SMOOTH (apply_title_smooth.py): one closed H.264 decoder kept (flushed) for the next start() with the same
+// parameters, so the game's stop / configure / start of the title video does not call avcodec_open2 again.
+static std::mutex g_park_m;
+static AVCodecContext* g_parked = nullptr;
+static bool park_matches(const AVCodecContext* c, const AVCodecParameters* p) {
+    return c && p && c->codec_id == p->codec_id && c->width == p->width && c->height == p->height &&
+           c->extradata_size == p->extradata_size &&
+           (p->extradata_size == 0 || std::memcmp(c->extradata, p->extradata, size_t(p->extradata_size)) == 0);
+}
+
 struct Decoder::Impl {
     mutable std::recursive_mutex m;  // hilos de entrada y de salida del juego, a la vez
     DecoderKind kind;
@@ -453,6 +463,13 @@ struct Decoder::Impl {
         av_packet_free(&pkt);
     }
     void close() {
+        if (ctx && kind == DecoderKind::Video && ctx->codec_id == AV_CODEC_ID_H264 && avcodec_is_open(ctx)) {  // AP_TITLE_SMOOTH
+            avcodec_flush_buffers(ctx);
+            std::lock_guard<std::mutex> lk(g_park_m);
+            avcodec_free_context(&g_parked);
+            g_parked = ctx;
+            ctx = nullptr;
+        }
         avcodec_free_context(&ctx);
         sws_freeContext(sws);
         sws = nullptr;
@@ -477,6 +494,18 @@ struct Decoder::Impl {
         if (!par) return kInvalidState;
         const AVCodec* codec = avcodec_find_decoder(par->codec_id);
         if (!codec) return kUnsupported;
+        {  // AP_TITLE_SMOOTH
+            std::lock_guard<std::mutex> lk(g_park_m);
+            if (g_parked && park_matches(g_parked, par)) {
+                ctx = g_parked;
+                g_parked = nullptr;
+            }
+        }
+        if (ctx) {
+            ctx->pkt_timebase = kMicros;
+            started = true;
+            return kOk;
+        }
         ctx = avcodec_alloc_context3(codec);
         if (avcodec_parameters_to_context(ctx, par) < 0) return kInvalidArgument;
         ctx->pkt_timebase = kMicros;
