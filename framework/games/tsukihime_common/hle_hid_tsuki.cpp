@@ -31,6 +31,12 @@
 #include "hud_glyphs.h"  // AP_HUD_GLYPHS
 #include "platform.h"
 
+#ifdef NX_TITLE_CLICK  // AP_TITLE_CLICK (apply_title_click.py): a click on the title logo (title_bg.cpp)
+namespace tsuki_title {
+bool logo_click(float u, float v);
+}
+#endif
+
 namespace nx {
 namespace {
 
@@ -191,6 +197,16 @@ ScreenPoint to_screen(const plat::PointerState& p) {
     return {u >= 0 && u < 1 && v >= 0 && v < 1, std::clamp(int32_t(u * kTouchW), 0, kTouchW - 1),
             std::clamp(int32_t(v * kTouchH), 0, kTouchH - 1)};
 }
+
+// AP_TITLE_CLICK: true if title_bg.cpp took this click (the logo of the title menu): the game does not get it.
+bool title_logo_click(const ScreenPoint& pt) {
+#ifdef NX_TITLE_CLICK
+    return tsuki_title::logo_click((pt.x + 0.5f) / kTouchW, (pt.y + 0.5f) / kTouchH);
+#else
+    (void)pt;
+    return false;
+#endif
+}
 #endif
 
 std::mutex g_touch_m;
@@ -220,7 +236,9 @@ TouchSample next_touch_sample() {
     if (!g_touching) {
         if (new_down) {
             g_touch_seen_downs = p.downs[0];
-            if (pt.inside) {
+            if (pt.inside && title_logo_click(pt)) {  // AP_TITLE_CLICK: the title video changes instead
+                if (trace_on()) log("hid: clic en el logo del titulo (%d,%d): no va al juego", pt.x, pt.y);
+            } else if (pt.inside) {
                 g_touching = true;
                 g_touch_x = pt.x, g_touch_y = pt.y;
                 s.count = 1, s.attr = kAttrStart;

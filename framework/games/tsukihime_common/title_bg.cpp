@@ -42,6 +42,16 @@
 // does open just before (trace of 2026-11-01) is the title UI archive rom:/w_allui.mrg; the story never opens it (its music
 // comes after w_allpac.mrg). So opening w_allui.mrg while no visit is open ARMS a visit for kArmMs: a title track opened
 // in that window opens the visit. If no track comes, the arm lapses and nothing changes.
+//
+// CLICKING THE LOGO (AP_TITLE_CLICK, apply_title_click.py; NX_TITLE_CLICK): a left click on the game's logo in the title menu
+// does what F6 does (click = off in title.ini turns it off). The runtime tells this file which textures go up and where
+// they are drawn (nvn::g_upload_watch, nvn::g_draw_watch); nothing of the game is read or changed. The logo and the menu
+// options are recognised by the hash of their texture (found with apply_title_draws_diag.py, 2026-11-03): the kanji logo
+// (game in Japanese), the TSUKIHIME logo (English) and the NEW GAME / LOAD GAME / CONFIG / GALLERY options. The click only
+// counts if both were drawn in the last frames: "press any button" (logo without options) and Gallery (neither) are left
+// to the game. The logo's rectangle comes from its own draw, as a fraction of the picture, so it follows the window size,
+// full screen, the black bars of a fixed aspect and NX_ULTRAWIDE. A texture of the size of one of them with another hash
+// (another language, a patch that replaces it) is written to the log: clicking that logo does nothing (F5 / F6 still work).
 #include <algorithm>
 #include <cctype>
 #include <chrono>
@@ -60,6 +70,12 @@
 #include <nx/runtime.h>
 
 #include "platform.h"
+#ifdef NX_TITLE_CLICK  // AP_TITLE_CLICK
+#include <atomic>
+#include <cmath>
+
+#include "nvn/nvn.h"  // Texture, g_upload_watch, g_draw_watch (apply_title_click.py)
+#endif
 
 #if defined(_WIN32)
 #ifndef NOMINMAX
@@ -79,6 +95,7 @@ void video_ended(const void* key);                     // hle_movie.cpp: that Ex
 bool music_packet(const uint8_t* in, uint32_t len, std::vector<uint8_t>* out);  // hle_codec.cpp: AP_TITLE_LIVE_OPUS
 std::string music_swap(const std::string& path, int64_t off);  // hle_fs.cpp: AP_TITLE_LIVE_MUSIC, the track to start over with
 void hotkey(int dir);                                  // platform_win.cpp: F6 (+1) / F5 (-1) on the title screen
+bool logo_click(float u, float v);                     // hle_hid_tsuki.cpp: a left click at u, v (0..1 of the picture); AP_TITLE_CLICK
 bool take_swap(const void* key, std::string* rel, std::string* data);  // hle_movie.cpp: the video to swap in (the fade is at black)
 float video_gain();                                    // hle_movie.cpp, every decoded frame: 1 = as it is, 0 = black (AP_TITLE_FADE)
 bool music_packet(const uint8_t* in, uint32_t len, std::vector<uint8_t>* out, float* gain);  // hle_codec.cpp: AP_TITLE_FADE
@@ -104,6 +121,7 @@ struct Config {
     MusicMode music = MusicMode::Follow;
     int music_n = 0;
     bool hotkeys = true;  // F5 / F6 on the title screen
+    bool click = true;    // AP_TITLE_CLICK: a click on the logo of the title menu = F6
     bool unlock = true;       // only the videos (and music) the save has unlocked: the game's own pick is the highest
     int swap_delay_ms = 450;  // from the swap until the first frames of the new video are on screen (fade in waits)
     int fade_ms = 500;    // F5 / F6: fade out / in of the video and of the music that changes (0 = no fade)
@@ -250,10 +268,15 @@ Config load_config() {
                 if (h == "on" || h == "1" || h == "yes") c.hotkeys = true;
                 else if (h == "off" || h == "0" || h == "no") c.hotkeys = false;
                 else nx::log("title: %s:%d: hotkeys = \"%s\" is not valid (on, off)", file.c_str(), line, val.c_str());
+            } else if (key == "click") {  // AP_TITLE_CLICK
+                const std::string h = lower(val);
+                if (h == "on" || h == "1" || h == "yes") c.click = true;
+                else if (h == "off" || h == "0" || h == "no") c.click = false;
+                else nx::log("title: %s:%d: click = \"%s\" is not valid (on, off)", file.c_str(), line, val.c_str());
             } else if (key == "music") {
                 if (!parse_music(val, c)) nx::log("title: %s:%d: music = \"%s\" is not valid (follow, game, 1, 2, 3, 4)", file.c_str(), line, val.c_str());
             } else {
-                nx::log("title: %s:%d: unknown key \"%s\" (valid: video, pool, music, hotkeys, unlock, fade, swap_delay, loop_bgm02)", file.c_str(), line, key.c_str());
+                nx::log("title: %s:%d: unknown key \"%s\" (valid: video, pool, music, hotkeys, click, unlock, fade, swap_delay, loop_bgm02)", file.c_str(), line, key.c_str());
             }
         }
     }
@@ -474,6 +497,96 @@ int music_number(const Config& c) {
     }
 }
 
+#ifdef NX_TITLE_CLICK
+// ------------------------------------------------------------------------------- clicking the logo (AP_TITLE_CLICK)
+struct Watched {
+    uint64_t hash;
+    uint32_t w, h;
+    bool menu;  // the menu options (else a logo)
+    const char* name;
+};
+constexpr Watched kWatched[] = {
+    {0x785def248b51c05eull, 560, 648, false, "title logo (kanji)"},  // both editions
+    {0xc201e47b28cdbbcfull, 560, 648, false, "title logo (kanji, Simplified Chinese)"},  // global edition
+    {0xdaeae0119026558aull, 1850, 440, false, "title logo (TSUKIHIME)"},
+    {0x981af1cd92f58bf8ull, 968, 472, true, "title menu options (global edition)"},
+    {0x7c48f7efa72e745aull, 968, 472, true, "title menu options (Japanese edition)"},
+};
+bool is_menu(uint64_t tag) {
+    for (const Watched& w : kWatched)
+        if (w.hash == tag) return w.menu;
+    return false;
+}
+constexpr const char* kUiQuadVs = "b9848e01271e22ab";  // the vertex shader of the UI quads: a texture at 1:1, see draw_watch
+constexpr uint64_t kSeenFrames = 3;                    // "on screen": drawn in the last frames
+
+struct LogoState {
+    std::mutex m;
+    uint64_t logo_frame = 0, menu_frame = 0;  // nx::g_frame of the last draw (0: never)
+    float u0 = 0, v0 = 0, du = 0, dv = 0;      // the logo, as a fraction of the picture (top-left origin)
+};
+LogoState& logo_state() {
+    static LogoState s;
+    return s;
+}
+
+uint64_t fnv1a64(const uint8_t* p, uint64_t n) {  // the hash AP_HUD_GLYPHS and apply_title_draws_diag.py use
+    uint64_t h = 0xCBF29CE484222325ull;
+    for (uint64_t k = 0; k < n; k++) h = (h ^ p[k]) * 0x100000001B3ull;
+    return h;
+}
+
+// nvn::g_upload_watch, on the thread that uploads, for every block-linear texture: only the sizes above are hashed.
+uint64_t upload_watch(const nx::nvn::Texture& t, const uint8_t* level0, uint64_t size) {
+    bool sized = false;
+    for (const Watched& w : kWatched) sized |= t.width == w.w && t.height == w.h;
+    if (!sized) return 0;
+    const uint64_t h = fnv1a64(level0, size);
+    for (const Watched& w : kWatched)
+        if (w.hash == h && t.width == w.w && t.height == w.h) {
+            static std::atomic<int> logs{0};
+            if (logs.fetch_add(1) < 8) nx::log("title: %s recognised (%016llx)", w.name, (unsigned long long)h);
+            return h;
+        }
+    static std::atomic<int> others{0};
+    if (others.fetch_add(1) < 8)
+        nx::log("title: a %ux%u texture that is not a known logo or menu (%016llx): not watched", t.width, t.height,
+                (unsigned long long)h);
+    return 0;
+}
+
+// nvn::g_draw_watch, on the replay thread, after each draw that samples the game's copy of a watched texture. The UI quad
+// shader draws the texture at 1:1 and its c[3] block is the screen transform: row 0 = (2 / width, 0, 0, x), row 1 =
+// (0, -2 / height, 0, y), where (x, y) is the top-left corner of the quad in -1..1 across the target (checked against
+// screenshots of both logos at 1536x864). The game draws the logo up to 3 times a frame (glow layers, other heights): the
+// first one is the whole logo.
+void draw_watch(uint64_t tag, const char* vs, const float* c3, uint32_t floats, uint32_t w, uint32_t h, float uw_x) {
+    if (!vs || std::strcmp(vs, kUiQuadVs) != 0 || !c3 || floats < 8 || !(c3[0] > 0) || c3[5] == 0) return;
+    const uint64_t frame = nx::g_frame.load(std::memory_order_relaxed);
+    LogoState& s = logo_state();
+    std::lock_guard<std::mutex> lk(s.m);
+    if (is_menu(tag)) {
+        s.menu_frame = frame;
+        return;
+    }
+    if (s.logo_frame == frame) return;
+    float u0 = (c3[3] + 1) * 0.5f, du = float(w) * c3[0] * 0.5f;
+    const float v0 = (c3[7] + 1) * 0.5f, dv = float(h) * std::fabs(c3[5]) * 0.5f;
+    if (uw_x > 0) u0 = 0.5f + (u0 - 0.5f) * uw_x, du *= uw_x;  // NX_ULTRAWIDE: the UI squeezed into the middle
+    const bool moved = std::fabs(u0 - s.u0) > 0.002f || std::fabs(v0 - s.v0) > 0.002f;
+    s.logo_frame = frame, s.u0 = u0, s.v0 = v0, s.du = du, s.dv = dv;
+    static int logs = 0;
+    if (moved && logs < 6 && ++logs)
+        nx::log("title: logo on screen at %.3f,%.3f size %.3fx%.3f of the picture", u0, v0, du, dv);
+}
+
+const bool g_click_hooks = [] {
+    nx::nvn::g_upload_watch.store(&upload_watch, std::memory_order_release);
+    nx::nvn::g_draw_watch.store(&draw_watch, std::memory_order_release);
+    return true;
+}();
+#endif  // NX_TITLE_CLICK
+
 }  // namespace
 
 namespace tsuki_title {
@@ -613,18 +726,18 @@ size_t loop_index(int track, const Config& c) {
     return size_t(c.loop02 * 50.0);  // 20 ms per packet
 }
 
-// F6 (dir = +1) / F5 (-1) on the title screen: the next / previous video of the pool, with a fade. Runs in the window thread.
-void hotkey(int dir) {
+// F6 (dir = +1) / F5 (-1) on the title screen, or a click on the logo (+1): the next / previous video of the pool, with a
+// fade. Runs in the window thread (keys) or the game's (the click, from hid). false: nothing changes.
+bool change_video(int dir, const char* who) {
     const Config& c = config();
-    if (!c.hotkeys) return;
     State& st = state();
     std::string rel;
     int next = 0;
     {
         std::lock_guard<std::mutex> lk(st.m);
         if (!st.visit_open || !st.active_key || !st.shown) {
-            nx::log("title: F5/F6 ignored (the title screen is not up)");
-            return;
+            nx::log("title: %s ignored (the title screen is not up)", who);
+            return false;
         }
         const int base = st.next_video ? st.next_video : st.override_video ? st.override_video : st.shown;
         const std::vector<int> pool = allowed_pool_locked(st, c);  // only what the save has unlocked
@@ -633,8 +746,8 @@ void hotkey(int dir) {
             if (pool[i] == base) idx = i;
         next = pool[(idx + pool.size() + (dir < 0 ? pool.size() - 1 : 1)) % pool.size()];
         if (next == base) {
-            nx::log("title: F5/F6: titlebg%d is the only video this save has unlocked", base);
-            return;
+            nx::log("title: %s: titlebg%d is the only video this save has unlocked", who, base);
+            return false;
         }
         const int playing = st.override_video ? st.override_video : st.shown;  // the track that is sounding
         st.fade_music = c.music == MusicMode::Follow &&
@@ -652,7 +765,7 @@ void hotkey(int dir) {
             st.fade = State::kHold;  // no fade: it swaps as soon as the video is read
         }
     }
-    nx::log("title: F%d -> titlebg%d (fade %d ms)", dir < 0 ? 5 : 6, next, c.fade_ms);
+    nx::log("title: %s -> titlebg%d (fade %d ms)", who, next, c.fade_ms);
     {
         std::lock_guard<std::mutex> lk(st.m);
         if (!st.tracks_ready && !st.tracks_loading) {
@@ -688,6 +801,31 @@ void hotkey(int dir) {
         s2.swap_ready = true;
         nx::log("title: %s read", rel.c_str());
     }).detach();
+    return true;
+}
+
+void hotkey(int dir) {
+    if (config().hotkeys) change_video(dir, dir < 0 ? "F5" : "F6");
+}
+
+// AP_TITLE_CLICK (hle_hid_tsuki.cpp, a new left click inside the picture): true if it was a click on the logo of the title
+// menu and the video changes; then the game does not get it. Anything else goes to the game as a touch.
+bool logo_click(float u, float v) {
+#ifdef NX_TITLE_CLICK
+    if (!config().click) return false;
+    {
+        LogoState& s = logo_state();
+        std::lock_guard<std::mutex> lk(s.m);
+        const uint64_t f = nx::g_frame.load(std::memory_order_relaxed);
+        if (!s.logo_frame || !s.menu_frame || f > s.logo_frame + kSeenFrames || f > s.menu_frame + kSeenFrames) return false;
+        if (u < s.u0 || v < s.v0 || u >= s.u0 + s.du || v >= s.v0 + s.dv) return false;
+    }
+    if (!visit_is_open()) return false;
+    return change_video(+1, "click on the logo");
+#else
+    (void)u, (void)v;
+    return false;
+#endif
 }
 
 // hle_movie.cpp, from the game's threads (every packet, and at the loop): the video chosen with F5/F6, once it has been read

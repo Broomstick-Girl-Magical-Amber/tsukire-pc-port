@@ -25,6 +25,9 @@ struct GpuImage {
     // from a tagged texture, and the generation they belong to
     uint64_t filter_tag = 0;
     bool filter_derived = false;
+    // AP_TITLE_CLICK: the tag UploadWatch gave this texture, or the one of the texture this render target is a copy of
+    uint64_t watch_tag = 0;
+    bool watch_copy = false;
     uint64_t filter_generation = 0;
     // Given texels by nvnTextureWriteTexels: those never reach guest memory here, so it is not uploaded from there
     // again (a pool flush over it wiped the light probes' direction map, docs/nvn/DEBUG.md #49).

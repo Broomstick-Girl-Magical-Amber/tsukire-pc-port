@@ -32,6 +32,12 @@ video = auto
 ; on (default) / off
 ; hotkeys = on
 ;
+; A left click on the game's logo (the kanji or TSUKIHIME) in the title menu does what F6 does. It only works
+; while the menu options are on screen: on "press any button" the click starts the game as always. AP_TITLE_CLICK
+; Like F5 / F6, it only goes through the videos your save has unlocked (see unlock below).
+; on (default) / off
+; click = on
+;
 ; Length of each half of that fade in milliseconds (default 500; 0 = no fade, the change is immediate).
 ; fade = 500
 ;
@@ -44,6 +50,7 @@ video = auto
 ; loop_bgm02 = 0
 
 ; Only the videos (and music) your save has unlocked. The game picks the title video from your progress, so the highest
-; titlebg number it asks for is what is unlocked (1 on a new save). video, pool, music and F5 / F6 stay within it.
+; titlebg number it asks for is what is unlocked (1 on a new save). video, pool, music, F5 / F6 and the click on
+; the logo stay within it (AP_TITLE_CLICK).
 ; on (default) / off (all four)
 ; unlock = on
