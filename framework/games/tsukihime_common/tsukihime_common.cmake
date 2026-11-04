@@ -25,6 +25,9 @@ if(NX_GAME STREQUAL "tsukihime_global")
 else()
     target_compile_definitions(${NX_GAME} PRIVATE NX_ROMFS_MODS NX_ROMFS_MODS_EDITION="japan")
 endif()
+# AP_ROMFS_DIRECT (apply_romfs_direct.py): rom: reads the RomFS straight from the .xci/.nsp of the root of the port
+# (romfs_direct.cpp, with the <data root>/romfs_source.bin that recomp_tsukihime.ps1 writes); without it, extract/romfs
+target_compile_definitions(${NX_GAME} PRIVATE NX_ROMFS_DIRECT)
 
 # FFmpeg for the movie:: HLE.
 # AP_FFMPEG_PREBUILT (apply_ffmpeg_prebuilt.py): with NX_FFMPEG_ROOT (recomp_tsukihime.ps1 sets it to the prebuilt FFmpeg 9.0

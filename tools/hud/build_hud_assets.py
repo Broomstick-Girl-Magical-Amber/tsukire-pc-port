@@ -70,6 +70,8 @@ def layers(root, edition):
     """Romfs folders, lowest first: the base romfs, then <root>/mods/<edition>/<name>/romfs in name order (a name
     starting with _ is disabled), like the exe."""
     out = [os.path.join(root, DATA_DIRS[edition], "extract", "romfs")]
+    if not os.path.isdir(out[0]):  # AP_ROMFS_DIRECT: no full extraction: the RomFS files of the build (romfs_source.py)
+        out = [os.path.join(root, DATA_DIRS[edition], "romfs_build")]
     mods = os.path.join(root, "mods", edition)
     if os.path.isdir(mods):
         for name in sorted(os.listdir(mods)):

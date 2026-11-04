@@ -51,6 +51,8 @@ param(
     [switch]$Recomp,
     [string]$InputFile = '',
     [string]$Keys = '',
+    [switch]$Extract,   # AP_ROMFS_DIRECT: passed to recomp_tsukihime.ps1 (-Recomp): full extraction of the RomFS
+    [switch]$TrimXci,   # AP_ROMFS_DIRECT: passed to recomp_tsukihime.ps1 (-Recomp): trim the 0xFF padding of the .xci
     [string]$Vcpkg = 'C:\dev\vcpkg',
     # AP_DROP_UNUSED: -NstoolFrom removed
     [ValidateSet('global', 'japan', 'both')][string]$Edition = 'both',
@@ -123,6 +125,9 @@ $RyubingHash = '20D9B5394F6B24316980BE1870ED22375CF684C88ADBB1D8782083F2905D8D8F
 # what step 2 of recomp uses while it extracts one edition (encrypted container/NCA, deleted at the end). The dumps are not
 # counted: they can be elsewhere (-InputFile); in the root, add their size (recomp never deletes them).
 $SpacePerEdition = @{ global = 24GB; japan = 22GB }
+# AP_ROMFS_DIRECT: without -Extract the RomFS is not extracted (the game reads it from the dump): exefs, gen, analysis,
+# build and the RomFS files of the build (romfs_build) only
+if (-not $Extract) { $SpacePerEdition = @{ global = 3GB; japan = 3GB } }
 $SpaceExtract = 2GB   # AP_DROP_UNUSED: was 24 GB, the intermediate NCA of nstool; nsextract writes only exefs + romfs (counted above)
 $SpaceC = @{ WithDebug = 25GB; ReleaseOnly = 18GB }   # VS Build Tools, SDKs, vcpkg with ffmpeg (buildtrees during the build)
 $WingetStore = 'https://apps.microsoft.com/detail/9NBLGGH4NNS1'   # App Installer (winget), Microsoft Store
@@ -1156,7 +1161,7 @@ function Step11 {
     Write-Host ''
     Write-Host '   By hand (the script does not touch it):' -ForegroundColor Yellow
     $keys = PathOf $data 'prod.keys'
-    Write-Host ("     prod.keys   {0}" -f $(if (Test-Path -LiteralPath $keys) { "present in $keys (not read)" } else { "copy your keys to $keys" }))
+    Write-Host ("     prod.keys   {0}" -f $(if (Test-Path -LiteralPath $keys) { "present in $keys (not read)" } else { "copy your keys to $keys (or to the root: they are moved to data\, AP_ROMFS_DIRECT)" }))
     # The dumps go in the ROOT (an .xci or an .nsp, whichever and of whichever edition: recomp_tsukihime.ps1 looks at the program ID).
     $dumps = @()
     if (Test-Path -LiteralPath $Root) {
@@ -1249,8 +1254,16 @@ function CheckInputs {
         if ($InputFile -and $eds.Count -gt 1) { Fail '-InputFile is a single dump: use it with -Edition global or -Edition japan' }
     }
     $keysPath = if ($Keys) { [IO.Path]::GetFullPath($Keys) } else { PathOf $Root 'data/prod.keys' }
-    if (Test-Path -LiteralPath $keysPath -PathType Leaf) { Info "prod.keys present: $keysPath (not read)" }
-    else { Early "prod.keys not found: copy your keys to $keysPath" }
+    $rootKeys = PathOf $Root 'prod.keys'   # AP_ROMFS_DIRECT: keys left in the root are moved to data\ (recomp does the same)
+    if (-not $Keys -and -not (Test-Path -LiteralPath $keysPath -PathType Leaf) -and (Test-Path -LiteralPath $rootKeys -PathType Leaf)) {
+        if ($Check) { Info "prod.keys in the root: it will be moved to $keysPath (not read)" }
+        else {
+            New-Item -ItemType Directory -Path (Split-Path -Parent $keysPath) -Force | Out-Null
+            Move-Item -LiteralPath $rootKeys -Destination $keysPath
+            Info "prod.keys moved from the root to $keysPath (not read)"
+        }
+    } elseif (Test-Path -LiteralPath $keysPath -PathType Leaf) { Info "prod.keys present: $keysPath (not read)" }
+    else { Early "prod.keys not found: copy your keys to $keysPath (or to $Root`: it is moved to data\)" }
     $found = @()
     if ($InputFile) {
         $f = [IO.Path]::GetFullPath($InputFile)
@@ -1275,6 +1288,8 @@ function RunRecomp([string]$ed, [int]$from, [int]$to) {
     $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $m, '-Edition', $ed, '-From', "$from", '-To', "$to", '-Root', $Root)
     if ($InputFile) { $a += @('-InputFile', $InputFile) }
     if ($Keys) { $a += @('-Keys', $Keys) }
+    if ($Extract) { $a += '-Extract' }   # AP_ROMFS_DIRECT
+    if ($TrimXci) { $a += '-TrimXci' }   # AP_ROMFS_DIRECT
     $script:InRecomp = "recomp_tsukihime.ps1 -Edition $ed -From $from -To $to"
     Info $script:InRecomp
     $env:NX_VCPKG = $Vcpkg                  # dev_env.ps1 reads it (the recomp process must use the same vcpkg)

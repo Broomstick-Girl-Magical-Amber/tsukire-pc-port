@@ -6,6 +6,8 @@ like nstool or LibHac need the base NCA for that. Here the base romfs is rebuilt
 has: the files of data\\<edition>\\extract\\romfs plus a small index (romfs_index.bin, a few hundred KB) with where each
 file was inside the base romfs image, the metadata tables and any non-zero padding. The index is made ONCE from the
 dump (step "index"); after that the dump can be deleted and any number of patches can be processed.
+AP_ROMFS_DIRECT (apply_romfs_direct.py): when the port reads the RomFS from the dump (the default), the dump stays in the
+root and "mod --base-dump <dump>" reads the base romfs from it instead (no index, no extract\\romfs).
 
 Commands:
   index  --keys K --input <base .xci/.nsp> --program-id ID --base-romfs <extract\\romfs> --out <romfs_index.bin>
@@ -587,7 +589,7 @@ def load_index(path, pid):
 def cmd_mod(a):
     keys = load_keys(a.keys)
     pid = int(a.program_id, 16)
-    idx = load_index(a.index, pid)
+    idx, dump_base = base_source(a, keys, pid)  # AP_ROMFS_DIRECT
     if os.path.exists(a.out) and os.listdir(a.out):
         fail(f"{a.out} exists and is not empty")
     files = container_files(a.nsp)
@@ -622,7 +624,7 @@ def cmd_mod(a):
 
     # romfs
     sec = nca.section(1)
-    base = BaseRomfs(idx, a.base_romfs)
+    base = dump_base or BaseRomfs(idx, a.base_romfs)  # AP_ROMFS_DIRECT
     if sec.bktr:
         vs = Patched(sec, base)
         vread = vs.read
@@ -653,14 +655,14 @@ def cmd_mod(a):
         if same_place:
             unchanged += 1
             if md5 is not None:
-                with open(to_host(a.base_romfs, b[2]), "rb") as f:
+                with base_open(a, dump_base, b) as f:  # AP_ROMFS_DIRECT
                     for c in iter(lambda: f.read(CHUNK), b""):
                         md5.update(c)
         else:
             dst = to_host(out_romfs, rel)
             os.makedirs(os.path.dirname(dst), exist_ok=True)
             equal = b is not None and b[1] == size
-            bf = open(to_host(a.base_romfs, b[2]), "rb") if equal else None
+            bf = base_open(a, dump_base, b) if equal else None  # AP_ROMFS_DIRECT
             with open(dst + ".tmp", "wb") as f:
                 for c in range(0, size, CHUNK):
                     d = vread(voff + c, min(CHUNK, size - c))
@@ -726,6 +728,61 @@ class _SectionSource(Source):
         return self.sec.read(self.offset + off, n)
 
 
+# ---------------------------------------------------------------------------------------------------------- AP_ROMFS_DIRECT
+class DumpBase:
+    """The base romfs read straight from the dump: what BaseRomfs rebuilds from extract\\romfs + the index, without them."""
+
+    def __init__(self, path, keys, pid):
+        name, nca = find_program(container_files(path), keys, pid, False)
+        self.sec = nca.section(1)
+        self.l6_off, self.l6_size = self.sec.ivfc_data()
+        files, _ = romfs_files(lambda o, n: self.sec.read(self.l6_off + o, n))
+        self.index = {"l6_offset": self.l6_off, "l6_size": self.l6_size, "files": [[o, s, r] for o, s, r in files]}
+        print(f"   base romfs read from {os.path.basename(path)} ({name}): {len(files)} files")
+
+    def read_section(self, off, n):
+        return self.sec.read(off, n)
+
+
+class _DumpFile:
+    """A base file read from the dump, with the part of the file API that cmd_mod uses."""
+
+    def __init__(self, base, off, size):
+        self.base, self.off, self.size, self.pos = base, off, size, 0
+
+    def read(self, n=-1):
+        if n is None or n < 0:
+            n = self.size - self.pos
+        n = max(0, min(n, self.size - self.pos))
+        b = self.base.sec.read(self.base.l6_off + self.off + self.pos, n) if n else b""
+        self.pos += n
+        return b
+
+    def close(self):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+
+def base_source(a, keys, pid):
+    """(index-like dict, DumpBase or None): --base-dump, or --index + --base-romfs as before."""
+    if a.base_dump:
+        d = DumpBase(a.base_dump, keys, pid)
+        return d.index, d
+    if not a.index or not a.base_romfs:
+        fail("mod needs --base-dump <dump>, or --index and --base-romfs")
+    return load_index(a.index, pid), None
+
+
+def base_open(a, dump, b):
+    """The base file b = (offset in the romfs, size, path) of the index, opened for reading."""
+    return _DumpFile(dump, b[0], b[1]) if dump is not None else open(to_host(a.base_romfs, b[2]), "rb")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sp = ap.add_subparsers(dest="cmd", required=True)
@@ -739,8 +796,9 @@ def main():
     m.add_argument("--keys", required=True)
     m.add_argument("--nsp", required=True)
     m.add_argument("--program-id", required=True)
-    m.add_argument("--index", required=True)
-    m.add_argument("--base-romfs", required=True)
+    m.add_argument("--index")
+    m.add_argument("--base-romfs")
+    m.add_argument("--base-dump")  # AP_ROMFS_DIRECT: the base romfs straight from the dump (no index, no extract\\romfs)
     m.add_argument("--base-exefs", required=True)
     m.add_argument("--out", required=True)
     m.add_argument("--verify-csv")
