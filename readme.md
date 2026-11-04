@@ -35,6 +35,8 @@ This project is a fork of [SuperMarioWonderRecomp](https://github.com/BelmanteGu
 
 - The button icons and the controls follow the last device used: Xbox, PlayStation, Switch or keyboard. Pads follow the Nintendo layout by position, so the right-hand button shows B on Xbox and circle on PlayStation. The keyboard shows the first key `input.ini` gives each button. The icons are built by `recomp_tsukihime.ps1` from the packs in `utils\` (credits in `resources/HUD-LICENSES.md`); `NX_HUD_GLYPHS` fixes one set or turns it off.
 
+- A small easter egg was implemented. Once you clear routes, you can pick which of the unlocked title screen backgrounds is shown, change it with F5/F6 or by clicking the logo (see `framework/games/tsukihime_common/title.ini.example`).
+
   **Keyboard Buttons**
     <p align="left">
       <img src="./media/keyboard_layout.png" width="60%" />
