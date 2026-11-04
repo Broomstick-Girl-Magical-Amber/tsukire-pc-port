@@ -241,6 +241,19 @@ using DerivedFilter = bool (*)(uint64_t tag, uint32_t width, uint32_t height, st
 extern std::atomic<UploadFilter> g_upload_filter;
 extern std::atomic<DerivedFilter> g_derived_filter;
 extern std::atomic<uint64_t> g_upload_filter_generation;
+// AP_TITLE_CLICK (apply_title_click.py): a game may watch where some of its textures are drawn (Tsukihime: the title
+// logo, to change the title video when it is clicked).
+// UploadWatch: called on the thread that uploads, for every block-linear texture, with layer 0 of level 0 untiled (rows of
+// whole blocks, `size` bytes; read only). Returns a tag (0: not watched; it must return at once for those). A render
+// target the game draws from a tagged texture at its own size (its cached copy) takes the tag.
+// DrawWatch: called on the replay thread after each draw that samples a tagged copy: its tag, the vertex shader's hash,
+// the first `floats` floats of the vertex stage's c[3] block (null: none bound), the copy's size and the NX_ULTRAWIDE x
+// squeeze of that draw (0: none). Null hooks (the default): nothing changes.
+using UploadWatch = uint64_t (*)(const Texture& t, const uint8_t* level0, uint64_t size);
+using DrawWatch = void (*)(uint64_t tag, const char* vs_hash, const float* c3, uint32_t floats, uint32_t width,
+                           uint32_t height, float uw_x);
+extern std::atomic<UploadWatch> g_upload_watch;
+extern std::atomic<DrawWatch> g_draw_watch;
 
 struct Window : Object {
     std::vector<uint64_t> textures;  // guest NVNtexture*

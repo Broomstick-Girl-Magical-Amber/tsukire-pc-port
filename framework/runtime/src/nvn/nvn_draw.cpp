@@ -568,6 +568,26 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
             if (dump && derived <= 8) draw_end_rendering(cb, 6), debug_snapshot(cb, *dst, 0xD0000000ull + derived);
             break;
         }
+    // AP_TITLE_CLICK (apply_title_click.py): a render target drawn from a watched texture at its own size is the game's
+    // copy of it and takes its tag; a draw that samples a tagged copy is told to the game (g_draw_watch).
+    if (DrawWatch dw = g_draw_watch.load(std::memory_order_acquire)) {
+        GpuImage* dst = t.color_count && t.colors[0] ? image_of(t.colors[0]) : nullptr;
+        for (const ResolvedTexture& r : g_textures.resolved) {
+            GpuImage* src = r.texture ? image_of(r.texture) : nullptr;
+            if (!src || !src->watch_tag || src == dst) continue;
+            if (!src->watch_copy) {
+                if (dst && !dst->watch_tag && dst->width == src->width && dst->height == src->height)
+                    dst->watch_tag = src->watch_tag, dst->watch_copy = true;
+                continue;
+            }
+            const float* c3 = nullptr;
+            uint32_t floats = 0;
+            if (const Range& u = g_state.uniforms[0][0]; u.address)
+                if (const uint8_t* f = guest_bytes(u.address))
+                    c3 = reinterpret_cast<const float*>(f), floats = uint32_t(std::min<uint64_t>(u.size / 4, 16));
+            dw(src->watch_tag, vs->hash.c_str(), c3, floats, src->width, src->height, key.uw_x);
+        }
+    }
     g_pass_written |= ((1u << t.color_count) - 1) | (g_state.depth.depth_write || g_state.depth.stencil_test ? 1u << 8 : 0);
     // NX_SNAP_FS=<hash>,<hash>[@<first draw>]: also snapshot after draws with those fragment shaders (8 at most, or
     // NX_SNAP_FS_MAX).

@@ -18,6 +18,8 @@ using namespace nx::vk;
 std::atomic<UploadFilter> g_upload_filter{nullptr};  // AP_HUD_GLYPHS (nvn.h)
 std::atomic<DerivedFilter> g_derived_filter{nullptr};
 std::atomic<uint64_t> g_upload_filter_generation{1};
+std::atomic<UploadWatch> g_upload_watch{nullptr};  // AP_TITLE_CLICK (nvn.h)
+std::atomic<DrawWatch> g_draw_watch{nullptr};
 
 namespace {
 
@@ -235,6 +237,8 @@ void upload_texture(VkCommandBuffer cb, const Texture& t, GpuImage& img, uint64_
         img.filter_tag = f(t, linear.data() + levels[0].offset, levels[0].layer_size);
         img.filter_derived = false;
     }
+    if (UploadWatch w = g_upload_watch.load(std::memory_order_acquire))  // AP_TITLE_CLICK: textures a game watches
+        img.watch_tag = w(t, linear.data() + levels[0].offset, levels[0].layer_size), img.watch_copy = false;
     if (decode) {  // every level's blocks -> texels, tightly packed, then copied as an uncompressed image
         uint32_t tb = bc_decoded_bytes(t.format), slices = img.view_type == VK_IMAGE_VIEW_TYPE_3D ? layers : img.layers;
         uint64_t total = 0;

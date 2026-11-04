@@ -16,6 +16,8 @@ target_compile_definitions(${NX_GAME} PRIVATE NX_HUD_GLYPHS)
 target_compile_definitions(${NX_GAME} PRIVATE NX_TITLE_MUSIC)
 # AP_TITLE_LIVE (apply_title_live.py): F5 / F6 change the title screen video while it is up
 target_compile_definitions(${NX_GAME} PRIVATE NX_TITLE_LIVE)
+# AP_TITLE_CLICK (apply_title_click.py): a click on the logo of the title menu changes the video, as F6
+target_compile_definitions(${NX_GAME} PRIVATE NX_TITLE_CLICK)
 # AP_ROMFS_MODS (apply_romfs_mods.py): romfs layers of <root>/mods/<edition>: mods copied by hand and the romfs of
 # the updates of <root>/updates (recomp_tsukihime.ps1)
 if(NX_GAME STREQUAL "tsukihime_global")

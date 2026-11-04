@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>  // AP_TITLE_SMOOTH
 #include <thread>
 #include <cstdlib>
 #include <cstring>
@@ -254,12 +255,71 @@ std::string romfs_relative(const char* guest_path) {
     return p;
 }
 
+// AP_TITLE_SMOOTH (apply_title_smooth.py): a title video is read again in the background right after it was read, so the
+// next open of it (back from Gallery, loop re-open) does not wait for the 150 MB file. Dropped when another video opens.
+struct PrefetchState {
+    std::mutex m;
+    std::condition_variable cv;
+    bool done = false;
+    std::string data;
+};
+std::mutex g_pf_m;
+std::string g_pf_rel;
+std::shared_ptr<PrefetchState> g_pf;
+bool prefetch_enabled() {
+    static const bool on = [] { const char* e = std::getenv("NX_TITLE_PREFETCH"); return !(e && e[0] == '0'); }();
+    return on;
+}
+bool is_title_video(const std::string& rel) { return rel.find("movie/titlebg") != std::string::npos; }
+std::string prefetch_take(const std::string& rel) {
+    std::shared_ptr<PrefetchState> st;
+    {
+        std::lock_guard<std::mutex> lk(g_pf_m);
+        if (!g_pf || g_pf_rel != rel) return {};
+        st = std::move(g_pf);
+        g_pf.reset();
+        g_pf_rel.clear();
+    }
+    std::unique_lock<std::mutex> lk(st->m);
+    st->cv.wait(lk, [&] { return st->done; });
+    return std::move(st->data);
+}
+void prefetch_start(const std::string& rel) {
+    auto st = std::make_shared<PrefetchState>();
+    {
+        std::lock_guard<std::mutex> lk(g_pf_m);
+        if (g_pf && g_pf_rel == rel) return;
+        g_pf = st;
+        g_pf_rel = rel;
+    }
+    std::thread([st, rel] {
+        std::string d = nx::read_game_file(rel);
+        std::lock_guard<std::mutex> lk(st->m);
+        st->data = std::move(d);
+        st->done = true;
+        st->cv.notify_all();
+    }).detach();
+}
+std::string read_cached(const std::string& rel) {
+    if (!prefetch_enabled()) return nx::read_game_file(rel);
+    std::string data = prefetch_take(rel);
+    if (data.empty()) data = nx::read_game_file(rel);
+    if (is_title_video(rel)) {
+        if (!data.empty()) prefetch_start(rel);
+    } else {
+        std::lock_guard<std::mutex> lk(g_pf_m);
+        g_pf.reset();
+        g_pf_rel.clear();
+    }
+    return data;
+}
+
 // AP_TITLE_BG (apply_title_bg.py): reads the video, but a titlebg<N> may be replaced by the one title.ini says. If the
 // replacement does not exist the game's own file is used. `rel` ends up being the file that was actually served.
 std::string read_video(std::string& rel) {
     const std::string alt = tsuki_title::remap(rel);
     if (!alt.empty() && alt != rel) {
-        std::string data = nx::read_game_file(alt);
+        std::string data = read_cached(alt);  // AP_TITLE_SMOOTH
         if (!data.empty()) {
             nx::log("title: %s -> %s", rel.c_str(), alt.c_str());
             rel = alt;
@@ -267,7 +327,7 @@ std::string read_video(std::string& rel) {
         }
         nx::log("title: %s does not exist, using %s", alt.c_str(), rel.c_str());
     }
-    return nx::read_game_file(rel);
+    return read_cached(rel);  // AP_TITLE_SMOOTH
 }
 
 // ============================================================================================== funciones libres

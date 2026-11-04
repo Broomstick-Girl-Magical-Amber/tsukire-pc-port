@@ -738,6 +738,16 @@ std::string read_game_file(const std::string& relative_to_romfs) {
     FILE* f = plat::fopen_utf8(utf8(src), "rb");
     if (!f) return {};
     std::string s;
+    if (std::fseek(f, 0, SEEK_END) == 0) {  // AP_TITLE_SMOOTH: sized once, one read
+        const long sz = std::ftell(f);
+        std::rewind(f);
+        if (sz > 0) {
+            s.resize(size_t(sz));
+            s.resize(std::fread(&s[0], 1, s.size(), f));
+        }
+    } else {
+        std::rewind(f);
+    }
     char buf[65536];
     size_t n;
     while ((n = std::fread(buf, 1, sizeof buf, f)) > 0) s.append(buf, n);
