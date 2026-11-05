@@ -447,7 +447,14 @@ struct Handle {
     FILE* f = nullptr;
     uint64_t start = 0;  // offset of the file in the RomFS image
     uint64_t size = 0;
+    // AP_MOD_RECIPES: a file of a mods layer kept as <file>.nxrcp (tools/internal/mods_nsp.py): its ranges, in order,
+    // come from the RomFS of the dump (f) or from the patch bytes stored in the recipe (rf).
+    FILE* rf = nullptr;
+    uint64_t data_off = 0;
+    std::vector<uint64_t> at, len, src;  // offset in the file, length, source (top bit: in rf; else RomFS offset)
 };
+
+uint64_t read_recipe(Handle* h, int64_t off, void* buf, uint64_t n);  // AP_MOD_RECIPES
 
 bool enabled() { return src().usable; }
 
@@ -488,12 +495,17 @@ Handle* open(const std::string& rel) {
         nx::log("romfs: %s could not be opened (errno %d)", s.dump.c_str(), errno);
         return nullptr;
     }
-    return new Handle{f, it->second.off, it->second.size};
+    Handle* h = new Handle;  // AP_MOD_RECIPES: Handle has more members now (no brace init)
+    h->f = f;
+    h->start = it->second.off;
+    h->size = it->second.size;
+    return h;
 }
 
 uint64_t size(const Handle* h) { return h ? h->size : 0; }
 
 uint64_t read(Handle* h, int64_t off, void* buf, uint64_t n) {
+    if (h && h->rf) return read_recipe(h, off, buf, n);  // AP_MOD_RECIPES
     if (!h || off < 0 || uint64_t(off) >= h->size) return 0;
     n = std::min<uint64_t>(n, h->size - uint64_t(off));
     Source& s = src();
@@ -534,7 +546,131 @@ uint64_t read(Handle* h, int64_t off, void* buf, uint64_t n) {
 void close(Handle* h) {
     if (!h) return;
     if (h->f) std::fclose(h->f);
+    if (h->rf) std::fclose(h->rf);  // AP_MOD_RECIPES
     delete h;
+}
+
+// ---- AP_MOD_RECIPES: <file>.nxrcp of a mods layer --------------------------------------------------------------
+
+namespace {
+const uint64_t kRecipeLit = uint64_t(1) << 63;
+
+uint64_t le64(const uint8_t* p) {
+    uint64_t v = 0;
+    for (int i = 7; i >= 0; i--) v = (v << 8) | p[i];
+    return v;
+}
+
+// Header of a recipe: false if it is not one (or not version 1).
+bool recipe_header(FILE* f, uint32_t* n, uint64_t* size, uint64_t* pid, uint64_t* romfs, uint64_t* data) {
+    uint8_t hd[48];
+    if (!f || nx::plat::read_at(f, 0, hd, sizeof hd) != sizeof hd || std::memcmp(hd, "NXRCP1\0\0", 8) != 0) return false;
+    if (uint32_t(le64(hd + 8)) != 1) return false;
+    *n = uint32_t(le64(hd + 8) >> 32);
+    *size = le64(hd + 16);
+    *pid = le64(hd + 24);
+    *romfs = le64(hd + 32);
+    *data = le64(hd + 40);
+    return true;
+}
+}  // namespace
+
+bool recipe_size(const std::string& path, uint64_t* size) {
+    FILE* f = nx::plat::fopen_utf8(path, "rb");
+    uint32_t n = 0;
+    uint64_t pid = 0, romfs = 0, data = 0;
+    const bool ok = recipe_header(f, &n, size, &pid, &romfs, &data);
+    if (f) std::fclose(f);
+    return ok;
+}
+
+Handle* open_recipe(const std::string& path) {
+    Source& s = src();
+    if (!s.usable) {
+        nx::log("romfs: %s needs the dump (the game is not reading its RomFS from it)", path.c_str());
+        return nullptr;
+    }
+    FILE* rf = nx::plat::fopen_utf8(path, "rb");
+    uint32_t n = 0;
+    uint64_t size = 0, pid = 0, romfs = 0, data = 0;
+    if (!recipe_header(rf, &n, &size, &pid, &romfs, &data)) {
+        nx::log("romfs: %s is not a recipe of version 1", path.c_str());
+        if (rf) std::fclose(rf);
+        return nullptr;
+    }
+    if (pid != s.program_id || romfs != s.romfs_size) {
+        nx::log("romfs: %s was made against another dump (program %016llx, RomFS %llu bytes): recompile to process the "
+                "update again", path.c_str(), (unsigned long long)pid, (unsigned long long)romfs);
+        std::fclose(rf);
+        return nullptr;
+    }
+    std::vector<uint8_t> rows(size_t(n) * 16 + 4);
+    bool ok = nx::plat::read_at(rf, 48, rows.data(), rows.size()) == rows.size() &&
+              std::memcmp(rows.data() + size_t(n) * 16, "END1", 4) == 0 && data == 48 + rows.size();
+    Handle* h = new Handle;
+    h->size = size;
+    h->rf = rf;
+    h->data_off = data;
+    uint64_t at = 0;
+    for (uint32_t k = 0; ok && k < n; k++) {
+        const uint64_t m = le64(&rows[size_t(k) * 16]), from = le64(&rows[size_t(k) * 16 + 8]);
+        if (!(from & kRecipeLit) && from + m > s.romfs_size) ok = false;
+        h->at.push_back(at);
+        h->len.push_back(m);
+        h->src.push_back(from);
+        at += m;
+    }
+    ok = ok && at == size;
+    if (ok) {
+        h->f = nx::plat::fopen_utf8(s.dump, "rb");
+        ok = h->f != nullptr;
+    }
+    if (!ok) {
+        nx::log("romfs: %s is damaged", path.c_str());
+        close(h);
+        return nullptr;
+    }
+    return h;
+}
+
+uint64_t read_recipe(Handle* h, int64_t off, void* buf, uint64_t n) {
+    if (!h || off < 0 || uint64_t(off) >= h->size) return 0;
+    n = std::min<uint64_t>(n, h->size - uint64_t(off));
+    uint8_t* out = static_cast<uint8_t*>(buf);
+    size_t k = size_t(std::upper_bound(h->at.begin(), h->at.end(), uint64_t(off)) - h->at.begin()) - 1;
+    uint64_t done = 0;
+    while (done < n && k < h->at.size()) {
+        const uint64_t in = uint64_t(off) + done - h->at[k];
+        const uint64_t m = std::min<uint64_t>(h->len[k] - in, n - done);
+        uint64_t got;
+        if (h->src[k] & kRecipeLit) {
+            got = nx::plat::read_at(h->rf, int64_t(h->data_off + (h->src[k] & ~kRecipeLit) + in), out + done, m);
+        } else {
+            Handle b;  // that range of the RomFS of the dump
+            b.f = h->f;
+            b.start = h->src[k];
+            b.size = h->len[k];
+            got = read(&b, int64_t(in), out + done, m);
+        }
+        done += got;
+        if (got != m) break;
+        k++;
+    }
+    return done;
+}
+
+bool read_all_recipe(const std::string& path, std::string& out) {
+    Handle* h = open_recipe(path);
+    if (!h) return false;
+    out.resize(size_t(h->size));
+    const uint64_t n = h->size ? read(h, 0, &out[0], h->size) : 0;
+    close(h);
+    if (n != out.size()) {
+        nx::log("romfs: short read of %s (%llu of %zu bytes)", path.c_str(), (unsigned long long)n, out.size());
+        out.clear();
+        return false;
+    }
+    return true;
 }
 
 bool read_all(const std::string& rel, std::string& out) {

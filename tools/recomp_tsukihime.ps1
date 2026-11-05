@@ -199,6 +199,9 @@ $Markers = @(
     @('both', 'framework\games\tsukihime_common\romfs_direct.cpp', 'AP_ROMFS_DIRECT', 'romfs_direct.cpp (copy it to games\tsukihime_common)', $false),
     @('both', 'tools\internal\romfs_source.py', 'AP_ROMFS_DIRECT', 'romfs_source.py (copy it to tools\internal)', $false),
     @('both', 'tools\internal\mods_nsp.py', 'AP_ROMFS_DIRECT', 'apply_romfs_direct.py', $false),
+    @('both', 'tools\internal\mods_nsp.py', 'AP_MOD_RECIPES', 'apply_mod_recipes.py', $false),
+    @('both', 'framework\runtime\src\hle_fs.cpp', 'AP_MOD_RECIPES', 'apply_mod_recipes.py', $false),
+    @('both', 'framework\games\tsukihime_common\romfs_direct.cpp', 'AP_MOD_RECIPES', 'apply_mod_recipes.py', $false),
     @('both', 'tools\hud\build_hud_assets.py', 'AP_ROMFS_DIRECT', 'apply_romfs_direct.py', $false),
     @('both', 'tools\recomp_tsukihime.ps1', 'AP_FIND_INPUTS', 'apply_find_inputs.py', $false),
     @('both', 'tools\recomp_tsukihime.ps1', 'AP_CACHE_MOVED', 'apply_cache_moved.py', $false),
@@ -989,6 +992,9 @@ function StepUpdates {
         Info ("update {0} active: romfs changed {1}, new {2} (mods\{3}\{4}); main {5}" -f $j.nsp, $j.changed, $j.new, $Edition, $name, $(if ($diff -contains 'main') { 'own (recompiled)' } else { 'the base one' }))
         $removed = @($j.removed)
         if ($removed.Count) { Info "   $($removed.Count) base files are not in the update (they stay visible): $(($removed | Select-Object -First 3) -join ', ')" }
+        if ($j.PSObject.Properties['recipes'] -and @($j.recipes).Count) {   # AP_MOD_RECIPES
+            Info ("   {0} of them kept as recipes over the dump ({1:N2} GiB of the base not copied; they need the dump)" -f @($j.recipes).Count, ([double]$j.recipe_bytes_not_copied / 1GB))
+        }
     }
     $distinct = @($mains | ForEach-Object { $_.Sha } | Sort-Object -Unique)
     if ($distinct.Count -gt 1) {
