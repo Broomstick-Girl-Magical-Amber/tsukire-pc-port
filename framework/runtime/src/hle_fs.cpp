@@ -40,6 +40,27 @@ namespace tsuki_title {
 std::string music_swap(const std::string& path, int64_t off);
 }  // namespace tsuki_title
 #endif
+#ifdef NX_ROMFS_DIRECT
+// AP_ROMFS_DIRECT (apply_romfs_direct.py): the RomFS read straight from the .xci/.nsp of the root of the port
+// (games/tsukihime_common/romfs_direct.cpp, <data root>/romfs_source.bin). rel = path inside the RomFS, '/' separated, any
+// case. Not enabled (no romfs_source.bin, or no dump but a full extract/romfs): every call says "not there".
+namespace tsuki_romfs {
+struct Handle;
+bool enabled();
+bool file(const std::string& rel, uint64_t* size);
+bool dir(const std::string& rel);
+void list(const std::string& rel, std::vector<std::string>& names, std::vector<uint8_t>& is_dir, std::vector<uint64_t>& sizes);
+Handle* open(const std::string& rel);
+uint64_t size(const Handle* h);
+uint64_t read(Handle* h, int64_t off, void* buf, uint64_t n);
+void close(Handle* h);
+bool read_all(const std::string& rel, std::string& out);
+// AP_MOD_RECIPES (apply_mod_recipes.py): <file>.nxrcp of a mods layer = that file rebuilt from the dump + patch bytes.
+Handle* open_recipe(const std::string& path);
+bool recipe_size(const std::string& path, uint64_t* size);
+bool read_all_recipe(const std::string& path, std::string& out);
+}  // namespace tsuki_romfs
+#endif
 
 namespace nx {
 
@@ -83,10 +104,20 @@ std::map<std::string, fs::path> g_mounts;
 struct File {
     FILE* f;
     std::string path;
+#ifdef NX_ROMFS_DIRECT
+    tsuki_romfs::Handle* direct = nullptr;  // AP_ROMFS_DIRECT: a RomFS file read from the dump (then f is null)
+#endif
     File(FILE* file, std::string p) : f(file), path(std::move(p)) {}
     File(const File&) = delete;  // owns the FILE: one instance only
     File& operator=(const File&) = delete;
+#ifdef NX_ROMFS_DIRECT
+    ~File() {
+        if (f) std::fclose(f);
+        tsuki_romfs::close(direct);
+    }
+#else
     ~File() { std::fclose(f); }
+#endif
 };
 std::map<uint64_t, std::shared_ptr<File>> g_files;
 
@@ -113,6 +144,12 @@ const std::string* find_virtual(const fs::path& resolved) {
 struct Dir {
     std::vector<fs::directory_entry> entries;
     size_t pos = 0;
+#ifdef NX_ROMFS_DIRECT
+    // AP_ROMFS_DIRECT: entries of the RomFS of the dump, after `entries` (a name already in `entries` is left out)
+    std::vector<std::string> names;
+    std::vector<uint8_t> is_dir;
+    std::vector<uint64_t> sizes;
+#endif
 };
 std::map<uint64_t, Dir> g_dirs;
 uint64_t g_next = 1;
@@ -125,6 +162,32 @@ std::string utf8(const fs::path& p) {
 }
 
 std::string cstr(uint64_t p) { return p ? std::string(reinterpret_cast<const char*>(p)) : std::string(); }
+
+#ifdef NX_ROMFS_DIRECT
+// AP_ROMFS_DIRECT: the path inside the RomFS of a resolved host path that is under extract/romfs (the rom: mount) and
+// is not a file on the host (extract/romfs, if it is still there, wins file by file; its folders are joined with the
+// dump's). False otherwise.
+bool rom_direct_rel(const fs::path& p, std::string& rel) {
+    if (p.empty() || !tsuki_romfs::enabled()) return false;
+    const fs::path r = p.lexically_normal().lexically_relative((data_root() / "extract" / "romfs").lexically_normal());
+    std::string s = utf8(r);
+    if (s.empty() || s == ".." || s.rfind("../", 0) == 0 || s.rfind("..\\", 0) == 0) return false;
+    if (s == ".") s.clear();
+    std::error_code ec;
+    if (fs::is_regular_file(p, ec)) return false;
+    rel = s;
+    return true;
+}
+
+// AP_MOD_RECIPES: a host path that is the recipe (<file>.nxrcp) of a mods layer.
+bool is_recipe(const fs::path& p) {
+    const std::string s = utf8(p.filename());
+    if (s.size() <= 6) return false;
+    std::string e = s.substr(s.size() - 6);
+    for (char& ch : e) ch = char(std::tolower(static_cast<unsigned char>(ch)));
+    return e == ".nxrcp";
+}
+#endif
 
 // AP_ROMFS_MODS (apply_romfs_mods.py): romfs layers. With NX_ROMFS_MODS (games/tsukihime_common) the rom: mount and
 // read_game_file look first in every folder of <root>/mods/<edition> that has a romfs/ (NX_MODS_DIR overrides the
@@ -213,8 +276,23 @@ fs::path rom_layer_path(const std::string& rest, const fs::path& base_path) {
             if (trace_fs()) log("fs: %s from the layer %s", rest.c_str(), utf8(it->parent_path().filename()).c_str());
             return q;
         }
+#ifdef NX_ROMFS_DIRECT
+        fs::path r = q;  // AP_MOD_RECIPES: the file kept as a recipe over the dump
+        r += ".nxrcp";
+        if (tsuki_romfs::enabled() && fs::is_regular_file(r, ec)) {
+            if (trace_fs()) log("fs: %s from the layer %s (recipe)", rest.c_str(), utf8(it->parent_path().filename()).c_str());
+            return r;
+        }
+#endif
     }
+#ifdef NX_ROMFS_DIRECT
+    std::string drel;  // AP_ROMFS_DIRECT: a path the base has in the dump is not a layer's folder
+    if (fs::exists(base_path, ec) ||
+        (rom_direct_rel(base_path, drel) && (tsuki_romfs::file(drel, nullptr) || tsuki_romfs::dir(drel))))
+        return {};
+#else
     if (fs::exists(base_path, ec)) return {};
+#endif
     for (auto it = l.dirs.rbegin(); it != l.dirs.rend(); ++it) {
         fs::path q = *it / rel;
         if (fs::is_directory(q, ec)) return q;
@@ -224,7 +302,9 @@ fs::path rom_layer_path(const std::string& rest, const fs::path& base_path) {
 
 // OpenDirectory on rom:: adds the entries of the same folder in each layer (a layer's file replaces the one with the
 // same name, case-insensitive).
-void rom_merge_dirs(const std::string& guest, const fs::path& opened, int mode, std::vector<fs::directory_entry>& out) {
+using RecipeList = std::vector<std::pair<std::string, uint64_t>>;  // AP_MOD_RECIPES: (name, size) of the recipes
+void rom_merge_dirs(const std::string& guest, const fs::path& opened, int mode, std::vector<fs::directory_entry>& out,
+                    RecipeList* recipes = nullptr) {
     const RomLayers& l = rom_layers();
     if (l.dirs.empty()) return;
     auto colon = guest.find(':');
@@ -246,6 +326,33 @@ void rom_merge_dirs(const std::string& guest, const fs::path& opened, int mode, 
             bool dir = e.is_directory();
             if (!((dir && (mode & 1)) || (!dir && (mode & 2)))) continue;
             std::string k = key(e.path());
+#ifdef NX_ROMFS_DIRECT
+            if (recipes) {  // AP_MOD_RECIPES: <file>.nxrcp is <file>; a later layer's whole file replaces it and back
+                if (!dir && is_recipe(e.path())) {
+                    if (!tsuki_romfs::enabled()) continue;
+                    const std::string name = utf8(e.path().filename()).substr(0, utf8(e.path().filename()).size() - 6);
+                    const std::string nk = k.substr(0, k.size() - 6);
+                    uint64_t sz = 0;
+                    if (!tsuki_romfs::recipe_size(utf8(e.path()), &sz)) continue;
+                    out.erase(std::remove_if(out.begin(), out.end(), [&](const fs::directory_entry& o) {
+                                  return !o.is_directory() && key(o.path()) == nk;
+                              }), out.end());
+                    recipes->erase(std::remove_if(recipes->begin(), recipes->end(), [&](const auto& x) {
+                                       std::string xk = x.first;
+                                       for (char& ch : xk) ch = char(std::tolower(static_cast<unsigned char>(ch)));
+                                       return xk == nk;
+                                   }), recipes->end());
+                    recipes->emplace_back(name, sz);
+                    continue;
+                }
+                if (!dir)
+                    recipes->erase(std::remove_if(recipes->begin(), recipes->end(), [&](const auto& x) {
+                                       std::string xk = x.first;
+                                       for (char& ch : xk) ch = char(std::tolower(static_cast<unsigned char>(ch)));
+                                       return xk == k;
+                                   }), recipes->end());
+            }
+#endif
             bool found = false;
             for (auto& o : out) {
                 if (key(o.path()) == k) {
@@ -293,6 +400,14 @@ void QueryMountRomCacheSize(CPU& c) {
 
 void MountRom(CPU& c) {
     std::lock_guard lk(g_fs);
+#ifdef NX_ROMFS_DIRECT
+    if (tsuki_romfs::enabled()) {  // AP_ROMFS_DIRECT: the RomFS is the dump (loaded now: a missing dump stops here)
+        g_mounts[cstr(c.x[0])] = data_root() / "extract" / "romfs";  // the same key as always (mods layers); not created
+        log("fs: mounted %s: -> the RomFS of the dump (extract/romfs and mods first, if present)", cstr(c.x[0]).c_str());
+        c.x[0] = kOk;
+        return;
+    }
+#endif
     mount(cstr(c.x[0]), data_root() / "extract" / "romfs");
     c.x[0] = kOk;
 }
@@ -371,6 +486,15 @@ void GetEntryType(CPU& c) {  // (DirectoryEntryType* out, path)
         c.x[0] = kOk;
         return;
     }
+#ifdef NX_ROMFS_DIRECT
+    if (std::string rel; rom_direct_rel(p, rel)) {  // AP_ROMFS_DIRECT
+        if (tsuki_romfs::file(rel, nullptr) || tsuki_romfs::dir(rel)) {
+            st<uint32_t>(c.x[0], tsuki_romfs::file(rel, nullptr) ? 1 : 0);
+            c.x[0] = kOk;
+            return;
+        }
+    }
+#endif
     std::error_code ec;
     if (p.empty() || !fs::exists(p, ec)) {
         c.x[0] = kPathNotFound;
@@ -389,7 +513,12 @@ void OpenFile(CPU& c) {  // (FileHandle* out, path, int mode: 1 read, 2 write, 4
         if (!alt.empty()) {
             std::error_code ec0;
             const fs::path q = resolve(alt);
+#ifdef NX_ROMFS_DIRECT
+            std::string rel0;  // AP_ROMFS_DIRECT: the track may be in the dump
+            if (!q.empty() && (fs::is_regular_file(q, ec0) || (rom_direct_rel(q, rel0) && tsuki_romfs::file(rel0, nullptr)))) guest = alt;
+#else
             if (!q.empty() && fs::is_regular_file(q, ec0)) guest = alt;
+#endif
             else log("title: %s does not exist, using %s", alt.c_str(), guest.c_str());
         }
     }
@@ -412,6 +541,38 @@ void OpenFile(CPU& c) {  // (FileHandle* out, path, int mode: 1 read, 2 write, 4
         c.x[0] = kOk;
         return;
     }
+#ifdef NX_ROMFS_DIRECT
+    if (!(mode & 2) && is_recipe(p)) {  // AP_MOD_RECIPES: a layer's file rebuilt from its recipe
+        tsuki_romfs::Handle* dh = tsuki_romfs::open_recipe(utf8(p));
+        if (!dh) {
+            note_open("OpenFile", guest, "recipe not usable");
+            c.x[0] = kPathNotFound;
+            return;
+        }
+        auto file = std::make_shared<File>(nullptr, guest);
+        file->direct = dh;
+        uint64_t h = g_next++;
+        g_files[h] = file;
+        st<uint64_t>(c.x[0], h);
+        note_open("OpenFile", guest, "ok (recipe)");
+        if (trace_fs()) log("fs: OpenFile(%s, %d) -> %llu (recipe)", guest.c_str(), mode, (unsigned long long)h);
+        c.x[0] = kOk;
+        return;
+    }
+    if (std::string rel; !(mode & 2) && rom_direct_rel(p, rel)) {  // AP_ROMFS_DIRECT: a RomFS file of the dump
+        if (tsuki_romfs::Handle* dh = tsuki_romfs::open(rel)) {
+            auto file = std::make_shared<File>(nullptr, guest);
+            file->direct = dh;
+            uint64_t h = g_next++;
+            g_files[h] = file;
+            st<uint64_t>(c.x[0], h);
+            note_open("OpenFile", guest, "ok (dump)");
+            if (trace_fs()) log("fs: OpenFile(%s, %d) -> %llu (dump)", guest.c_str(), mode, (unsigned long long)h);
+            c.x[0] = kOk;
+            return;
+        }
+    }
+#endif
     std::error_code ec;
     if (p.empty() || !fs::is_regular_file(p, ec)) {
         note_open("OpenFile", guest, p.empty() ? "unknown mount" : "not found");
@@ -451,6 +612,13 @@ void GetFileSize(CPU& c) {  // (s64* out, FileHandle)
         c.x[0] = kTargetNotFound;
         return;
     }
+#ifdef NX_ROMFS_DIRECT
+    if (file->direct) {  // AP_ROMFS_DIRECT
+        st<int64_t>(c.x[0], int64_t(tsuki_romfs::size(file->direct)));
+        c.x[0] = kOk;
+        return;
+    }
+#endif
     std::lock_guard lk(g_fs);  // the FILE position is shared with writers
     FILE* f = file->f;
     int64_t cur = plat::ftell64(f);
@@ -463,7 +631,12 @@ void GetFileSize(CPU& c) {  // (s64* out, FileHandle)
 
 uint64_t read_at(const File& file, int64_t off, uint64_t buf, uint64_t size) {
     uint64_t t0 = plat::monotonic_ns();
+#ifdef NX_ROMFS_DIRECT
+    uint64_t n = file.direct ? tsuki_romfs::read(file.direct, off, reinterpret_cast<void*>(buf), size)  // AP_ROMFS_DIRECT
+                             : plat::read_at(file.f, off, reinterpret_cast<void*>(buf), size);
+#else
     uint64_t n = plat::read_at(file.f, off, reinterpret_cast<void*>(buf), size);
+#endif
     uint64_t ms = (plat::monotonic_ns() - t0) / 1'000'000;
     if (g_trace) log("fs: read %s at %lld size %llu -> %llu", file.path.c_str(), (long long)off, (unsigned long long)size,
                      (unsigned long long)n);
@@ -497,12 +670,26 @@ std::shared_ptr<File> live_music(uint64_t h, std::shared_ptr<File> file, int64_t
     std::lock_guard lk(g_fs);
     std::error_code ec;
     const fs::path q = resolve(alt);
+#ifdef NX_ROMFS_DIRECT
+    const bool rcp = !q.empty() && is_recipe(q);  // AP_MOD_RECIPES
+    FILE* f = (q.empty() || rcp || !fs::is_regular_file(q, ec)) ? nullptr : plat::fopen_utf8(utf8(q), "rb");
+    tsuki_romfs::Handle* dh = rcp ? tsuki_romfs::open_recipe(utf8(q)) : nullptr;  // AP_ROMFS_DIRECT: the track may be in the dump
+    if (std::string rel; !f && !dh && rom_direct_rel(q, rel)) dh = tsuki_romfs::open(rel);
+#else
     FILE* f = (q.empty() || !fs::is_regular_file(q, ec)) ? nullptr : plat::fopen_utf8(utf8(q), "rb");
+#endif
+#ifdef NX_ROMFS_DIRECT
+    if (!f && !dh) {
+#else
     if (!f) {
+#endif
         log("title: %s could not be opened: the music stays", alt.c_str());
         return file;
     }
     auto nf = std::make_shared<File>(f, alt);
+#ifdef NX_ROMFS_DIRECT
+    nf->direct = dh;
+#endif
     g_files[h] = nf;
     log("title: music %s -> %s (the game started it over)", file->path.c_str(), alt.c_str());
     return nf;
@@ -541,6 +728,12 @@ void WriteFile(CPU& c) {  // (FileHandle, s64 off, const void* buf, size_t size,
         c.x[0] = kTargetNotFound;
         return;
     }
+#ifdef NX_ROMFS_DIRECT
+    if (!file->f) {  // AP_ROMFS_DIRECT: a file of the dump is read only
+        c.x[0] = kTargetNotFound;
+        return;
+    }
+#endif
     std::lock_guard lk(g_fs);
     plat::fseek64(file->f, int64_t(c.x[1]), SEEK_SET);
     fwrite(reinterpret_cast<const void*>(c.x[2]), 1, c.x[3], file->f);
@@ -551,7 +744,11 @@ void WriteFile(CPU& c) {  // (FileHandle, s64 off, const void* buf, size_t size,
 void FlushFile(CPU& c) {
     if (auto file = open_file(c.x[0])) {
         std::lock_guard lk(g_fs);
+#ifdef NX_ROMFS_DIRECT
+        if (file->f) fflush(file->f);  // AP_ROMFS_DIRECT: fflush(nullptr) would flush every stream
+#else
         fflush(file->f);
+#endif
     }
     c.x[0] = kOk;
 }
@@ -564,6 +761,11 @@ void OpenDirectory(CPU& c) {  // (DirectoryHandle* out, path, int mode: 1 dirs, 
     int mode = int(c.x[2]);
     std::error_code ec;
     bool found = !p.empty() && fs::is_directory(p, ec);
+#ifdef NX_ROMFS_DIRECT
+    std::string drel;  // AP_ROMFS_DIRECT: a folder of the RomFS of the dump
+    const bool direct = rom_direct_rel(p, drel) && tsuki_romfs::dir(drel);
+    found = found || direct;
+#endif
     note_open("OpenDirectory", cstr(c.x[1]), found ? "ok" : "not found");
     if (trace_fs()) log("fs: OpenDirectory(%s, %d)%s", cstr(c.x[1]).c_str(), mode, found ? "" : " not found");
     if (!found) {
@@ -576,7 +778,39 @@ void OpenDirectory(CPU& c) {  // (DirectoryHandle* out, path, int mode: 1 dirs, 
         if ((dir && (mode & 1)) || (!dir && (mode & 2))) d.entries.push_back(e);
     }
 #ifdef NX_ROMFS_MODS
+#ifdef NX_ROMFS_DIRECT
+    RecipeList recipes;  // AP_MOD_RECIPES
+    rom_merge_dirs(cstr(c.x[1]), p, mode, d.entries, &recipes);  // AP_ROMFS_MODS
+    for (auto& [name, sz] : recipes) {
+        d.names.push_back(name);
+        d.is_dir.push_back(0);
+        d.sizes.push_back(sz);
+    }
+#else
     rom_merge_dirs(cstr(c.x[1]), p, mode, d.entries);  // AP_ROMFS_MODS
+#endif
+#endif
+#ifdef NX_ROMFS_DIRECT
+    if (direct) {  // AP_ROMFS_DIRECT: the dump's entries that no host folder (extract/romfs, mods) gave already
+        std::vector<std::string> names;
+        std::vector<uint8_t> dirs;
+        std::vector<uint64_t> sizes;
+        tsuki_romfs::list(drel, names, dirs, sizes);
+        auto low = [](std::string s) {
+            for (char& ch : s) ch = char(std::tolower(static_cast<unsigned char>(ch)));
+            return s;
+        };
+        std::vector<std::string> have;
+        for (auto& e : d.entries) have.push_back(low(utf8(e.path().filename())));
+        for (auto& nm : d.names) have.push_back(low(nm));  // AP_MOD_RECIPES: the recipes already listed
+        for (size_t i = 0; i < names.size(); i++) {
+            if (!((dirs[i] && (mode & 1)) || (!dirs[i] && (mode & 2)))) continue;
+            if (std::find(have.begin(), have.end(), low(names[i])) != have.end()) continue;
+            d.names.push_back(names[i]);
+            d.is_dir.push_back(dirs[i]);
+            d.sizes.push_back(sizes[i]);
+        }
+    }
 #endif
     uint64_t h = g_next++;
     g_dirs[h] = std::move(d);
@@ -604,6 +838,16 @@ void ReadDirectory(CPU& c) {  // (s64* out_count, DirectoryEntry* entries, Direc
         st<int8_t>(out + 0x304, dir ? 0 : 1);
         st<int64_t>(out + 0x308, dir ? 0 : int64_t(e.file_size()));
     }
+#ifdef NX_ROMFS_DIRECT
+    for (; n < max && d.pos < d.entries.size() + d.names.size(); n++, d.pos++) {  // AP_ROMFS_DIRECT: then the dump's
+        const size_t k = d.pos - d.entries.size();
+        uint64_t out = c.x[1] + uint64_t(n) * 0x310;
+        std::memset(reinterpret_cast<void*>(out), 0, 0x310);
+        std::memcpy(reinterpret_cast<void*>(out), d.names[k].c_str(), std::min<size_t>(d.names[k].size(), 0x300));
+        st<int8_t>(out + 0x304, d.is_dir[k] ? 0 : 1);
+        st<int64_t>(out + 0x308, d.is_dir[k] ? 0 : int64_t(d.sizes[k]));
+    }
+#endif
     st<int64_t>(c.x[0], n);
     c.x[0] = kOk;
 }
@@ -611,7 +855,11 @@ void ReadDirectory(CPU& c) {  // (s64* out_count, DirectoryEntry* entries, Direc
 void GetDirectoryEntryCount(CPU& c) {  // (s64* out, DirectoryHandle)
     std::lock_guard lk(g_fs);
     auto it = g_dirs.find(c.x[1]);
+#ifdef NX_ROMFS_DIRECT
+    st<int64_t>(c.x[0], it == g_dirs.end() ? 0 : int64_t(it->second.entries.size() + it->second.names.size()));  // AP_ROMFS_DIRECT
+#else
     st<int64_t>(c.x[0], it == g_dirs.end() ? 0 : int64_t(it->second.entries.size()));
+#endif
     c.x[0] = kOk;
 }
 
@@ -651,6 +899,12 @@ void SetFileSize(CPU& c) {  // (FileHandle, s64 size)
         c.x[0] = kTargetNotFound;
         return;
     }
+#ifdef NX_ROMFS_DIRECT
+    if (!file->f) {  // AP_ROMFS_DIRECT: a file of the dump is read only
+        c.x[0] = kPathNotFound;
+        return;
+    }
+#endif
     std::lock_guard lk(g_fs);
     std::fflush(file->f);
 #if defined(_WIN32)
@@ -735,7 +989,20 @@ std::string read_game_file(const std::string& relative_to_romfs) {
         if (!q.empty()) src = q;
     }
 #endif
+#ifdef NX_ROMFS_DIRECT
+    if (is_recipe(src)) {  // AP_MOD_RECIPES
+        std::string s;
+        return tsuki_romfs::read_all_recipe(utf8(src), s) ? s : std::string();
+    }
+#endif
     FILE* f = plat::fopen_utf8(utf8(src), "rb");
+#ifdef NX_ROMFS_DIRECT
+    if (!f) {  // AP_ROMFS_DIRECT: a RomFS file of the dump
+        std::string rel, s;
+        if (rom_direct_rel(src, rel) && tsuki_romfs::read_all(rel, s)) return s;
+        return {};
+    }
+#endif
     if (!f) return {};
     std::string s;
     if (std::fseek(f, 0, SEEK_END) == 0) {  // AP_TITLE_SMOOTH: sized once, one read

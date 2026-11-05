@@ -31,6 +31,16 @@
 # -Replace redoes extraction and recomp even if they are done. -Root to point to another copy of the port.
 # Keys: <root>\data\prod.keys (never copied or printed).
 # -ProgressSeconds: how often the progress of the extraction (step 2) is reported (30 by default).
+# AP_ROMFS_DIRECT (apply_romfs_direct.py): by default the RomFS is NOT extracted (~21-23 GB per edition). Step 2 writes
+# <data>\romfs_source.bin (the table of the RomFS, with the content key of its NCA: the exe never reads prod.keys), the
+# exefs and <data>\romfs_build (the RomFS files the build reads: romfs\shader for step 8, the *allui files of the HUD
+# icons); the exe reads every other file straight from the .xci/.nsp, which must STAY in the ROOT of the port (any
+# name: it is recognised by its content). Steps 1-2 use tools\internal\romfs_source.py (python; no dotnet).
+# -Extract: the full extraction with nsextract (extract\romfs), as before. An extract\romfs from before is not
+# deleted: while it is there the exe reads it first; delete it by hand to free the space.
+# -TrimXci: cuts the 0xFF padding at the end of the .xci of this edition, in place (everything after the data is checked
+# to be 0xFF first; ~8.5 GB in the japanese cartridge; tools\internal\romfs_source.py untrim --input <xci> --apply
+# undoes it). Keys: if <root>\data\prod.keys does not exist and <root>\prod.keys does, it is MOVED to data\.
 # Linux (PowerShell 7, via tools/linux/recomp_linux.sh): same steps; step 9 cross-compiles the SAME Windows exe
 # (clang-cl + lld-link + llvm-rc against the xwin CRT/SDK; tools/linux/clangcl-xwin.cmake) to play it with
 # Proton. The tools are installed by tools/linux/install_requirements_linux.sh. Nothing changes on Windows.
@@ -61,6 +71,8 @@ param(
     [switch]$Replace,
     [switch]$ForceBuildId,
     [switch]$NoUpdates,
+    [switch]$Extract,   # AP_ROMFS_DIRECT: full extraction of the RomFS (nsextract) instead of reading it from the dump
+    [switch]$TrimXci,   # AP_ROMFS_DIRECT: trim the 0xFF padding of this edition's .xci (in place, checked first)
     [ValidateRange(2, 600)][int]$ProgressSeconds = 30,
     [ValidateRange(0, 512)][int]$Jobs = 0   # AP_RECOMP_PARALLEL: compile jobs of step 9 (0 = ninja's default, CPUs + 2)
 )
@@ -79,6 +91,7 @@ if (-not $Root) {
     if (-not $Root) { throw "cannot find the port root (a folder with framework\) starting from ${here}: pass -Root <folder>" }
 }
 $Root = [IO.Path]::GetFullPath($Root).TrimEnd('\', '/')
+$KeysGiven = [bool]$Keys   # AP_ROMFS_DIRECT: without -Keys, a prod.keys left in the root is moved to data\
 if (-not $Keys) { $Keys = Join-Path $Root 'data\prod.keys' }
 
 # ---------------------------------------------------------------------------------------------- measured data
@@ -97,6 +110,7 @@ $FontSha256 = '8EA2D3ECEECB43A55F2567F7A8ABF85A5BB1F4FCA9A53E4786B7773F2C6F9D56'
 # Markers: string each apply_*.py uses to detect that it is already applied (read from the patchers).
 # Ed: both | japan | global. Created = file created by step 4 (checked after that step).
 $Markers = @(
+    @('both', 'tools\recomp_tsukihime.ps1', 'AP_NINJA_LOG_FORCE', 'apply_ninja_log_force.py', $false),
     @('both', 'framework\recomp\analysis.py', '_JT_LSR = ', 'apply_jt_lsr.py (version 2)', $false),
     @('both', 'framework\runtime\src\kernel.cpp', 'CancelSynchronization that arrived before', 'apply_cancel_sync.py', $false),
     @('both', 'framework\runtime\src\nvn\nvn_draw_state.h', 'stage_program', 'apply_stage_programs.py', $false),
@@ -180,6 +194,19 @@ $Markers = @(
     @('both', 'framework\games\tsukihime_common\tsukihime_common.cmake', 'AP_HUD_GLYPHS', 'apply_hud_glyphs.py', $false),
     @('both', 'framework\games\tsukihime_common\tsukihime_common.cmake', 'AP_FFMPEG_PREBUILT', 'apply_ffmpeg_prebuilt.py', $false),
     @('both', 'tools\install_requirements.ps1', 'AP_FFMPEG_PREBUILT', 'apply_ffmpeg_prebuilt.py', $false),
+    @('both', 'framework\runtime\src\hle_fs.cpp', 'AP_ROMFS_DIRECT', 'apply_romfs_direct.py', $false),
+    @('both', 'framework\games\tsukihime_common\tsukihime_common.cmake', 'AP_ROMFS_DIRECT', 'apply_romfs_direct.py', $false),
+    @('both', 'framework\games\tsukihime_common\romfs_direct.cpp', 'AP_ROMFS_DIRECT', 'romfs_direct.cpp (copy it to games\tsukihime_common)', $false),
+    @('both', 'tools\internal\romfs_source.py', 'AP_ROMFS_DIRECT', 'romfs_source.py (copy it to tools\internal)', $false),
+    @('both', 'tools\internal\mods_nsp.py', 'AP_ROMFS_DIRECT', 'apply_romfs_direct.py', $false),
+    @('both', 'tools\internal\mods_nsp.py', 'AP_MOD_RECIPES', 'apply_mod_recipes.py', $false),
+    @('both', 'framework\runtime\src\hle_fs.cpp', 'AP_MOD_RECIPES', 'apply_mod_recipes.py', $false),
+    @('both', 'framework\games\tsukihime_common\romfs_direct.cpp', 'AP_MOD_RECIPES', 'apply_mod_recipes.py', $false),
+    @('both', 'tools\hud\build_hud_assets.py', 'AP_ROMFS_DIRECT', 'apply_romfs_direct.py', $false),
+    @('both', 'tools\recomp_tsukihime.ps1', 'AP_FIND_INPUTS', 'apply_find_inputs.py', $false),
+    @('both', 'tools\recomp_tsukihime.ps1', 'AP_CACHE_MOVED', 'apply_cache_moved.py', $false),
+    @('japan', 'tools\internal\regen_tsuki.ps1', 'AP_CACHE_MOVED', 'apply_cache_moved.py', $false),
+    @('global', 'tools\internal\regen_tsuki_global.ps1', 'AP_CACHE_MOVED', 'apply_cache_moved.py', $false),
     @('japan', 'framework\games\tsukihime\game.cmake', 'tsukihime_common/tsukihime_common.cmake', 'games\tsukihime_common (shared code, in the repo)', $false),
     @('japan', 'framework\games\tsukihime\game.cmake', 'NX_DEFAULT_ORIGIN_LOWER_LEFT', 'apply_origin_default.py', $false),
     @('japan', 'framework\games\tsukihime\game.cmake', 'NX_FIXED_ASPECT', 'apply_aspect.py', $false),
@@ -302,6 +329,9 @@ $UpdData = Under $Data 'updates'                    # their exefs (main) and pro
 $ModsOut = InRoot "mods\$Edition"                   # romfs layers the exe reads (by hand, or from updates\)
 $RomfsIndex = Under $Data 'romfs_index.bin'
 $ModsPy = Under $Tools 'internal\mods_nsp.py'
+$SourcePy = Under $Tools 'internal\romfs_source.py'   # AP_ROMFS_DIRECT
+$RomfsSource = Under $Data 'romfs_source.bin'          # the table the exe reads the dump with
+$BuildRomfs = Under $Data 'romfs_build'                # the RomFS files the build reads (shaders, HUD)
 $Create = Under $Tools 'internal\create_tsukihime_global.ps1'
 # Build environment: the personal dev.local.ps1 (ignored, not in a fresh clone) or, if there is none, the
 # portable dev_env.ps1 that is in the repo (tools\).
@@ -477,7 +507,7 @@ function FindInputs {
         $e = [IO.Path]::GetFullPath($InputFile)
         if (-not (Test-Path -LiteralPath $e -PathType Leaf)) { Fail "$e does not exist" }
         if (-not (ContainerType $e)) { Fail "$e is neither an NSP (PFS0) nor an XCI (HEAD)" }
-        return , $e
+        return $e   # AP_FIND_INPUTS: was "return , $e" (the callers wrap it in @(...))
     }
     $pref = if ($Edition -eq 'global') { '.nsp' } else { '.xci' }
     $all = @(Get-ChildItem -LiteralPath $Root -File | Where-Object { $_.Extension -in '.xci', '.nsp' } |
@@ -487,11 +517,30 @@ function FindInputs {
         if (ContainerType $f.FullName) { $ok += $f.FullName } else { Warn "$($f.Name): neither NSP (PFS0) nor XCI (HEAD): ignored" }
     }
     if (-not $ok.Count) { Fail "there is no .xci or .nsp in $Root (put it there, or pass -InputFile <path>)" }
-    return , $ok
+    return $ok   # AP_FIND_INPUTS: was "return , $ok": @(FindInputs) got one item with every dump joined in one path
+}
+
+# AP_ROMFS_DIRECT: keys left in the root (next to the dump) go to data\ (moved, never copied); if data\ has some, those win.
+function MoveRootKeys {
+    if ($KeysGiven) { return }
+    $inData = InRoot 'data\prod.keys'; $inRoot = InRoot 'prod.keys'
+    if (Test-Path -LiteralPath $inData -PathType Leaf) {
+        if (Test-Path -LiteralPath $inRoot -PathType Leaf) { Warn 'there is a prod.keys in the root too: data\prod.keys is used (the one in the root is left as is)' }
+        return
+    }
+    if (-not (Test-Path -LiteralPath $inRoot -PathType Leaf)) { return }
+    New-Item -ItemType Directory -Path (InRoot 'data') -Force | Out-Null
+    Move-Item -LiteralPath $inRoot -Destination $inData
+    Info 'prod.keys moved from the root to data\ (not read)'
+}
+function CheckPyCrypto {   # AP_ROMFS_DIRECT: romfs_source.py (steps 1-2) needs pycryptodome
+    $r = RunCapture $Python @('-c', 'import Crypto, lz4.block')
+    if ($r.Code -ne 0) { Fail 'the project python does not have pycryptodome (tools\install_requirements.ps1 -From 6 installs tools\requirements.txt)' }
 }
 
 # The keys do not leave data\: only their path is passed to nsextract and mods_nsp.py.
 function CheckKeys {
+    MoveRootKeys   # AP_ROMFS_DIRECT
     $k = [IO.Path]::GetFullPath($Keys)
     $allowed = [IO.Path]::GetFullPath((InRoot 'data')) + $Sep
     if (-not $k.StartsWith($allowed, [StringComparison]::OrdinalIgnoreCase)) {
@@ -530,7 +579,7 @@ function Step0 {
         if (-not (Test-Path -LiteralPath $p)) { $missing += $p }
     }
     if ($Edition -eq 'global' -and -not (Test-Path -LiteralPath $Create)) { $missing += $Create }
-    if ($From -le 2 -and $To -ge 1 -and $NsExtract -notlike '*.exe' -and -not (Get-Command dotnet -ErrorAction SilentlyContinue)) { $missing += 'dotnet (.NET SDK 10: builds and runs tools\nsextract)' }   # AP_DROP_UNUSED, AP_TOOLCHAIN_XWIN
+    if ($Extract -and $From -le 2 -and $To -ge 1 -and $NsExtract -notlike '*.exe' -and -not (Get-Command dotnet -ErrorAction SilentlyContinue)) { $missing += 'dotnet (.NET SDK 10: builds and runs tools\nsextract)' }   # AP_DROP_UNUSED, AP_TOOLCHAIN_XWIN; AP_ROMFS_DIRECT: only -Extract
     if ($To -ge 8) {
         if (-not (Test-Path -LiteralPath $Harness)) { $missing += "$Harness (dotnet build tools/maxwell/spirv_harness/SpirvHarness.csproj -c Release -m:2)" }
         if ($Harness -notlike '*.exe' -and -not (Get-Command dotnet -ErrorAction SilentlyContinue)) { $missing += 'dotnet (.NET SDK 10)' }   # AP_TOOLCHAIN_XWIN
@@ -544,11 +593,12 @@ function Step0 {
 
     CheckMarkers $false
 
-    if ($From -le 2 -and $To -ge 1 -and (ExtractedOk) -and -not $Replace) {
-        Info 'exefs and romfs already extracted: the .xci/.nsp and the keys are not needed (-Replace to extract again)'
+    if ($From -le 2 -and $To -ge 1 -and (ExtractedOk) -and -not $Replace -and -not $TrimXci) {
+        if ($Extract) { Info 'exefs and romfs already extracted: the .xci/.nsp and the keys are not needed (-Replace to extract again)' }
+        else { Info 'exefs, romfs_source.bin and romfs_build already made: the keys are not needed (the .xci/.nsp is: the game reads it; -Replace to make them again)' }   # AP_ROMFS_DIRECT
     } elseif ($From -le 2 -and $To -ge 1) {
         $script:Candidates = @(FindInputs)
-        EnsureNsExtract
+        if ($Extract) { EnsureNsExtract } else { CheckPyCrypto }   # AP_ROMFS_DIRECT: steps 1-2 with romfs_source.py
         CheckKeys
         foreach ($c in $script:Candidates) { Info "input $c ($('{0:N0}' -f (Get-Item -LiteralPath $c).Length) bytes, $(ContainerType $c))" }
         Info 'keys present (not read)'
@@ -557,7 +607,24 @@ function Step0 {
 
 # AP_DROP_UNUSED: ExtractFile, PartitionSize and FromContainer removed (nstool)
 $script:WrongEdition = $false
+# AP_ROMFS_DIRECT: -TrimXci cuts the 0xFF padding of the .xci of this edition (romfs_source.py checks every byte first;
+# another edition's .xci is left alone, exit code 3).
+function TrimInputs {
+    $n = 0
+    foreach ($c in @($script:Candidates)) {
+        if ((ContainerType $c) -ne 'xci') { continue }
+        Info "-TrimXci: $(Split-Path -Leaf $c) (everything after the data must be 0xFF; reading it takes about a minute)"
+        & $Python $SourcePy trim --keys $Keys --input $c --program-id (Hex16 $V.ProgramId) --apply
+        $code = $LASTEXITCODE
+        if ($code -eq 3) { Info "$(Split-Path -Leaf $c): not the $Edition edition (not trimmed)"; continue }
+        if ($code -ne 0) { Fail "romfs_source.py trim failed with $(Split-Path -Leaf $c) (code $code)" }
+        $n++
+    }
+    if (-not $n) { Info "-TrimXci: there is no .xci of the $Edition edition in $Root (an .nsp has no padding)" }
+}
+
 function Step1 {
+    if ($TrimXci) { TrimInputs }   # AP_ROMFS_DIRECT
     if ((ExtractedOk) -and -not $Replace) {
         Info 'already extracted: the input is not read again (step 3 verifies program ID and build ID of the exefs; -Replace to extract again)'
         return
@@ -579,11 +646,16 @@ function Step1 {
 function IdentifyInput {
     NewStage
     # nsextract reports the program ID of the base application; the NCA is not extracted.
-    $nc = ToolCmd $NsExtract   # AP_TOOLCHAIN_XWIN
-    $r = RunCapture $nc[0] (@($nc | Select-Object -Skip 1) + @('info', '--keys', $Keys, '--input', $InputFile))
+    if ($Extract) {
+        $nc = ToolCmd $NsExtract   # AP_TOOLCHAIN_XWIN
+        $r = RunCapture $nc[0] (@($nc | Select-Object -Skip 1) + @('info', '--keys', $Keys, '--input', $InputFile))
+    } else {
+        $r = RunCapture $Python @($SourcePy, 'info', '--keys', $Keys, '--input', $InputFile)   # AP_ROMFS_DIRECT
+    }
+    $tool = if ($Extract) { 'nsextract' } else { 'romfs_source.py' }
     if ($r.Code -ne 0) {
-        $err = @($r.Output | Where-Object { $_ -match 'ERROR' } | Select-Object -First 3)
-        Fail "nsextract failed to read $(Split-Path -Leaf $InputFile) (code $($r.Code)): $($err -join ' | ')"
+        $err = @($r.Output | Where-Object { $_ -match 'ERROR|SKIP' } | Select-Object -First 3)
+        Fail "$tool failed to read $(Split-Path -Leaf $InputFile) (code $($r.Code)): $($err -join ' | ')"
     }
     $kv = @{}
     foreach ($l in $r.Output) { if ($l -match '^([A-Z]+)=(.*)$') { $kv[$Matches[1]] = $Matches[2].Trim() } }
@@ -596,17 +668,26 @@ function IdentifyInput {
         Fail "$(Split-Path -Leaf $InputFile): program ID $(Hex16 $progId)$extra, not $(Hex16 $V.ProgramId) of the $Edition edition"
     }
     $script:Ident = @{ Direct = $true; Size = (Get-Item -LiteralPath $InputFile).Length; Nca = ''; Path = '' }
-    Info "program ID $(Hex16 $progId); exefs and romfs will be read straight from the input (nsextract)"
+    if ($Extract) { Info "program ID $(Hex16 $progId); exefs and romfs will be read straight from the input (nsextract)" }
+    else { Info "program ID $(Hex16 $progId); the RomFS stays in the input (the game reads it there): only the table, the exefs and the build files are written" }   # AP_ROMFS_DIRECT
     $Summary['Input'] = "$InputFile (program ID $(Hex16 $progId))"
 }
+
+# AP_ROMFS_DIRECT: the RomFS files the build reads: romfs_build, or a full extract\romfs (-Extract, or from before).
+function BuildRomfsDir { if (Test-Path -LiteralPath (Under $BuildRomfs 'shader')) { $BuildRomfs } else { Under $Data 'extract\romfs' } }
 
 function ExtractedOk {
     $main = Under $Data 'exefs\main'; $npdm = Under $Data 'exefs\main.npdm'
     $romfs = Under $Data 'extract\romfs'
+    if (-not $Extract) {   # AP_ROMFS_DIRECT: exefs + the table + the build files
+        return ((Test-Path -LiteralPath $main) -and (Test-Path -LiteralPath $npdm) -and (Test-Path -LiteralPath $RomfsSource) -and
+                (Test-Path -LiteralPath (Under $BuildRomfs 'shader')))
+    }
     return ((Test-Path -LiteralPath $main) -and (Test-Path -LiteralPath $npdm) -and (Test-Path -LiteralPath (Under $romfs 'shader')))
 }
 
 function Step2 {
+    if (-not $Extract) { Step2Direct; return }   # AP_ROMFS_DIRECT
     $exefs = Under $Data 'exefs'; $romfs = Under $Data 'extract\romfs'
     if ((ExtractedOk) -and -not $Replace) {
         if ((ProgramIdOf (Under $exefs 'main.npdm')) -ne $V.ProgramId) { Fail "$exefs is from another program ID: check it (or -Replace)" }
@@ -655,6 +736,101 @@ function Step2 {
     if ($n -ne $V.RomfsFiles) { Warn "romfs with $n files; today the $Edition edition has $($V.RomfsFiles)" }
     TryRomfsIndex @($InputFile)
     foreach ($p in $previous) { Warn "the previous one was kept in $($p[1]) (delete it by hand whenever you want)" }
+}
+
+# AP_ROMFS_DIRECT: step 2 without extracting the RomFS (tools\internal\romfs_source.py prepare, in _recomp\, moved at the
+# end): romfs_source.bin, romfs_build and the exefs (if it is not there yet).
+function Step2Direct {
+    $exefs = Under $Data 'exefs'
+    if ((ExtractedOk) -and -not $Replace) {
+        if ((ProgramIdOf (Under $exefs 'main.npdm')) -ne $V.ProgramId) { Fail "$exefs is from another program ID: check it (or -Replace)" }
+        Info "already made: $exefs, $RomfsSource and $BuildRomfs; -Replace to make them again"
+        RemoveStage
+        DirectDumpCheck
+        return
+    }
+    if (-not $script:Ident) { Fail 'step 1 (identify) is missing' }
+    $exefsOk = (-not $Replace) -and (Test-Path -LiteralPath (Under $exefs 'main')) -and (Test-Path -LiteralPath (Under $exefs 'main.npdm')) -and
+               (Test-Path -LiteralPath (Under $exefs 'sdk'))
+    if ($exefsOk -and (ProgramIdOf (Under $exefs 'main.npdm')) -ne $V.ProgramId) { Fail "$exefs is from another program ID: check it (or -Replace)" }
+    $replaced = @($BuildRomfs); if (-not $exefsOk) { $replaced += $exefs }
+    foreach ($p in $replaced) {   # what SetAside would reject at the end
+        if ((Test-Path -LiteralPath $p) -and (Test-Path -LiteralPath "$p.old")) { Fail "$p.old already exists (from a previous run): delete or rename it by hand" }
+    }
+    $free = FreeOn $Data
+    if ($free -lt 2GB) { Fail "~2 GB free are needed on the drive of $Data and there are $(GB $free)" }
+    NewStage
+    $a = @($SourcePy, 'prepare', '--keys', $Keys, '--input', $InputFile, '--program-id', (Hex16 $V.ProgramId),
+           '--source', (Under $Stage 'romfs_source.bin'), '--build-romfs', (Under $Stage 'romfs_build'))
+    if (-not $exefsOk) { $a += @('--exefs', (Under $Stage 'exefs')) }
+    Info 'reading the RomFS table and the build files from the input (romfs_source.py; the RomFS is not extracted)'
+    $t0 = Get-Date
+    $r = RunCapture $Python $a
+    foreach ($l in $r.Output) { if ($l -notmatch '^PREPARE ') { Info $l } }
+    if ($r.Code -ne 0) { Fail "romfs_source.py prepare failed (code $($r.Code))" }
+    $kv = @{}
+    foreach ($l in @($r.Output | Where-Object { $_ -match '^PREPARE ' })) {
+        foreach ($p in (($l -replace '^PREPARE ', '') -split ' ')) { $q = $p -split '=', 2; if ($q.Count -eq 2) { $kv[$q[0]] = $q[1] } }
+    }
+    if (-not $kv.ContainsKey('files')) { Fail 'romfs_source.py prepare finished without its PREPARE line' }
+    if (-not $exefsOk) {
+        foreach ($f in 'main', 'main.npdm', 'sdk') { if (-not (Test-Path -LiteralPath (Under $Stage "exefs\$f"))) { Fail "exefs without $f" } }
+        if ((ProgramIdOf (Under $Stage 'exefs\main.npdm')) -ne $V.ProgramId) { Fail 'the extracted main.npdm is from another program ID' }
+    }
+    if (-not (Test-Path -LiteralPath (Under $Stage 'romfs_build\shader'))) { Fail 'the build files have no shader folder' }
+    # Move into place (same disk: rename). What was there is kept as *.old; romfs_source.bin is regenerable.
+    $previous = @()
+    try {
+        if (-not $exefsOk) {
+            $x = SetAside $exefs; if ($x) { $previous += , @($exefs, $x) }
+            Move-Item -LiteralPath (Under $Stage 'exefs') -Destination $exefs
+        }
+        $x = SetAside $BuildRomfs; if ($x) { $previous += , @($BuildRomfs, $x) }
+        Move-Item -LiteralPath (Under $Stage 'romfs_build') -Destination $BuildRomfs
+        Move-Item -LiteralPath (Under $Stage 'romfs_source.bin') -Destination $RomfsSource -Force
+    } catch {
+        foreach ($p in $previous) { if (-not (Test-Path -LiteralPath $p[0])) { Move-Item -LiteralPath $p[1] -Destination $p[0] } }
+        throw
+    }
+    RemoveStage
+    $n = [int]$kv['files']
+    Info ('made in {0:mm\:ss}: romfs_source.bin ({1} files, {2} folders), romfs_build ({3} files, {4:N1} MB){5}' -f ((Get-Date) - $t0), $n,
+          $kv['dirs'], $kv['build_files'], ([int64]$kv['build_bytes'] / 1MB), $(if ($exefsOk) { '; the exefs was already there' } else { ', exefs' }))
+    if ($n -ne $V.RomfsFiles) { Warn "romfs with $n files; today the $Edition edition has $($V.RomfsFiles)" }
+    foreach ($p in $previous) { Warn "the previous one was kept in $($p[1]) (delete it by hand whenever you want)" }
+    DirectDumpCheck
+}
+
+# AP_ROMFS_DIRECT: the game reads the RomFS from the dump: it must be in the root (as the exe looks for it). A full
+# extract\romfs from before is no longer needed (while it exists the exe reads it first).
+function DirectDumpCheck {
+    if (-not (Test-Path -LiteralPath $RomfsSource)) { return }
+    $r = RunCapture $Python @($SourcePy, 'locate', '--source', $RomfsSource, '--root', $Root)
+    $l = @($r.Output | Where-Object { $_ -match '^DUMP=' })
+    if ($r.Code -eq 0 -and $l.Count) {
+        $Summary['RomFS'] = "read by the game from $(Split-Path -Leaf ($l[0] -replace '^DUMP=', '')) (keep it in $Root)"
+    } else {
+        Warn "the dump romfs_source.bin was made from is not in $Root`: the game reads its files from it, put it there (any name)"
+        $Summary['RomFS'] = "read from the dump, which is NOT in $Root (put it there)"
+    }
+    if (Test-Path -LiteralPath (Under $Data 'extract\romfs')) {
+        Info "$(Under $Data 'extract\romfs') (a full extraction) is no longer needed: delete it to free ~21-23 GB (while it exists the game reads it first)"
+    }
+}
+
+# AP_ROMFS_DIRECT: the base romfs of an update: from the dump (romfs_source.bin; no index and no extract\romfs needed) or,
+# with -Extract (or without the table), the index + extract\romfs as before.
+function BaseRomfsArgs {
+    if (-not $Extract -and (Test-Path -LiteralPath $RomfsSource)) {
+        $r = RunCapture $Python @($SourcePy, 'locate', '--source', $RomfsSource, '--root', $Root)
+        $l = @($r.Output | Where-Object { $_ -match '^DUMP=' })
+        if ($r.Code -eq 0 -and $l.Count) { return , @('--base-dump', ($l[0] -replace '^DUMP=', '')) }
+        if (-not (Test-Path -LiteralPath (Under $Data 'extract\romfs\shader'))) {
+            Fail "the dump romfs_source.bin was made from is not in $Root`: updates are read against it (put it back in the root)"
+        }
+    }
+    EnsureRomfsIndex | Out-Host   # its python output is shown, not returned with the arguments
+    return , @('--index', $RomfsIndex, '--base-romfs', (Under $Data 'extract\romfs'))
 }
 
 function Step3 {
@@ -763,15 +939,15 @@ function StepUpdates {
             if ($done) { Info "$($f.Name): already processed (you can delete the .nsp)"; continue }
             if ((Test-Path -LiteralPath $dst) -and -not (Test-Path -LiteralPath $src)) { Fail "$dst exists and was not made by this script: move it away" }
             if ((Test-Path -LiteralPath $layer) -and -not (IsUpdateLayer $layer)) { Fail "$layer exists and is not the romfs of an update (a mod copied by hand with the same name): rename one of them" }
-            EnsureRomfsIndex
+            $baseArgs = BaseRomfsArgs   # AP_ROMFS_DIRECT (was EnsureRomfsIndex)
             $tmp = Under $UpdData "_new_$name"
             if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Recurse -Force }
             $free = FreeOn $UpdData
             if ($free -lt $f.Length + 1GB) { Fail "~$(GB ($f.Length + 1GB)) free are needed on the drive of $UpdData and there are $(GB $free)" }
             Info "$($f.Name): extracting what differs from the base (reads the whole patch)"
             $t0 = Get-Date
-            & $Python $ModsPy mod --keys $Keys --nsp $f.FullName --program-id (Hex16 $V.ProgramId) --index $RomfsIndex `
-                --base-romfs (Under $Data 'extract\romfs') --base-exefs (Under $Data 'exefs') --out $tmp
+            & $Python $ModsPy mod --keys $Keys --nsp $f.FullName --program-id (Hex16 $V.ProgramId) @baseArgs `
+                --base-exefs (Under $Data 'exefs') --out $tmp   # AP_ROMFS_DIRECT: @baseArgs
             $code = $LASTEXITCODE
             if ($code -ne 0 -and (Test-Path -LiteralPath $tmp)) { Remove-Item -LiteralPath $tmp -Recurse -Force }
             if ($code -eq 3) { Info "$($f.Name): it is not for the $Edition edition (skipped)"; continue }
@@ -816,6 +992,9 @@ function StepUpdates {
         Info ("update {0} active: romfs changed {1}, new {2} (mods\{3}\{4}); main {5}" -f $j.nsp, $j.changed, $j.new, $Edition, $name, $(if ($diff -contains 'main') { 'own (recompiled)' } else { 'the base one' }))
         $removed = @($j.removed)
         if ($removed.Count) { Info "   $($removed.Count) base files are not in the update (they stay visible): $(($removed | Select-Object -First 3) -join ', ')" }
+        if ($j.PSObject.Properties['recipes'] -and @($j.recipes).Count) {   # AP_MOD_RECIPES
+            Info ("   {0} of them kept as recipes over the dump ({1:N2} GiB of the base not copied; they need the dump)" -f @($j.recipes).Count, ([double]$j.recipe_bytes_not_copied / 1GB))
+        }
     }
     $distinct = @($mains | ForEach-Object { $_.Sha } | Sort-Object -Unique)
     if ($distinct.Count -gt 1) {
@@ -968,8 +1147,8 @@ function Step7 {
     if ((Sha256 $dst) -ne $FontSha256) { Warn 'it is not the same font used until today' }
 }
 
-function CountShaders([string]$out) {
-    $a = @('--maxwell', $Maxwell, '--romfs-shader', (Under $Data 'extract\romfs\shader'), '--main-bin', (Under $Data 'analysis\main.bin'), '--spirv', (Under $Data 'spirv'))
+function CountShaders([string]$out) {   # AP_ROMFS_DIRECT: the shaders of romfs_build (or of extract\romfs)
+    $a = @('--maxwell', $Maxwell, '--romfs-shader', (Under (BuildRomfsDir) 'shader'), '--main-bin', (Under $Data 'analysis\main.bin'), '--spirv', (Under $Data 'spirv'))
     foreach ($d in (ActiveShaderDirs)) { $a += @('--romfs-shader', $d) }   # shaders that mods\<edition> adds or changes
     if ($out) { $a += @('--out', $out) }
     $r = RunCapture $Python (@($ShadersPy) + $a)
@@ -1138,12 +1317,38 @@ function HudAssets {
     $Summary['HUD'] = Under $Data 'hud'
 }
 
+# AP_CACHE_MOVED: why a CMakeCache.txt cannot be used here ('' = it can): it was made in another framework folder (the port
+# folder was copied to another folder or PC) or a tool path it holds does not exist on this PC.
+function CacheProblem([string]$cache) {
+    $made = ((CacheValue $cache 'CMAKE_HOME_DIRECTORY') -replace '\\', '/').TrimEnd('/')
+    $here = ($Framework -replace '\\', '/').TrimEnd('/')
+    $how = if ($OnLinux) { [StringComparison]::Ordinal } else { [StringComparison]::OrdinalIgnoreCase }
+    if ($made -and -not [string]::Equals($made, $here, $how)) { return "made in $made" }
+    foreach ($k in @('CMAKE_TOOLCHAIN_FILE', 'VCPKG_CHAINLOAD_TOOLCHAIN_FILE', 'CMAKE_MAKE_PROGRAM', 'CMAKE_C_COMPILER', 'CMAKE_CXX_COMPILER',
+                     'NX_XWIN', 'NX_LLVM', 'NX_OPUS_ROOT', 'CMAKE_PREFIX_PATH')) {
+        foreach ($p in ((CacheValue $cache $k) -split ';')) {
+            if (-not $p -or $p -like '*-NOTFOUND' -or $p -notmatch '[\\/]') { continue }
+            if (-not (Test-Path -LiteralPath $p)) { return "$k=$p does not exist" }
+        }
+    }
+    return ''
+}
+
 function Step9 {
     if ($script:HudJob) { HudAssets }   # AP_RECOMP_PARALLEL: the background HUD build ends before the compile starts
     $cache = Under $Build 'CMakeCache.txt'
     $gen = ((Under $Data 'gen') -replace '\\', '/')
     Push-Location $Framework
     try {
+        if (Test-Path -LiteralPath $cache) {   # AP_CACHE_MOVED: a build made in another folder or PC is configured again here
+            $why = CacheProblem $cache
+            if ($why) {
+                Info "$Build was configured elsewhere ($why): configuring it again here (its CMakeCache.txt and CMakeFiles are removed; the objects are rebuilt)"
+                Remove-Item -LiteralPath $cache -Force
+                $cmf = Under $Build 'CMakeFiles'
+                if (Test-Path -LiteralPath $cmf) { Remove-Item -LiteralPath $cmf -Recurse -Force }
+            }
+        }
         if (Test-Path -LiteralPath $cache) {
             $g = (CacheValue $cache 'NX_GEN_DIR') -replace '\\', '/'
             if ($g -ne $gen) { Fail "$Build uses NX_GEN_DIR=$g, not $gen (in a test copy: delete that build\ of the copy, it is configured again)" }
@@ -1165,6 +1370,10 @@ function Step9 {
             # Generator and toolchain: from the build of the other edition (read only).
             $cands = @((Under $BuildOther 'CMakeCache.txt'))
             $other = $cands | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+            if ($other) {   # AP_CACHE_MOVED: parameters of a build made in another folder or PC are not copied
+                $why = CacheProblem $other
+                if ($why) { Info "not copying the parameters of $other ($why): defaults of this PC"; $other = $null }
+            }
             $a = @('-B', $Build, "-DNX_GAME=$($V.Game)", "-DNX_GEN_DIR=$gen")
             if ($other) {
                 Info "parameters from $other"
@@ -1226,7 +1435,7 @@ function Step9 {
         }
         # AP_RECOMP_PARALLEL: -Jobs N limits the compile jobs; afterwards, where the time of this build went
         $nlog = Under $Build '.ninja_log'
-        $nOff = [int64]0; if (Test-Path -LiteralPath $nlog) { $nOff = (Get-Item -LiteralPath $nlog).Length }
+        $nOff = [int64]0; if (Test-Path -LiteralPath $nlog) { $nOff = (Get-Item -LiteralPath $nlog -Force).Length }   # AP_NINJA_LOG_FORCE: a dot file is hidden on Linux
         $ba = @('--build', $Build); if ($Jobs -gt 0) { $ba += @('--parallel', "$Jobs") }
         $t0 = Get-Date
         RunVisible 'cmake' $ba 'cmake --build'
@@ -1247,12 +1456,16 @@ function Step10 {
         $exe = Under $Build "$($V.Game).exe"
         $Summary['Exe'] = if (Test-Path -LiteralPath $exe) { "$exe ($((Get-Item -LiteralPath $exe).LastWriteTime))" } else { '(not built)' }
     }
-    if (-not $Summary.Contains('Shaders') -and (Test-Path -LiteralPath (Under $Data 'analysis\main.bin')) -and (Test-Path -LiteralPath (Under $Data 'extract\romfs\shader'))) {
+    if (-not $Summary.Contains('Shaders') -and (Test-Path -LiteralPath (Under $Data 'analysis\main.bin')) -and (Test-Path -LiteralPath (Under (BuildRomfsDir) 'shader'))) {   # AP_ROMFS_DIRECT
         $c = CountShaders ''
         $Summary['Shaders'] = "$($c.total) (romfs $($c.romfs) + main $($c.main)); untranslated $($c.without_spv)"
     }
+    if (-not $Summary.Contains('RomFS')) {   # AP_ROMFS_DIRECT
+        if (-not $Extract -and (Test-Path -LiteralPath $RomfsSource)) { DirectDumpCheck }
+        elseif (Test-Path -LiteralPath (Under $Data 'extract\romfs\shader')) { $Summary['RomFS'] = Under $Data 'extract\romfs' }
+    }
     $Summary['Data root'] = $Data
-    $left = @('gen.old', 'exefs.old', 'extract\romfs.old', 'analysis\main.bin.old', 'analysis\sdk.bin.old' |
+    $left = @('gen.old', 'exefs.old', 'extract\romfs.old', 'romfs_build.old', 'analysis\main.bin.old', 'analysis\sdk.bin.old' |   # AP_ROMFS_DIRECT: romfs_build.old
               Where-Object { Test-Path -LiteralPath (Under $Data $_) })
     if ($left.Count) { $Summary['Old'] = ($left -join ', ') + ' (in the data root; delete them by hand when convenient)' }
     Write-Host ''

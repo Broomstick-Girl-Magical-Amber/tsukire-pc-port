@@ -6,6 +6,8 @@ like nstool or LibHac need the base NCA for that. Here the base romfs is rebuilt
 has: the files of data\\<edition>\\extract\\romfs plus a small index (romfs_index.bin, a few hundred KB) with where each
 file was inside the base romfs image, the metadata tables and any non-zero padding. The index is made ONCE from the
 dump (step "index"); after that the dump can be deleted and any number of patches can be processed.
+AP_ROMFS_DIRECT (apply_romfs_direct.py): when the port reads the RomFS from the dump (the default), the dump stays in the
+root and "mod --base-dump <dump>" reads the base romfs from it instead (no index, no extract\\romfs).
 
 Commands:
   index  --keys K --input <base .xci/.nsp> --program-id ID --base-romfs <extract\\romfs> --out <romfs_index.bin>
@@ -587,7 +589,7 @@ def load_index(path, pid):
 def cmd_mod(a):
     keys = load_keys(a.keys)
     pid = int(a.program_id, 16)
-    idx = load_index(a.index, pid)
+    idx, dump_base = base_source(a, keys, pid)  # AP_ROMFS_DIRECT
     if os.path.exists(a.out) and os.listdir(a.out):
         fail(f"{a.out} exists and is not empty")
     files = container_files(a.nsp)
@@ -622,7 +624,7 @@ def cmd_mod(a):
 
     # romfs
     sec = nca.section(1)
-    base = BaseRomfs(idx, a.base_romfs)
+    base = dump_base or BaseRomfs(idx, a.base_romfs)  # AP_ROMFS_DIRECT
     if sec.bktr:
         vs = Patched(sec, base)
         vread = vs.read
@@ -639,6 +641,7 @@ def cmd_mod(a):
                 check[row["R"].replace("\\", "/").lstrip("/").lower()] = row["H"].upper()
     unchanged = changed = new = verified = 0
     mismatch = []
+    recipes, not_copied = [], 0  # AP_MOD_RECIPES
     os.makedirs(out_romfs)
     for i, (foff, size, rel) in enumerate(pfiles):
         voff = l6_off + foff
@@ -653,33 +656,39 @@ def cmd_mod(a):
         if same_place:
             unchanged += 1
             if md5 is not None:
-                with open(to_host(a.base_romfs, b[2]), "rb") as f:
+                with base_open(a, dump_base, b) as f:  # AP_ROMFS_DIRECT
                     for c in iter(lambda: f.read(CHUNK), b""):
                         md5.update(c)
         else:
             dst = to_host(out_romfs, rel)
             os.makedirs(os.path.dirname(dst), exist_ok=True)
-            equal = b is not None and b[1] == size
-            bf = open(to_host(a.base_romfs, b[2]), "rb") if equal else None
-            with open(dst + ".tmp", "wb") as f:
-                for c in range(0, size, CHUNK):
-                    d = vread(voff + c, min(CHUNK, size - c))
-                    f.write(d)
-                    if md5 is not None:
-                        md5.update(d)
-                    if bf is not None and equal and bf.read(len(d)) != d:
-                        equal = False
-            if bf:
-                bf.close()
-            if equal:
-                os.remove(dst + ".tmp")
-                unchanged += 1
+            plan = recipe_plan(vs, voff, size, idx, rel, a) if dump_base is not None and b is not None else None  # AP_MOD_RECIPES
+            if plan is not None:
+                not_copied += write_recipe(dst + RECIPE_EXT, plan, size, int(a.program_id, 16), idx, vread, voff, dump_base, md5)
+                recipes.append(rel)
+                changed += 1
             else:
-                os.replace(dst + ".tmp", dst)
-                if b is None:
-                    new += 1
+                equal = b is not None and b[1] == size
+                bf = base_open(a, dump_base, b) if equal else None  # AP_ROMFS_DIRECT
+                with open(dst + ".tmp", "wb") as f:
+                    for c in range(0, size, CHUNK):
+                        d = vread(voff + c, min(CHUNK, size - c))
+                        f.write(d)
+                        if md5 is not None:
+                            md5.update(d)
+                        if bf is not None and equal and bf.read(len(d)) != d:
+                            equal = False
+                if bf:
+                    bf.close()
+                if equal:
+                    os.remove(dst + ".tmp")
+                    unchanged += 1
                 else:
-                    changed += 1
+                    os.replace(dst + ".tmp", dst)
+                    if b is None:
+                        new += 1
+                    else:
+                        changed += 1
         if md5 is not None:
             exp = check.get(rel.lower())
             if exp != md5.hexdigest().upper():
@@ -694,10 +703,14 @@ def cmd_mod(a):
     removed = [f[2] for f in idx["files"] if f[2].lower() not in pset]
     info = {"nsp": os.path.basename(a.nsp), "program_nca": name, "bktr": sec.bktr, "romfs_files": len(pfiles),
             "changed": changed, "new": new, "unchanged": unchanged, "removed": removed, "exefs_different": exefs_diff,
+            "recipes": recipes, "recipe_bytes_not_copied": not_copied,  # AP_MOD_RECIPES
             "main_sha256": nso_image_sha(os.path.join(out_exefs, "main")) if os.path.isfile(os.path.join(out_exefs, "main")) else None}
     with open(os.path.join(a.out, "mod.json"), "w", encoding="utf-8") as f:
         json.dump(info, f, indent=1)
     print(f"   romfs: {len(pfiles)} files; changed {changed}, new {new}, unchanged {unchanged}, missing in the patch {len(removed)}")
+    if recipes:  # AP_MOD_RECIPES
+        print(f"   {len(recipes)} of them kept as recipes over the dump ({not_copied / (1 << 30):.2f} GiB of the base not copied): "
+              f"{', '.join(recipes[:5])}")
     if removed:
         print(f"   WARNING: files of the base that the patch does not have (the base one stays visible): {', '.join(removed[:5])}")
     if check is not None:
@@ -726,6 +739,180 @@ class _SectionSource(Source):
         return self.sec.read(self.offset + off, n)
 
 
+# ---------------------------------------------------------------------------------------------------------- AP_ROMFS_DIRECT
+class DumpBase:
+    """The base romfs read straight from the dump: what BaseRomfs rebuilds from extract\\romfs + the index, without them."""
+
+    def __init__(self, path, keys, pid):
+        name, nca = find_program(container_files(path), keys, pid, False)
+        self.sec = nca.section(1)
+        self.l6_off, self.l6_size = self.sec.ivfc_data()
+        files, _ = romfs_files(lambda o, n: self.sec.read(self.l6_off + o, n))
+        self.index = {"l6_offset": self.l6_off, "l6_size": self.l6_size, "files": [[o, s, r] for o, s, r in files]}
+        print(f"   base romfs read from {os.path.basename(path)} ({name}): {len(files)} files")
+
+    def read_section(self, off, n):
+        return self.sec.read(off, n)
+
+
+class _DumpFile:
+    """A base file read from the dump, with the part of the file API that cmd_mod uses."""
+
+    def __init__(self, base, off, size):
+        self.base, self.off, self.size, self.pos = base, off, size, 0
+
+    def read(self, n=-1):
+        if n is None or n < 0:
+            n = self.size - self.pos
+        n = max(0, min(n, self.size - self.pos))
+        b = self.base.sec.read(self.base.l6_off + self.off + self.pos, n) if n else b""
+        self.pos += n
+        return b
+
+    def close(self):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+
+def base_source(a, keys, pid):
+    """(index-like dict, DumpBase or None): --base-dump, or --index + --base-romfs as before."""
+    if a.base_dump:
+        d = DumpBase(a.base_dump, keys, pid)
+        return d.index, d
+    if not a.index or not a.base_romfs:
+        fail("mod needs --base-dump <dump>, or --index and --base-romfs")
+    return load_index(a.index, pid), None
+
+
+def base_open(a, dump, b):
+    """The base file b = (offset in the romfs, size, path) of the index, opened for reading."""
+    return _DumpFile(dump, b[0], b[1]) if dump is not None else open(to_host(a.base_romfs, b[2]), "rb")
+
+
+# ---------------------------------------------------------------------------------------------------------- AP_MOD_RECIPES
+# A big changed file that is mostly the base game is written as <file>.nxrcp (ranges of the RomFS of the dump + the
+# bytes of the patch) instead of whole; the game rebuilds it while reading (romfs_direct.cpp). See apply_mod_recipes.py.
+RECIPE_EXT = ".nxrcp"
+RECIPE_MAGIC = b"NXRCP1\0\0"
+RECIPE_LIT = 1 << 63
+
+
+def recipe_plan(vs, voff, size, idx, rel, a):
+    """[[kind, source, length]...] (kind 0 = RomFS offset of the base, 1 = virtual offset of the patched RomFS) and the
+    bytes that come from the base, or None when the file is written whole."""
+    if vs is None or a.recipe_min_mb <= 0 or size < (a.recipe_min_mb << 20):
+        return None
+    low = rel.lower()
+    if low.startswith("shader/") or "allui." in low:  # read by the build tools (shaders, HUD icons)
+        return None
+    l6o, l6s = idx["l6_offset"], idx["l6_size"]
+    ext, base_bytes, pos = [], 0, 0
+    for s, p, m in vs.pieces(voff, size):
+        if s == 0 and l6o <= p and p + m <= l6o + l6s:
+            bo = p - l6o
+            if ext and ext[-1][0] == 0 and ext[-1][1] + ext[-1][2] == bo:
+                ext[-1][2] += m
+            else:
+                ext.append([0, bo, m])
+            base_bytes += m
+        elif ext and ext[-1][0] == 1:
+            ext[-1][2] += m
+        else:
+            ext.append([1, voff + pos, m])
+        pos += m
+    if pos != size or base_bytes * 2 < size:
+        return None
+    return ext, base_bytes
+
+
+def write_recipe(path, plan, size, pid, idx, vread, voff, dump, md5):
+    """Writes <path> (.nxrcp) and checks it against the patched RomFS; returns the bytes not copied."""
+    ext, base_bytes = plan
+    head = 48 + 16 * len(ext) + 4
+    rows, blob = [], 0
+    for kind, src, m in ext:
+        rows.append(struct.pack("<QQ", m, src if kind == 0 else RECIPE_LIT | blob))
+        blob += m if kind == 1 else 0
+    with open(path + ".tmp", "wb") as f:
+        f.write(RECIPE_MAGIC + struct.pack("<IIQQQQ", 1, len(ext), size, pid, idx["l6_size"], head))
+        f.write(b"".join(rows) + b"END1")
+        for kind, src, m in ext:
+            for c in range(0, m, CHUNK):
+                n = min(CHUNK, m - c)
+                if kind == 1:
+                    d = vread(src + c, n)
+                    f.write(d)
+                    if md5 is not None:
+                        md5.update(d)
+                elif md5 is not None:
+                    md5.update(dump.read_section(idx["l6_offset"] + src + c, n))
+    os.replace(path + ".tmp", path)
+    import random
+    r = RecipeReader(path, dump, idx)
+    rnd = random.Random(size)
+    probes = [(0, min(size, 1 << 16)), (max(0, size - (1 << 16)), min(size, 1 << 16))]
+    probes += [(o, min(size - o, 1 << 20)) for o in (rnd.randrange(0, size) for _ in range(48))]
+    for kind, src, m in ext:  # both edges of every patch range (at most 200)
+        if kind == 1 and len(probes) < 250:
+            o = src - voff
+            probes += [(max(0, o - 64), min(size - max(0, o - 64), 128)), (max(0, o + m - 64), min(size - max(0, o + m - 64), 128))]
+    for o, n in probes:
+        if n > 0 and r.read(o, n) != vread(voff + o, n):
+            os.remove(path)
+            fail(f"recipe of {os.path.basename(path)}: bytes at {o:#x} differ from the patched romfs (nothing kept)")
+    return base_bytes
+
+
+class RecipeReader:
+    """A .nxrcp read back (bytes of the base from the dump)."""
+
+    def __init__(self, path, dump, idx):
+        self.f = open(path, "rb")
+        hd = self.f.read(48)
+        if hd[:8] != RECIPE_MAGIC:
+            fail(f"{path} is not a recipe")
+        _, n, self.size, _, _, self.data = struct.unpack_from("<IIQQQQ", hd, 8)
+        rows = self.f.read(16 * n)
+        self.ext, at = [], 0
+        for k in range(n):
+            m, src = struct.unpack_from("<QQ", rows, 16 * k)
+            self.ext.append((at, m, src))
+            at += m
+        self.starts = [e[0] for e in self.ext]
+        self.dump, self.l6 = dump, idx["l6_offset"]
+
+    def read(self, off, n):
+        out = bytearray()
+        k = bisect.bisect_right(self.starts, off) - 1
+        while n > 0 and 0 <= k < len(self.ext):
+            at, m, src = self.ext[k]
+            i = off - at
+            c = min(m - i, n)
+            if src & RECIPE_LIT:
+                self.f.seek(self.data + (src & ~RECIPE_LIT) + i)
+                out += self.f.read(c)
+            else:
+                out += self.dump.read_section(self.l6 + src + i, c)
+            off, n, k = off + c, n - c, k + 1
+        return bytes(out)
+
+
+def cmd_unrecipe(a):
+    """Rebuilds the whole file of a .nxrcp (for tools that need it on disk)."""
+    d = DumpBase(a.base_dump, load_keys(a.keys), int(a.program_id, 16))
+    r = RecipeReader(a.recipe, d, d.index)
+    with open(a.out + ".tmp", "wb") as f:
+        for o in range(0, r.size, CHUNK):
+            f.write(r.read(o, min(CHUNK, r.size - o)))
+    os.replace(a.out + ".tmp", a.out)
+    print(f"UNRECIPE size={r.size}")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sp = ap.add_subparsers(dest="cmd", required=True)
@@ -739,13 +926,21 @@ def main():
     m.add_argument("--keys", required=True)
     m.add_argument("--nsp", required=True)
     m.add_argument("--program-id", required=True)
-    m.add_argument("--index", required=True)
-    m.add_argument("--base-romfs", required=True)
+    m.add_argument("--index")
+    m.add_argument("--base-romfs")
+    m.add_argument("--base-dump")  # AP_ROMFS_DIRECT: the base romfs straight from the dump (no index, no extract\\romfs)
     m.add_argument("--base-exefs", required=True)
     m.add_argument("--out", required=True)
     m.add_argument("--verify-csv")
+    m.add_argument("--recipe-min-mb", type=int, default=256)  # AP_MOD_RECIPES: 0 = every changed file whole
+    u = sp.add_parser("unrecipe")  # AP_MOD_RECIPES: the whole file of a .nxrcp
+    u.add_argument("--keys", required=True)
+    u.add_argument("--base-dump", required=True)
+    u.add_argument("--program-id", required=True)
+    u.add_argument("--recipe", required=True)
+    u.add_argument("--out", required=True)
     a = ap.parse_args()
-    (cmd_index if a.cmd == "index" else cmd_mod)(a)
+    {"index": cmd_index, "mod": cmd_mod, "unrecipe": cmd_unrecipe}[a.cmd](a)  # AP_MOD_RECIPES
 
 
 if __name__ == "__main__":
