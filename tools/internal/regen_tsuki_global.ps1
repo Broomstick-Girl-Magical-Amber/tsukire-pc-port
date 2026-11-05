@@ -23,7 +23,14 @@ $Python = if ($OnLinux) { Join-Path $Framework 'private/venv/bin/python' } else 
 
 # The build has to read from the same folder that is regenerated.
 $cache = Join-Path $Framework 'build\tsukihime_global\CMakeCache.txt'
+# AP_CACHE_MOVED: a build configured in another folder or PC (the port folder was copied) is configured again by step 9
+# of recomp_tsukihime.ps1: no check for it.
+$cacheHome = ''
 if (Test-Path $cache) {
+    $h = Select-String -Path $cache -Pattern '^CMAKE_HOME_DIRECTORY:[A-Z]+=(.*)$' | Select-Object -First 1
+    if ($h) { $cacheHome = ($h.Matches[0].Groups[1].Value -replace '\\', '/').TrimEnd('/') }
+}
+if ((Test-Path $cache) -and (-not $cacheHome -or $cacheHome -eq (($Framework -replace '\\', '/').TrimEnd('/')))) {
     $line = Select-String -Path $cache -Pattern '^NX_GEN_DIR:' | Select-Object -First 1
     if ($line -and ($line.Line -replace '\\', '/') -notmatch [regex]::Escape(($Gen -replace '\\', '/'))) {
         throw "build\tsukihime_global uses another folder of generated code: $($line.Line)"

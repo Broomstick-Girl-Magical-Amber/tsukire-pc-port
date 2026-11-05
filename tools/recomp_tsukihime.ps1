@@ -110,6 +110,7 @@ $FontSha256 = '8EA2D3ECEECB43A55F2567F7A8ABF85A5BB1F4FCA9A53E4786B7773F2C6F9D56'
 # Markers: string each apply_*.py uses to detect that it is already applied (read from the patchers).
 # Ed: both | japan | global. Created = file created by step 4 (checked after that step).
 $Markers = @(
+    @('both', 'tools\recomp_tsukihime.ps1', 'AP_NINJA_LOG_FORCE', 'apply_ninja_log_force.py', $false),
     @('both', 'framework\recomp\analysis.py', '_JT_LSR = ', 'apply_jt_lsr.py (version 2)', $false),
     @('both', 'framework\runtime\src\kernel.cpp', 'CancelSynchronization that arrived before', 'apply_cancel_sync.py', $false),
     @('both', 'framework\runtime\src\nvn\nvn_draw_state.h', 'stage_program', 'apply_stage_programs.py', $false),
@@ -200,6 +201,9 @@ $Markers = @(
     @('both', 'tools\internal\mods_nsp.py', 'AP_ROMFS_DIRECT', 'apply_romfs_direct.py', $false),
     @('both', 'tools\hud\build_hud_assets.py', 'AP_ROMFS_DIRECT', 'apply_romfs_direct.py', $false),
     @('both', 'tools\recomp_tsukihime.ps1', 'AP_FIND_INPUTS', 'apply_find_inputs.py', $false),
+    @('both', 'tools\recomp_tsukihime.ps1', 'AP_CACHE_MOVED', 'apply_cache_moved.py', $false),
+    @('japan', 'tools\internal\regen_tsuki.ps1', 'AP_CACHE_MOVED', 'apply_cache_moved.py', $false),
+    @('global', 'tools\internal\regen_tsuki_global.ps1', 'AP_CACHE_MOVED', 'apply_cache_moved.py', $false),
     @('japan', 'framework\games\tsukihime\game.cmake', 'tsukihime_common/tsukihime_common.cmake', 'games\tsukihime_common (shared code, in the repo)', $false),
     @('japan', 'framework\games\tsukihime\game.cmake', 'NX_DEFAULT_ORIGIN_LOWER_LEFT', 'apply_origin_default.py', $false),
     @('japan', 'framework\games\tsukihime\game.cmake', 'NX_FIXED_ASPECT', 'apply_aspect.py', $false),
@@ -1307,12 +1311,38 @@ function HudAssets {
     $Summary['HUD'] = Under $Data 'hud'
 }
 
+# AP_CACHE_MOVED: why a CMakeCache.txt cannot be used here ('' = it can): it was made in another framework folder (the port
+# folder was copied to another folder or PC) or a tool path it holds does not exist on this PC.
+function CacheProblem([string]$cache) {
+    $made = ((CacheValue $cache 'CMAKE_HOME_DIRECTORY') -replace '\\', '/').TrimEnd('/')
+    $here = ($Framework -replace '\\', '/').TrimEnd('/')
+    $how = if ($OnLinux) { [StringComparison]::Ordinal } else { [StringComparison]::OrdinalIgnoreCase }
+    if ($made -and -not [string]::Equals($made, $here, $how)) { return "made in $made" }
+    foreach ($k in @('CMAKE_TOOLCHAIN_FILE', 'VCPKG_CHAINLOAD_TOOLCHAIN_FILE', 'CMAKE_MAKE_PROGRAM', 'CMAKE_C_COMPILER', 'CMAKE_CXX_COMPILER',
+                     'NX_XWIN', 'NX_LLVM', 'NX_OPUS_ROOT', 'CMAKE_PREFIX_PATH')) {
+        foreach ($p in ((CacheValue $cache $k) -split ';')) {
+            if (-not $p -or $p -like '*-NOTFOUND' -or $p -notmatch '[\\/]') { continue }
+            if (-not (Test-Path -LiteralPath $p)) { return "$k=$p does not exist" }
+        }
+    }
+    return ''
+}
+
 function Step9 {
     if ($script:HudJob) { HudAssets }   # AP_RECOMP_PARALLEL: the background HUD build ends before the compile starts
     $cache = Under $Build 'CMakeCache.txt'
     $gen = ((Under $Data 'gen') -replace '\\', '/')
     Push-Location $Framework
     try {
+        if (Test-Path -LiteralPath $cache) {   # AP_CACHE_MOVED: a build made in another folder or PC is configured again here
+            $why = CacheProblem $cache
+            if ($why) {
+                Info "$Build was configured elsewhere ($why): configuring it again here (its CMakeCache.txt and CMakeFiles are removed; the objects are rebuilt)"
+                Remove-Item -LiteralPath $cache -Force
+                $cmf = Under $Build 'CMakeFiles'
+                if (Test-Path -LiteralPath $cmf) { Remove-Item -LiteralPath $cmf -Recurse -Force }
+            }
+        }
         if (Test-Path -LiteralPath $cache) {
             $g = (CacheValue $cache 'NX_GEN_DIR') -replace '\\', '/'
             if ($g -ne $gen) { Fail "$Build uses NX_GEN_DIR=$g, not $gen (in a test copy: delete that build\ of the copy, it is configured again)" }
@@ -1334,6 +1364,10 @@ function Step9 {
             # Generator and toolchain: from the build of the other edition (read only).
             $cands = @((Under $BuildOther 'CMakeCache.txt'))
             $other = $cands | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+            if ($other) {   # AP_CACHE_MOVED: parameters of a build made in another folder or PC are not copied
+                $why = CacheProblem $other
+                if ($why) { Info "not copying the parameters of $other ($why): defaults of this PC"; $other = $null }
+            }
             $a = @('-B', $Build, "-DNX_GAME=$($V.Game)", "-DNX_GEN_DIR=$gen")
             if ($other) {
                 Info "parameters from $other"
@@ -1395,7 +1429,7 @@ function Step9 {
         }
         # AP_RECOMP_PARALLEL: -Jobs N limits the compile jobs; afterwards, where the time of this build went
         $nlog = Under $Build '.ninja_log'
-        $nOff = [int64]0; if (Test-Path -LiteralPath $nlog) { $nOff = (Get-Item -LiteralPath $nlog).Length }
+        $nOff = [int64]0; if (Test-Path -LiteralPath $nlog) { $nOff = (Get-Item -LiteralPath $nlog -Force).Length }   # AP_NINJA_LOG_FORCE: a dot file is hidden on Linux
         $ba = @('--build', $Build); if ($Jobs -gt 0) { $ba += @('--parallel', "$Jobs") }
         $t0 = Get-Date
         RunVisible 'cmake' $ba 'cmake --build'
