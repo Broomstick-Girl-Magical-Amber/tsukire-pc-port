@@ -8,6 +8,8 @@
 #   bash tools/linux/install_requirements_linux.sh -From 5            # resume
 #   bash tools/linux/install_requirements_linux.sh -Edition global    # options of install_requirements.ps1, same spelling
 #
+# AP_ASK_FIRST: both questions (sudo for the system programs of step 1, and the Microsoft license of the Windows
+# CRT/SDK) are asked right after step 0, before anything is installed; -AcceptLicense accepts the license up front.
 # The only thing that may ask for sudo is step 1 (system programs), and it asks first. You accept the Microsoft license
 # of the Windows CRT/SDK (xwin, step 2) when xwin asks. Log in <root>/_prepare/.
 set -euo pipefail

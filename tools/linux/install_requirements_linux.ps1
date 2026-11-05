@@ -322,7 +322,8 @@ function Step1 {
     $cmd = SystemCommand $g $pkgs
     $txt = "sudo $($cmd -join ' ')"
     if ($Check) { Problem "$($f -join ', ') are missing: $txt"; return }
-    if ($g -eq 'apt' -and -not (Ask "Update the package list and install: $($pkgs -join ' ') (sudo)?")) { Fail "$($f -join ', ') are missing: install them with: sudo apt-get update; $txt" }
+    if ($script:SudoAsked) { }   # AP_ASK_FIRST: already answered (and sudo -v done) right after step 0
+    elseif ($g -eq 'apt' -and -not (Ask "Update the package list and install: $($pkgs -join ' ') (sudo)?")) { Fail "$($f -join ', ') are missing: install them with: sudo apt-get update; $txt" }
     elseif ($g -ne 'apt' -and -not (Ask "Install: $($pkgs -join ' ') (sudo)?")) { Fail "$($f -join ', ') are missing: install them with: $txt" }
     if ($g -eq 'apt') { & sudo apt-get update; if ($LASTEXITCODE -ne 0) { Fail 'sudo apt-get update failed' } }
     & sudo @cmd

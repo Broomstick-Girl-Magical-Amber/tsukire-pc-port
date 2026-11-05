@@ -53,6 +53,7 @@ param(
     [string]$Keys = '',
     [switch]$Extract,   # AP_ROMFS_DIRECT: passed to recomp_tsukihime.ps1 (-Recomp): full extraction of the RomFS
     [switch]$TrimXci,   # AP_ROMFS_DIRECT: passed to recomp_tsukihime.ps1 (-Recomp): trim the 0xFF padding of the .xci
+    [switch]$AcceptLicense,   # AP_ASK_FIRST: accept the Microsoft license of the Windows CRT/SDK (xwin) without asking
     [string]$Vcpkg = 'C:\dev\vcpkg',
     # AP_DROP_UNUSED: -NstoolFrom removed
     [ValidateSet('global', 'japan', 'both')][string]$Edition = 'both',
@@ -1370,6 +1371,42 @@ if ($OnLinux) {
 $StepNames = @('precheck', 'system (administrator)', 'user', 'repos', 'vcpkg', 'vcpkg libraries', 'venv', 'nsextract',
                'ryubing + harness', 'gpu', 'cross check with recomp_tsukihime', 'summary')
 
+# AP_ASK_FIRST: every question of the install, right after step 0, so the run does not stop later to ask: the
+# Microsoft license of the Windows CRT/SDK (xwin; -AcceptLicense accepts it on the command line) and, on Linux, the
+# sudo of step 1 (system programs), whose password is cached now with "sudo -v".
+$script:SudoAsked = $false
+function AskFirst {
+    if ($Check -or $To -lt 1) { return }
+    $asked = $false
+    $crt = ($OnLinux -or $script:UseXwin) -and [bool](Get-Command XwinOk -ErrorAction SilentlyContinue)
+    if ($crt -and $env:XWIN_ACCEPT_LICENSE -ne 'true' -and -not (XwinOk)) {
+        Write-Host ''
+        Info 'xwin downloads the MSVC CRT/STL and the Windows SDK from Microsoft. Their license:'
+        Info '  https://go.microsoft.com/fwlink/?LinkId=2086102'
+        if ($AcceptLicense) { Info 'accepted with -AcceptLicense'; $env:XWIN_ACCEPT_LICENSE = 'true' }
+        elseif (-not $NonInteractive) {
+            $asked = $true
+            if (-not (Ask 'Do you accept the Microsoft license of the CRT/SDK (the same one Visual Studio asks for)?')) {
+                Fail "license not accepted: without the CRT/SDK the game cannot be built (nothing was installed)$(if (-not $OnLinux) { '; -Toolchain vs uses Visual Studio instead' })"
+            }
+            $env:XWIN_ACCEPT_LICENSE = 'true'   # only for this run and the processes it starts
+        }
+    }
+    if ($OnLinux -and $From -le 1 -and -not $NonInteractive -and [bool](Get-Command MissingSystem -ErrorAction SilentlyContinue)) {
+        $f = @(MissingSystem)
+        $g = PackageManager
+        if ($f.Count -and $g) {
+            $pkgs = @($f | ForEach-Object { $SystemPkgs[$_][$g] } | Sort-Object -Unique)
+            $asked = $true
+            if (-not (Ask "Step 1 installs with sudo: $($pkgs -join ' '). Go ahead?")) { Fail "$($f -join ', ') are missing: install them with: sudo $((SystemCommand $g $pkgs) -join ' ')" }
+            & sudo -v
+            if ($LASTEXITCODE -ne 0) { Fail 'sudo did not accept the password' }
+            $script:SudoAsked = $true
+        }
+    }
+    if ($asked) { Info 'no more questions: the rest runs on its own' }
+}
+
 function Main {
     if ($From -gt $To) { throw "-From $From greater than -To $To" }
     $script:Root = ResolveRoot
@@ -1386,7 +1423,7 @@ function Main {
     try { $encPrev = [Console]::OutputEncoding; [Console]::OutputEncoding = New-Object Text.UTF8Encoding($false) } catch { }
     try {
         $script:CurrentStep = 0
-        if (-not $Worker) { TimedStep 0 $StepNames[0] 'Step0'; CheckInputs }
+        if (-not $Worker) { TimedStep 0 $StepNames[0] 'Step0'; CheckInputs; AskFirst }   # AP_ASK_FIRST
         $order = @(1..11)
         # AP_INSTALL_PARALLEL: V5 starts step 5 in the background (vcpkg), J5 waits for it and checks it in line
         if (-not $Check) { $order = @(1, 2, 3, 4, 'V5', 6, 7, 8, 9, 'J5', 10, 11) }
