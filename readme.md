@@ -96,6 +96,7 @@ Some heroines and scenes. Hisui comes first by arbitrary choice.
 
 ## Dump and keys
 
+- **If you come from an older version** (one that extracted the RomFS), put your dump back in the root if you deleted it, `git pull` and recompile. Afterwards you can delete `data\<edition>\extract` to free about 22 GB.
 - **For the dump**, put the `.xci` / `.nsp` in the repository root and **leave it there**: the game reads it every time it starts. The file name does not matter: the scripts recognise the container by its header and the edition by its program ID. If you move the repository folder (to another drive or PC), move the dump with it.
 - **For the keys**, put `prod.keys` in `data\` (or in the root: the script moves it to `data\`). They are only needed while recompiling: the scripts never read, copy or print them, and the game never uses them.
 - **Trimming the .XCI dump (optional):** a full cartridge dump has about 8.5 GB of empty padding. `-TrimXci` removes it from the `.xci` in place, after checking that it really is padding.
