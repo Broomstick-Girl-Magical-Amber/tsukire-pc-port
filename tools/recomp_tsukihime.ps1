@@ -113,6 +113,8 @@ $Markers = @(
     @('both', 'tools\recomp_tsukihime.ps1', 'AP_NINJA_LOG_FORCE', 'apply_ninja_log_force.py', $false),
     @('both', 'framework\recomp\analysis.py', '_JT_LSR = ', 'apply_jt_lsr.py (version 2)', $false),
     @('both', 'framework\runtime\src\kernel.cpp', 'CancelSynchronization that arrived before', 'apply_cancel_sync.py', $false),
+    @('japan', 'tools\internal\regen_tsuki.ps1', 'AP_HOOK_NAME_TABLE', 'apply_hook_name_table.py', $false),
+    @('both', 'framework\games\tsukihime_common\hle_hooks_nombres_tsuki.cpp', 'AP_HOOK_NAME_TABLE', 'hle_hooks_nombres_tsuki.cpp (in the repo)', $false),
     @('both', 'framework\runtime\src\nvn\nvn_draw_state.h', 'stage_program', 'apply_stage_programs.py', $false),
     @('both', 'framework\runtime\src\nvn\nvn_draw_state.cpp', 'stage_program', 'apply_stage_programs.py', $false),
     @('both', 'framework\runtime\src\nvn\nvn_draw.cpp', 'stage_program', 'apply_stage_programs.py', $false),

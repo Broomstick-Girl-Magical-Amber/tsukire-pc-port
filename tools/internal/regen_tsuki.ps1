@@ -61,6 +61,7 @@ Push-Location $Framework
 try {
     foreach ($m in $Modules) {
         if (-not $Bases.ContainsKey($m)) { throw "unknown module: $m (known: $($Bases.Keys -join ', '))" }
+        if ("$env:NX_RECOMP_HOOKS" -notlike '*:tsuki_name_table:*') { $env:NX_RECOMP_HOOKS = "$env:NX_RECOMP_HOOKS;main:tsuki_name_table:0x56720,0xa88,0xd10143ff" }  # AP_HOOK_NAME_TABLE
         Write-Host "== recomp $m (base $($Bases[$m]), NX_RECOMP_JT_LSR=1, NX_RECOMP_JT_MOV=1)"
         $src = if ($m -eq 'main' -and $MainNso) { [IO.Path]::GetFullPath($MainNso) } else { Join-Path $ExeFS $m }
         if ($src -ne (Join-Path $ExeFS $m)) { Write-Host "   main from $src" }
