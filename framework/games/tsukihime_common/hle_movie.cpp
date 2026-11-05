@@ -483,6 +483,23 @@ void Extractor_SetDataSource_reader(nx::CPU& c) {
     // directo por la ruta y el lector no se usa (no hace falta reconstruir la vtable de ClientStreamReader).
     const char* path = reinterpret_cast<const char*>(c.x[2]);
     std::string rel = romfs_relative(path);
+    if (!rel.empty() && rel.find("movie/titlebg") == std::string::npos) {  // AP_MOVIE_STREAM
+        static const uint64_t min_bytes = [] {
+            const char* e = std::getenv("NX_MOVIE_STREAM_MB");
+            const long v = e ? std::strtol(e, nullptr, 10) : 32;
+            return uint64_t(v < 0 ? 0 : v) << 20;
+        }();
+        uint64_t size = 0;
+        auto reader = min_bytes ? nx::open_game_stream(rel, &size) : std::function<int64_t(uint64_t, void*, size_t)>();
+        if (reader && size >= min_bytes) {
+            nx::log("movie: SetDataSource(ClientStreamReader=%llx, \"%s\") -> streaming, %llu bytes",
+                    (unsigned long long)c.x[1], path ? path : "(null)", (unsigned long long)size);
+            tsuki_discord::video_started(ext(c.x[0]), rel.c_str());  // the same notices as the in-memory path
+            tsuki_title::video_started(ext(c.x[0]), rel.c_str());
+            ret(c, ext(c.x[0])->open_stream(size, std::move(reader)));
+            return;
+        }
+    }
     std::string data = rel.empty() ? std::string() : read_video(rel);  // AP_TITLE_BG
     nx::log("movie: SetDataSource(ClientStreamReader=%llx, \"%s\") -> abierto por ruta, %zu bytes",
             (unsigned long long)c.x[1], path ? path : "(null)", data.size());

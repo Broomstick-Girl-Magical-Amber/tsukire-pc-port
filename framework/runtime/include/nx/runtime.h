@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cstdint>
 #include <string>
+#include <functional>  // AP_MOVIE_STREAM
 
 #include <nx/cpu.h>
 #include <nx/module.h>
@@ -105,6 +106,17 @@ uint64_t hle_address_or(const char* name, HleFn fallback);  // unknown names get
 const char* hle_current_name();  // inside an HLE function: the name its thunk was made for
 HleFn hle_lookup(const char* name);
 
+// AP_RECOMP_HOOKS (apply_recomp_hooks.py): replacements for recompiled functions reached by direct calls (bl), which
+// NX_HLE cannot intercept. The recompiler emits a function listed in NX_RECOMP_HOOKS as <name>_orig plus a stub that
+// asks hook_lookup(hook) on its first call: then every call goes to fn(c, orig, entry) (orig = the recompiled body,
+// entry = guest address of the function) or, with nothing registered, to orig.
+using HookFn = void (*)(CPU& c, void (*orig)(CPU&), uint64_t entry);
+struct HookRegistrar {
+    HookRegistrar(const char* name, HookFn fn);
+};
+#define NX_HOOK(name, fn) static ::nx::HookRegistrar NX_HLE_CAT(hook_reg_, __LINE__)(name, fn)
+HookFn hook_lookup(const char* name);  // nullptr if nothing registered that name (logged)
+
 // Call guest code at `addr` on context c (args already in x0..).
 inline void guest_call(CPU& c, uint64_t addr) { call(c, addr); }
 
@@ -121,6 +133,9 @@ uint64_t system_tick();
 void add_virtual_file(const std::string& path, std::string data);
 // The contents of a real game file under the data folder ("" if missing).
 std::string read_game_file(const std::string& relative_to_romfs);
+// AP_MOVIE_STREAM: the same file as a reader read(offset, buffer, size) -> bytes read (<= 0: error / end), with its
+// size in *size. Empty when it cannot be streamed (missing, a recipe): use read_game_file then.
+std::function<int64_t(uint64_t, void*, size_t)> open_game_stream(const std::string& relative_to_romfs, uint64_t* size);
 // The last file and directory opens of every thread (a small ring, always on), logged by the crash handlers: what
 // the game was loading when it crashed (hle_fs.cpp).
 void log_recent_files();

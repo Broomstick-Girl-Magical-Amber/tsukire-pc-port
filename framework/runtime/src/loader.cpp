@@ -114,6 +114,21 @@ uint64_t hle_address(const char* name) { return hle_address_or(name, missing_stu
 
 const char* hle_current_name() { return t_missing_name; }
 
+// AP_RECOMP_HOOKS (apply_recomp_hooks.py): NX_HOOK registry, read once by each stub of the generated code.
+static std::unordered_map<std::string, HookFn>& hook_registry() {
+    static std::unordered_map<std::string, HookFn> r;
+    return r;
+}
+
+HookRegistrar::HookRegistrar(const char* name, HookFn fn) { hook_registry()[name] = fn; }
+
+HookFn hook_lookup(const char* name) {
+    auto it = hook_registry().find(name);
+    HookFn fn = it == hook_registry().end() ? nullptr : it->second;
+    log("hook %s: %s", name, fn ? "registered" : "not registered (recompiled code)");
+    return fn;
+}
+
 // ---- dispatch -------------------------------------------------------------------------------------------------
 
 const LoadedModule* module_at(uint64_t addr) {

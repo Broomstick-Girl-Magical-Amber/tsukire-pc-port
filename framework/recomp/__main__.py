@@ -16,6 +16,62 @@ import time
 
 from . import analysis, emit, nso
 
+
+# AP_RECOMP_HOOKS (apply_recomp_hooks.py): NX_RECOMP_HOOKS="<module>:<hook>:<symbol>;<module>:<hook>:0xADDR,0xSIZE,0xWORD"
+# emits each listed function as <name>_orig plus a stub <name> that calls the runtime hook (NX_HOOK) if there is one.
+def resolve_hooks(m, an, module):
+    """{function start: hook name} for this module. Entries whose function does not match are skipped (printed)."""
+    hooks = {}
+    starts = {f.start: f for f in an.functions}
+    for item in os.environ.get("NX_RECOMP_HOOKS", "").split(";"):
+        item = item.strip()
+        if not item:
+            continue
+        parts = item.split(":")
+        if len(parts) != 3 or not all(parts):
+            raise SystemExit(f"NX_RECOMP_HOOKS: bad entry {item!r} (<module>:<hook>:<symbol or 0xADDR,0xSIZE,0xWORD>)")
+        mod, hook, where = parts
+        if mod != module:
+            continue
+        if where.startswith("0x"):
+            vals = where.split(",")
+            if len(vals) != 3:
+                raise SystemExit(f"NX_RECOMP_HOOKS: bad entry {item!r} (0xADDR,0xSIZE,0xWORD)")
+            addr, size, word = (int(v, 16) for v in vals)
+            f = starts.get(addr)
+            if f is None:
+                print(f"hook {hook} skipped: no function starts at {module}+{addr:#x}")
+                continue
+            if f.end - f.start != size or m.u32(addr) != word:
+                print(f"hook {hook} skipped: {module}+{addr:#x} is {f.end - f.start:#x} bytes, first word "
+                      f"{m.u32(addr):#010x} (expected {size:#x}, {word:#010x}): another binary")
+                continue
+        else:
+            found = {s.value for s in m.symbols if s.name == where and not s.imported and s.type == 2}
+            if len(found) != 1 or next(iter(found)) not in starts:
+                print(f"hook {hook} skipped: symbol {where} not found as one function of {module}")
+                continue
+            addr = next(iter(found))
+        hooks[addr] = hook
+        print(f"hook {hook}: {module}+{addr:#x}")
+    return hooks
+
+
+def hooked_function(e, f, hook):
+    """The recompiled body renamed to <name>_orig, plus the stub <name>."""
+    name = e.fn(f.start)
+    text = e.function(f)
+    head = f"void {name}(nx::CPU& NX_RESTRICT c) {{"
+    if not text.startswith(head):
+        raise SystemExit(f"hook {hook}: unexpected start of {name}")
+    text = f"void {name}_orig(nx::CPU& NX_RESTRICT c) {{" + text[len(head):]
+    return (text + "\n\n"
+            f"// AP_RECOMP_HOOKS: hook \"{hook}\" (NX_HOOK in the runtime); {name}_orig is the recompiled body.\n"
+            f"void {name}(nx::CPU& NX_RESTRICT c) {{\n"
+            f"    static const nx::HookFn hook_ = nx::hook_lookup(\"{hook}\");\n"
+            f"    if (hook_) hook_(c, {name}_orig, NXB + {f.start:#x}ull); else {name}_orig(c);\n"
+            "}")
+
 INSNS_PER_FILE = 12000
 
 
@@ -58,6 +114,7 @@ def main():
 
     os.makedirs(args.out, exist_ok=True)
     e = emit.Emitter(an, prefix=name)
+    hooks = resolve_hooks(m, an, name)  # AP_RECOMP_HOOKS
     funcs = an.functions
     if args.only:
         want = {int(x, 16) for x in args.only}
@@ -69,11 +126,16 @@ def main():
         h.write(f"#pragma once\n#include <nx/cpu.h>\n\n#undef NXB\n#define NXB (NX_BASE + {base - REF_BASE:#x}ull)\n\n")
         for f in an.functions:
             h.write(f"void {e.fn(f.start)}(nx::CPU& c);\n")
+        if hooks:  # AP_RECOMP_HOOKS: what the stubs use (the same declarations as nx/runtime.h)
+            h.write("\nnamespace nx {\nusing HookFn = void (*)(CPU& c, void (*orig)(CPU&), uint64_t entry);\n"
+                    "HookFn hook_lookup(const char* name);\n}  // namespace nx\n")
+            for a in sorted(hooks):
+                h.write(f"void {e.fn(a)}_orig(nx::CPU& c);\n")
 
     files = []
     cur, cur_n = [], 0
     for k, f in enumerate(funcs):
-        cur.append(e.function(f))
+        cur.append(hooked_function(e, f, hooks[f.start]) if f.start in hooks else e.function(f))  # AP_RECOMP_HOOKS
         cur_n += (f.end - f.start) // 4
         if cur_n >= INSNS_PER_FILE or k == len(funcs) - 1:
             fname = f"code_{len(files):03d}.cpp"
