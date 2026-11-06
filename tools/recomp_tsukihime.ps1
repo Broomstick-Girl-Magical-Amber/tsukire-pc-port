@@ -117,6 +117,7 @@ $Markers = @(
     @('both', 'framework\games\tsukihime_common\hle_hooks_nombres_tsuki.cpp', 'AP_HOOK_NAME_TABLE', 'hle_hooks_nombres_tsuki.cpp (in the repo)', $false),
     @('both', 'framework\runtime\src\nvn\nvn_draw_state.h', 'stage_program', 'apply_stage_programs.py', $false),
     @('both', 'framework\runtime\src\nvn\nvn_draw_state.cpp', 'stage_program', 'apply_stage_programs.py', $false),
+    @('both', 'framework\games\tsukihime_common\title_bg.cpp', 'AP_TITLE_MUSIC_LOOP', 'apply_title_music_loop.py', $false),
     @('both', 'framework\runtime\src\nvn\nvn_draw.cpp', 'stage_program', 'apply_stage_programs.py', $false),
     @('both', 'framework\runtime\src\nvn\nvn.h', 'apply_clear_texture', 'apply_clear_texture.py', $false),
     @('both', 'framework\runtime\src\nvn\nvn_vk.h', 'apply_clear_texture', 'apply_clear_texture.py', $false),
