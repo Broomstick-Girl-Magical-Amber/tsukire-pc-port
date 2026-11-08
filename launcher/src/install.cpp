@@ -278,7 +278,7 @@ void OnDone(DWORD code, bool cancelled) {
     if (code != 0) {
         std::wstring t = s.p.error.empty() ? Format(L2(L"Failed (exit code %lu): see the log.", L"Fall\u00f3 (c\u00f3digo %lu): mira el log."), code) : s.p.error;
         if (t.find(L"-NonInteractive") != std::wstring::npos || t.find(L"without permission") != std::wstring::npos)
-            t += L2(L" Use \"Open in a console\" to answer the question.", L" Usa \"Abrir en una consola\" para responder la pregunta.");
+            t += L2(L" Use \"Recomp in a console\" to answer the question.", L" Usa \"Recompilar en una consola\" para responder la pregunta.");
         Finish(false, t);
         return;
     }
@@ -287,7 +287,7 @@ void OnDone(DWORD code, bool cancelled) {
         if (!StartCurrent()) Finish(false, L2(L"PowerShell could not be started.", L"No se pudo iniciar PowerShell."));
         return;
     }
-    Finish(true, Format(L2(L"Done in %ls. You can play now (Play and saves tab).", L"Listo en %ls. Ya puedes jugar (pesta\u00f1a Jugar y partidas)."),
+    Finish(true, Format(L2(L"Done in %ls. You can play now. Go to play and saves tab.", L"Listo en %ls. Ya puedes jugar. Ve a la pesta\u00f1a jugar y partidas."),
                         FormatElapsed(GetTickCount64() - s.started).c_str()));
 }
 
@@ -299,8 +299,8 @@ void Start() {
     }
     std::vector<DumpFile> dumps = FindDumps();
     if (dumps.empty()) {
-        Message(s.dlg, MB_ICONWARNING, L2(L"Copy your dump (.xci or .nsp, base version 1.0.0) to the port folder first. It stays there: the game reads it.",
-                                          L"Copia primero tu dump (.xci o .nsp, versi\u00f3n base 1.0.0) a la carpeta del port. Se queda ah\u00ed: el juego lo lee."));
+        Message(s.dlg, MB_ICONWARNING, L2(L"Copy your dump (.xci or .nsp, base version 1.0.0) to the port folder first.",
+                                          L"Copia primero tu dump (.xci o .nsp, versi\u00f3n base 1.0.0) a la carpeta del port."));
         return;
     }
     if (jp && gl && dumps.size() < 2) {
@@ -309,13 +309,13 @@ void Start() {
         return;
     }
     if (FindKeys() == KeysAt::None) {
-        Message(s.dlg, MB_ICONWARNING, L2(L"Copy your prod.keys to the port folder (or to data\\) first. It is only used while compiling and never copied or shown.",
-                                          L"Copia primero tu prod.keys a la carpeta del port (o a data\\). Solo se usa al compilar y nunca se copia ni se muestra."));
+        Message(s.dlg, MB_ICONWARNING, L2(L"Copy your prod.keys to the port folder first.",
+                                          L"Copia primero tu prod.keys a la carpeta del port."));
         return;
     }
     for (int ed = 0; ed < 2; ed++) {
         if ((ed == 0 ? jp : gl) && IsExeRunning(ExePath(ed))) {
-            Message(s.dlg, MB_ICONWARNING, L2(L"Close the game first: its .exe is rebuilt.", L"Cierra el juego primero: su .exe se vuelve a compilar."));
+            Message(s.dlg, MB_ICONWARNING, L2(L"Close the game first. Its .exe is rebuilt.", L"Cierra el juego primero. Su .exe se vuelve a compilar."));
             return;
         }
     }
@@ -389,8 +389,8 @@ void RefreshInstall() {
     std::vector<DumpFile> dumps = FindDumps();
     std::wstring line;
     if (dumps.empty()) {
-        line = L2(L"Dump: no .xci / .nsp in the port folder. Copy yours there (it stays: the game reads it).",
-                  L"Dump: no hay .xci / .nsp en la carpeta del port. Copia el tuyo ah\u00ed (se queda: el juego lo lee).");
+        line = L2(L"Dump: no .xci / .nsp in the port folder. Copy yours there.",
+                  L"Dump: no hay .xci / .nsp en la carpeta del port. Copia el tuyo ah\u00ed.");
     } else {
         line = L2(L"Dump: ", L"Dump: ");
         for (size_t i = 0; i < dumps.size(); i++)
@@ -399,13 +399,13 @@ void RefreshInstall() {
     SetDlgItemTextW(d, IDC_INS_DUMPS, line.c_str());
     KeysAt k = FindKeys();
     SetDlgItemTextW(d, IDC_INS_KEYS, k == KeysAt::Data ? L2(L"Keys: data\\prod.keys found.", L"Claves: data\\prod.keys encontrado.")
-                                    : k == KeysAt::Root ? L2(L"Keys: prod.keys found (it will be moved to data\\).", L"Claves: prod.keys encontrado (se mover\u00e1 a data\\).")
+                                    : k == KeysAt::Root ? L2(L"Keys: prod.keys found.", L"Claves: prod.keys encontrado.")
                                                         : L2(L"Keys: prod.keys is missing. Copy yours to the port folder.", L"Claves: falta prod.keys. Copia el tuyo a la carpeta del port."));
     std::wstring detail;
     bool tools = ToolsReady(&detail);
-    SetDlgItemTextW(d, IDC_INS_TOOLS, tools ? Format(L2(L"Tools: installed (%ls).", L"Herramientas: instaladas (%ls)."), detail.c_str()).c_str()
-                                            : L2(L"Tools: not installed yet; the first run installs them (about 5 GB, no administrator).",
-                                                 L"Herramientas: no instaladas; la primera vez se instalan (unos 5 GB, sin administrador)."));
+    SetDlgItemTextW(d, IDC_INS_TOOLS, tools ? Format(L2(L"Tools: installed.", L"Herramientas: instaladas."), detail.c_str()).c_str()
+                                            : L2(L"Tools: not installed yet; the first run installs them (about 5 GB).",
+                                                 L"Herramientas: no instaladas; la primera vez se instalan (unos 5 GB)."));
     for (int ed = 0; ed < 2; ed++) {
         FILETIME ft{};
         std::wstring st;
@@ -416,8 +416,8 @@ void RefreshInstall() {
     }
     bool req = IsDlgButtonChecked(d, IDC_INS_REQ) == BST_CHECKED;
     bool yes = ScriptHasAssumeYes();
-    SetDlgItemTextW(d, IDC_INS_YES, yes ? L2(L"Answer yes to the install questions (it may replace tools that do not match)",
-                                              L"Responder s\u00ed a las preguntas de la instalaci\u00f3n (puede reemplazar herramientas que no coincidan)")
+    SetDlgItemTextW(d, IDC_INS_YES, yes ? L2(L"Answer yes to the install questions.",
+                                              L"Responder s\u00ed a las preguntas de la instalaci\u00f3n.")
                                         : L2(L"Answer yes to the questions: needs tools\\patches\\apply_install_yes.py",
                                               L"Responder s\u00ed a las preguntas: falta aplicar tools\\patches\\apply_install_yes.py"));
     EnableWindow(GetDlgItem(d, IDC_INS_YES), yes && !RunnerBusy() && !g.wine);

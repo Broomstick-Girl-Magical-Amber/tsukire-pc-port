@@ -25,7 +25,7 @@ add_executable(tsukihime_launcher WIN32
 set_source_files_properties(res/launcher.rc PROPERTIES OBJECT_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/res/launcher.ico;${CMAKE_CURRENT_SOURCE_DIR}/res/launcher.manifest;${CMAKE_CURRENT_SOURCE_DIR}/res/resource.h;${CMAKE_CURRENT_SOURCE_DIR}/res/rcdefs.h")
 target_compile_definitions(tsukihime_launcher PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00)
-target_link_libraries(tsukihime_launcher PRIVATE comctl32 shell32 uxtheme user32 gdi32 bcrypt)
+target_link_libraries(tsukihime_launcher PRIVATE comctl32 shell32 uxtheme user32 gdi32 bcrypt ole32)
 
 # Release tag the exe downloads the port from (tools\dev\build_launcher.ps1 -Tag v1.2.3). Empty = the latest release.
 set(LAUNCHER_TAG "" CACHE STRING "Release tag of the port zip that the launcher downloads when the port is missing")
@@ -35,6 +35,7 @@ target_include_directories(tsukihime_launcher PRIVATE ${CMAKE_CURRENT_BINARY_DIR
 if(MSVC)
     # Sources are ASCII (the Spanish text uses \u escapes); the manifest comes from launcher.rc, not from the linker.
     target_compile_options(tsukihime_launcher PRIVATE /utf-8 /W3)
+    target_compile_definitions(tsukihime_launcher PRIVATE _CRT_SECURE_NO_WARNINGS)   # _vsnwprintf / swscanf are fine here
     target_link_options(tsukihime_launcher PRIVATE /MANIFEST:NO)
 else()
     # MinGW (only for quick test builds): wWinMain, static runtime.

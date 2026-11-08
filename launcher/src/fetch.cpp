@@ -168,8 +168,8 @@ void StartStep(Fetch* f, Step s) {
 
 void Begin(Fetch* f) {
     if (!EnsureDir(f->dir)) {
-        Fail(f, Format(L2(L"Cannot write in this folder:\n%ls\nMove tsukihime_launcher.exe to a folder of yours (for example Documents) and open it again.",
-                          L"No puedo escribir en esta carpeta:\n%ls\nMueve tsukihime_launcher.exe a una carpeta tuya (por ejemplo Documentos) y \u00e1brelo de nuevo."),
+        Fail(f, Format(L2(L"Cannot write in this folder:\n%ls\nMove tsukihime_launcher.exe to other folder and open it again.",
+                          L"No puedo escribir en esta carpeta:\n%ls\nMueve tsukihime_launcher.exe a una otra carpeta y \u00e1brelo de nuevo."),
                        g.root.c_str()));
         return;
     }
@@ -186,8 +186,8 @@ std::wstring CurlProblem(const Fetch* f, DWORD code) {
                          L"GitHub no tiene ese archivo (%ls). \u00bfEl release incluye tsukire-pc-port.zip y su .sha256?"),
                       f->tag.empty() ? L"latest" : f->tag.c_str()) + tail;
     if (code == 6 || code == 7 || code == 28)
-        return std::wstring(L2(L"Could not reach GitHub. Check your internet connection (or proxy) and try again.",
-                               L"No se pudo llegar a GitHub. Revisa tu conexi\u00f3n a internet (o el proxy) y reintenta.")) + tail;
+        return std::wstring(L2(L"Could not reach GitHub. Check your internet connection and try again.",
+                               L"No se pudo llegar a GitHub. Revisa tu conexi\u00f3n a internet y reintenta.")) + tail;
     return Format(L2(L"The download failed (curl error %lu).", L"La descarga fall\u00f3 (error de curl %lu)."), code) + tail;
 }
 

@@ -7,6 +7,7 @@
 
 #include <commctrl.h>
 #include <shellapi.h>
+#include <shobjidl.h>
 #include <uxtheme.h>
 
 #include <algorithm>
@@ -50,7 +51,7 @@ bool GameRunning(int ed) { return IsExeRunning(ExePath(ed)); }
 }  // namespace
 
 std::wstring EditionName(int ed) {
-    return ed == 0 ? L2(L"Japanese (cartridge)", L"Japonesa (cartucho)") : L2(L"Global (eShop)", L"Global (eShop)");
+    return ed == 0 ? L2(L"Japanese", L"Japonesa") : L2(L"Global", L"Global");
 }
 
 std::wstring RelPath(const std::wstring& full) {
@@ -190,6 +191,43 @@ std::wstring BackupSaves(int ed, const wchar_t* suffix, int* files) {
     return dst;
 }
 
+// Replaces data\<edition>\user\save with a copy of srcDir. The current saves are copied first to
+// save_backups\<edition>\<date><suffix> (returned in *safety, "" if there were none). Any failure leaves everything
+// as it was and says so. Used by Restore and Import.
+bool ReplaceSaves(HWND page, int ed, const std::wstring& srcDir, const wchar_t* suffix, int* files, std::wstring* safety) {
+    if (GameRunning(ed)) {
+        Message(page, MB_ICONWARNING, L2(L"Close the game first.", L"Cierra el juego primero."));
+        return false;
+    }
+    std::wstring save = SaveDir(ed);
+    safety->clear();
+    if (HasSaves(ed)) {   // the current saves are never lost: backed up first
+        *safety = BackupSaves(ed, suffix, nullptr);
+        if (safety->empty()) {
+            Message(page, MB_ICONERROR, L2(L"The current saves could not be backed up: nothing was changed.",
+                                           L"No se pudo copiar las partidas actuales: no se cambi\u00f3 nada."));
+            return false;
+        }
+    }
+    std::wstring aside = save + L".restoring";
+    if (DirExists(aside)) DeleteTree(aside);
+    bool hadDir = DirExists(save);
+    if (hadDir && !MoveFileW(save.c_str(), aside.c_str())) {
+        Message(page, MB_ICONERROR, L2(L"The save folder is in use: nothing was changed.", L"La carpeta de partidas est\u00e1 en uso: no se cambi\u00f3 nada."));
+        return false;
+    }
+    EnsureDir(Join(DataDir(ed), L"user"));
+    if (!CopyTree(srcDir, save, files)) {
+        DeleteTree(save);
+        if (hadDir) MoveFileW(aside.c_str(), save.c_str());
+        Message(page, MB_ICONERROR, L2(L"The saves could not be copied: the current ones were left as they were.",
+                                       L"No se pudieron copiar las partidas: las actuales quedaron como estaban."));
+        return false;
+    }
+    if (hadDir) DeleteTree(aside);
+    return true;
+}
+
 void DoBackup(HWND page) {
     int ed = g.edition;
     if (!HasSaves(ed)) {
@@ -223,35 +261,170 @@ void DoRestore(HWND page) {
         Message(page, MB_ICONWARNING, L2(L"Close the game first.", L"Cierra el juego primero."));
         return;
     }
-    std::wstring save = SaveDir(ed);
-    std::wstring safety;
-    if (HasSaves(ed)) {   // the current saves are never lost: backed up first
-        safety = BackupSaves(ed, L"_before_restore", nullptr);
-        if (safety.empty()) {
-            Message(page, MB_ICONERROR, L2(L"The current saves could not be backed up: nothing was changed.",
-                                           L"No se pudo copiar las partidas actuales: no se cambi\u00f3 nada."));
-            return;
-        }
-    }
-    std::wstring aside = save + L".restoring";
-    if (DirExists(aside)) DeleteTree(aside);
-    bool hadDir = DirExists(save);
-    if (hadDir && !MoveFileW(save.c_str(), aside.c_str())) {
-        Message(page, MB_ICONERROR, L2(L"The save folder is in use: nothing was changed.", L"La carpeta de partidas est\u00e1 en uso: no se cambi\u00f3 nada."));
-        return;
-    }
-    EnsureDir(Join(DataDir(ed), L"user"));
     int files = 0;
-    if (!CopyTree(Join(BackupDir(ed), pick.chosen), save, &files)) {
-        DeleteTree(save);
-        if (hadDir) MoveFileW(aside.c_str(), save.c_str());
-        Message(page, MB_ICONERROR, L2(L"The backup could not be copied: the saves were left as they were.",
-                                       L"No se pudo copiar la copia: las partidas quedaron como estaban."));
-        return;
-    }
-    if (hadDir) DeleteTree(aside);
+    std::wstring safety;
+    if (!ReplaceSaves(page, ed, Join(BackupDir(ed), pick.chosen), L"_before_restore", &files, &safety)) return;
+    ULONGLONG nowBytes = 0;
+    FILETIME nowNewest{};
+    files = 0;   // CountTree adds to it
+    CountTree(SaveDir(ed), files, nowBytes, nowNewest);
     std::wstring t = Format(L2(L"Restored %ls (files: %d).", L"Restaurada %ls (archivos: %d)."), pick.chosen.c_str(), files);
     if (!safety.empty()) t += Format(L2(L"\nThe previous saves are in %ls", L"\nLas partidas anteriores est\u00e1n en %ls"), Rel(safety).c_str());
+    Message(page, MB_ICONINFORMATION, t);
+    RefreshPlay();
+}
+
+// ---- import one save file
+// File picker (IFileOpenDialog). The GUIDs are written here so the exe needs no uuid.lib.
+std::wstring PickFile(HWND owner, const wchar_t* title) {
+    static const GUID kClsid = {0xDC1C5A9C, 0xE88A, 0x4DDE, {0xA5, 0xA1, 0x60, 0xF8, 0x2A, 0x20, 0xAE, 0xF7}};   // CLSID_FileOpenDialog
+    static const GUID kIid = {0xD57C7288, 0xD4AD, 0x4768, {0xBE, 0x02, 0x9D, 0x96, 0x95, 0x32, 0xD9, 0x60}};     // IID_IFileOpenDialog
+    std::wstring out;
+    HRESULT init = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    IFileOpenDialog* dlg = nullptr;
+    if (SUCCEEDED(CoCreateInstance(kClsid, nullptr, CLSCTX_INPROC_SERVER, kIid, reinterpret_cast<void**>(&dlg))) && dlg) {
+        DWORD opts = 0;
+        dlg->GetOptions(&opts);
+        dlg->SetOptions(opts | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST | FOS_FILEMUSTEXIST);
+        dlg->SetTitle(title);
+        if (SUCCEEDED(dlg->Show(owner))) {
+            IShellItem* item = nullptr;
+            if (SUCCEEDED(dlg->GetResult(&item)) && item) {
+                PWSTR path = nullptr;
+                if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &path)) && path) {
+                    out = path;
+                    CoTaskMemFree(path);
+                }
+                item->Release();
+            }
+        }
+        dlg->Release();
+    }
+    if (SUCCEEDED(init)) CoUninitialize();
+    return out;
+}
+
+bool SamePath(std::wstring a, std::wstring b) {
+    for (wchar_t& c : a) c = wchar_t(towlower(c == L'/' ? L'\\' : c));
+    for (wchar_t& c : b) c = wchar_t(towlower(c == L'/' ? L'\\' : c));
+    return a == b;
+}
+
+std::wstring Lower(std::wstring a) {
+    for (wchar_t& c : a) c = wchar_t(towlower(c == L'/' ? L'\\' : c));
+    return a;
+}
+
+// Every file called `name` (case-insensitive) under dir, as full paths.
+void FindByName(const std::wstring& dir, const std::wstring& name, std::vector<std::wstring>* out) {
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileW(Join(dir, L"*").c_str(), &fd);
+    if (h == INVALID_HANDLE_VALUE) return;
+    do {
+        std::wstring n = fd.cFileName;
+        if (n == L"." || n == L"..") continue;
+        std::wstring full = Join(dir, n);
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) FindByName(full, name, out);
+        } else if (Lower(n) == Lower(name)) {
+            out->push_back(full);
+        }
+    } while (FindNextFileW(h, &fd));
+    FindClose(h);
+}
+
+// Which existing save file the picked file replaces: the same relative path when the file comes from a save folder
+// (...\user\save\<mount>\file), else the same <folder name>\<file name>, else the only file with that name.
+// Returns "" and sets *why when there is no single answer.
+std::wstring SaveTargetFor(int ed, const std::wstring& picked, std::wstring* why) {
+    std::wstring save = SaveDir(ed);
+    std::wstring low = Lower(picked);
+    size_t k = low.rfind(L"\\user\\save\\");
+    if (k != std::wstring::npos) {
+        std::wstring t = Join(save, picked.substr(k + 11));
+        if (GetFileAttributesW(t.c_str()) != INVALID_FILE_ATTRIBUTES) return t;
+    }
+    size_t cut = picked.find_last_of(L"\\/");
+    std::wstring file = cut == std::wstring::npos ? picked : picked.substr(cut + 1);
+    std::wstring folder;
+    if (cut != std::wstring::npos) {
+        std::wstring up = picked.substr(0, cut);
+        size_t c2 = up.find_last_of(L"\\/");
+        folder = c2 == std::wstring::npos ? up : up.substr(c2 + 1);
+    }
+    std::vector<std::wstring> all;
+    FindByName(save, file, &all);
+    if (all.empty()) {
+        *why = Format(L2(L"No save file called \"%ls\" exists in this edition, so there is nothing to replace.\nPick a file with the same name as one of the current saves (see \"Open folder\").",
+                         L"No hay ningún archivo de partida llamado \"%ls\" en esta edición, así que no hay nada que reemplazar.\nElige un archivo con el mismo nombre que una de las partidas actuales (mira \"Abrir carpeta\")."),
+                      file.c_str());
+        return L"";
+    }
+    if (all.size() == 1) return all[0];
+    std::vector<std::wstring> same;
+    for (const std::wstring& f : all) {
+        size_t c = f.find_last_of(L'\\');
+        std::wstring up = f.substr(0, c);
+        size_t c2 = up.find_last_of(L'\\');
+        if (Lower(up.substr(c2 + 1)) == Lower(folder)) same.push_back(f);
+    }
+    if (same.size() == 1) return same[0];
+    *why = Format(L2(L"There are several save files called \"%ls\" and the folder of the picked file (\"%ls\") does not tell which one it is.\nPut it in a folder named like the one it belongs to (for example save00\\%ls) and pick it again.",
+                     L"Hay varios archivos de partida llamados \"%ls\" y la carpeta del archivo elegido (\"%ls\") no dice cuál es.\nPonlo en una carpeta con el nombre de la que le corresponde (por ejemplo save00\\%ls) y eligélo otra vez."),
+                  file.c_str(), folder.c_str(), file.c_str());
+    return L"";
+}
+
+void DoImport(HWND page) {
+    int ed = g.edition;
+    if (GameRunning(ed)) {
+        Message(page, MB_ICONWARNING, L2(L"Close the game first.", L"Cierra el juego primero."));
+        return;
+    }
+    std::wstring picked = IniGet(L"import_source", L"");   // tests only: skips the file picker
+    if (picked.empty()) picked = PickFile(page, L2(L"Pick the save file to import", L"Elige el archivo de partida a importar"));
+    if (picked.empty()) return;
+    WIN32_FILE_ATTRIBUTE_DATA info{};
+    if (!GetFileAttributesExW(picked.c_str(), GetFileExInfoStandard, &info) || (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
+        Message(page, MB_ICONWARNING, L2(L"That is not a file.", L"Eso no es un archivo."));
+        return;
+    }
+    std::wstring why;
+    std::wstring target = SaveTargetFor(ed, picked, &why);
+    if (target.empty()) {
+        Message(page, MB_ICONWARNING, why);
+        return;
+    }
+    if (SamePath(target, picked)) {
+        Message(page, MB_ICONINFORMATION, L2(L"That is the current save file itself.", L"Ese es el propio archivo de partida actual."));
+        return;
+    }
+    ULONGLONG size = (ULONGLONG(info.nFileSizeHigh) << 32) | info.nFileSizeLow;
+    std::wstring warn = Format(L2(L"Import this save file into the %ls edition?\n\n%ls\n\n\nIt will REPLACE this save:\n%ls\n\nAll the current saves are copied first to %ls (\"_before_import\") folder, and \"Restore...\" brings them back.",
+                                  L"¿Importar este archivo de partida a la edición %ls?\n\n%ls\n\n\nREEMPLAZARÁ esta partida:\n%ls\n\nAntes se copian todas las partidas actuales a la carpeta %ls (\"_before_import\") y \"Restaurar...\" las recupera."),
+                               EditionName(ed).c_str(), picked.c_str(), Size(size).c_str(), Rel(target).c_str(), Rel(BackupDir(ed)).c_str());
+    if (Message(page, MB_ICONWARNING | MB_YESNO | MB_DEFBUTTON2, warn) != IDYES) return;
+    if (GameRunning(ed)) {
+        Message(page, MB_ICONWARNING, L2(L"Close the game first.", L"Cierra el juego primero."));
+        return;
+    }
+    std::wstring safety = BackupSaves(ed, L"_before_import", nullptr);
+    if (safety.empty()) {
+        Message(page, MB_ICONERROR, L2(L"The current saves could not be backed up: nothing was changed.",
+                                       L"No se pudo copiar las partidas actuales: no se cambió nada."));
+        return;
+    }
+    // Copy next to the target and swap, so a failed copy leaves the original untouched.
+    std::wstring tmp = target + L".importing";
+    if (!CopyFileW(picked.c_str(), tmp.c_str(), FALSE) ||
+        !MoveFileExW(tmp.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING)) {
+        DeleteFileW(tmp.c_str());
+        Message(page, MB_ICONERROR, L2(L"The file could not be copied: the current save was left as it was.",
+                                       L"No se pudo copiar el archivo: la partida actual quedó como estaba."));
+        return;
+    }
+    std::wstring t = Format(L2(L"Imported over %ls.\nThe previous saves are in %ls", L"Importado sobre %ls.\nLas partidas anteriores están en %ls"),
+                            Rel(target).c_str(), Rel(safety).c_str());
     Message(page, MB_ICONINFORMATION, t);
     RefreshPlay();
 }
@@ -275,8 +448,8 @@ void RefreshPlay() {
     std::wstring dumpLine;
     bool extracted = DirExists(Join(DataDir(ed), L"extract\\romfs\\shader"));
     if (extracted) dumpLine = L2(L"Game data: extracted in the data folder.", L"Datos del juego: extra\u00eddos en la carpeta de datos.");
-    else if (dumps.empty()) dumpLine = L2(L"Game data: no .xci / .nsp in the port folder (the game reads its data from your dump).",
-                                          L"Datos del juego: no hay .xci / .nsp en la carpeta del port (el juego lee sus datos del dump).");
+    else if (dumps.empty()) dumpLine = L2(L"Game data: no .xci / .nsp in the port folder (the port reads its data from your dump).",
+                                          L"Datos del juego: no hay .xci / .nsp en la carpeta del port (el port lee sus datos del dump).");
     else {
         std::wstring names;
         for (size_t i = 0; i < dumps.size(); i++) names += (i ? L", " : L"") + dumps[i].name;
@@ -303,14 +476,15 @@ void RefreshPlay() {
     FILETIME newest{};
     CountTree(save, files, bytes, newest);
     std::wstring info = L2(L"No saves yet.", L"Todav\u00eda no hay partidas.");
-    if (files == 1) info = Format(L2(L"1 file (%ls), last saved %ls", L"1 archivo (%ls), guardado por \u00faltima vez el %ls"), Size(bytes).c_str(), FormatFileTime(newest).c_str());
+    if (files == 1) info = Format(L2(L"1 file, last saved %ls", L"1 archivo, guardado por \u00faltima vez el %ls"), Size(bytes).c_str(), FormatFileTime(newest).c_str());
     else if (files) info = Format(L2(L"%d files (%ls), last saved %ls", L"%d archivos (%ls), guardado por \u00faltima vez el %ls"), files, Size(bytes).c_str(), FormatFileTime(newest).c_str());
     SetDlgItemTextW(p, IDC_SAVE_INFO, info.c_str());
     std::vector<std::wstring> backups = ListBackups(ed);
     SetDlgItemTextW(p, IDC_SAVE_BACKUPS, backups.empty() ? Format(L2(L"Backups: none yet (they go to %ls)", L"Copias: ninguna todav\u00eda (van a %ls)"), Rel(BackupDir(ed)).c_str()).c_str()
-                                                         : Format(L2(L"Backups: %d in %ls (newest %ls)", L"Copias: %d en %ls (la m\u00e1s nueva %ls)"),
+                                                         : Format(L2(L"Backups: %d in %ls", L"Copias: %d en %ls"),
                                                                   int(backups.size()), Rel(BackupDir(ed)).c_str(), backups[0].c_str()).c_str());
     EnableWindow(GetDlgItem(p, IDC_SAVE_RESTORE), !backups.empty() && !running);
+    EnableWindow(GetDlgItem(p, IDC_SAVE_IMPORT), !running);
     EnableWindow(GetDlgItem(p, IDC_SAVE_BACKUP), files > 0);
     EnableWindow(GetDlgItem(p, IDC_PLAY_LOG), FileExists(Join(DataDir(ed), L"nx.log")));
 }
@@ -350,6 +524,7 @@ INT_PTR CALLBACK PlayProc(HWND dlg, UINT msg, WPARAM wp, LPARAM) {
             return TRUE;
         case IDC_SAVE_BACKUP: DoBackup(dlg); return TRUE;
         case IDC_SAVE_RESTORE: DoRestore(dlg); return TRUE;
+        case IDC_SAVE_IMPORT: DoImport(dlg); return TRUE;
         case IDC_SAVE_OPENBACKUPS:
             EnsureDir(BackupDir(g.edition));
             OpenInShell(dlg, BackupDir(g.edition));
@@ -391,8 +566,8 @@ void PlayGame() {
     }
     bool extracted = DirExists(Join(DataDir(ed), L"extract\\romfs\\shader"));
     if (!extracted && FindDumps().empty() &&
-        Message(g.main, MB_ICONWARNING | MB_YESNO, L2(L"There is no .xci / .nsp in the port folder: the game reads its data from your dump and will say \"Game data not found\". Start it anyway?",
-                                                      L"No hay .xci / .nsp en la carpeta del port: el juego lee sus datos de tu dump y dir\u00e1 \"Game data not found\". \u00bfIniciarlo igual?")) != IDYES)
+        Message(g.main, MB_ICONWARNING | MB_YESNO, L2(L"There is no .xci / .nsp in the port folder. The game reads its data from your dump and will say \"Game data not found\". Start it anyway?",
+                                                      L"No hay .xci / .nsp en la carpeta del port. El juego lee sus datos de tu dump y dir\u00e1 \"Game data not found\". \u00bfIniciarlo igual?")) != IDYES)
         return;
 
     bool console = IniGet(L"show_console", L"0") == L"1";
@@ -533,9 +708,9 @@ INT_PTR CALLBACK MainProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
         g.main = dlg;
         ApplyDialogText(dlg, IDD_MAIN);
         HICON big = HICON(LoadImageW(g.inst, MAKEINTRESOURCEW(IDI_LAUNCHER), IMAGE_ICON, GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), 0));
-        HICON small = HICON(LoadImageW(g.inst, MAKEINTRESOURCEW(IDI_LAUNCHER), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), 0));
+        HICON iconSmall = HICON(LoadImageW(g.inst, MAKEINTRESOURCEW(IDI_LAUNCHER), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), 0));
         SendMessageW(dlg, WM_SETICON, ICON_BIG, LPARAM(big));
-        SendMessageW(dlg, WM_SETICON, ICON_SMALL, LPARAM(small));
+        SendMessageW(dlg, WM_SETICON, ICON_SMALL, LPARAM(iconSmall));
         g.tab = GetDlgItem(dlg, IDC_TAB);
         const wchar_t* names[4] = {L2(L"Play and saves", L"Jugar y partidas"), L2(L"Install and recompile", L"Instalar y recompilar"),
                                    L2(L"Mods and updates", L"Mods y actualizaciones"), L2(L"Controls and title screen", L"Controles y t\u00edtulo")};

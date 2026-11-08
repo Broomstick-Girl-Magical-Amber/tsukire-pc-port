@@ -69,11 +69,11 @@ BEGIN
     LTEXT           "", IDC_SAVE_PATH, 14, 156, 350, 8, SS_PATHELLIPSIS
     LTEXT           "", IDC_SAVE_INFO, 14, 168, 350, 8
     LTEXT           "", IDC_SAVE_BACKUPS, 14, 180, 350, 8, SS_PATHELLIPSIS
-    LTEXT           "Saves belong to the edition: recompiling or updating keeps them. Close the game before restoring a backup; the current saves are backed up first.", IDC_SAVE_NOTE, 14, 194, 350, 26
+    PUSHBUTTON      "Back up now", IDC_SAVE_BACKUP, 14, 212, 84, 14
+    PUSHBUTTON      "Restore...", IDC_SAVE_RESTORE, 104, 212, 84, 14
+    PUSHBUTTON      "Import save...", IDC_SAVE_IMPORT, 194, 212, 84, 14
     PUSHBUTTON      "Open folder", IDC_SAVE_OPEN, 14, 230, 84, 14
-    PUSHBUTTON      "Back up now", IDC_SAVE_BACKUP, 104, 230, 84, 14
-    PUSHBUTTON      "Restore...", IDC_SAVE_RESTORE, 194, 230, 84, 14
-    PUSHBUTTON      "Backups folder", IDC_SAVE_OPENBACKUPS, 284, 230, 80, 14
+    PUSHBUTTON      "Backups folder", IDC_SAVE_OPENBACKUPS, 104, 230, 84, 14
 
     LTEXT           "", IDC_PLAY_RUNNING, 8, 262, 362, 18
 END
@@ -88,21 +88,22 @@ BEGIN
     LTEXT           "", IDC_INS_KEYS, 14, 28, 350, 8, SS_ENDELLIPSIS
     LTEXT           "", IDC_INS_TOOLS, 14, 40, 350, 8, SS_ENDELLIPSIS
 
-    GROUPBOX        "Compile", IDC_INS_RUN_GROUP, 6, 58, 366, 74
+    GROUPBOX        "Compile", IDC_INS_RUN_GROUP, 6, 58, 366, 80
     AUTOCHECKBOX    "Japanese edition (cartridge)", IDC_INS_JP, 14, 70, 150, 10
     LTEXT           "", IDC_INS_JP_STATE, 168, 71, 196, 8, SS_ENDELLIPSIS
     AUTOCHECKBOX    "Global edition (eShop)", IDC_INS_GL, 14, 83, 150, 10
     LTEXT           "", IDC_INS_GL_STATE, 168, 84, 196, 8, SS_ENDELLIPSIS
     AUTOCHECKBOX    "Install or check the requirements first (needed the first time)", IDC_INS_REQ, 14, 96, 350, 10
-    PUSHBUTTON      "Install and compile", IDC_INS_START, 14, 112, 110, 14
-    PUSHBUTTON      "Open in a console", IDC_INS_CONSOLE, 130, 112, 90, 14
-    PUSHBUTTON      "Cancel", IDC_INS_CANCEL, 226, 112, 60, 14, WS_DISABLED
+    AUTOCHECKBOX    "Answer yes to the install questions (it may replace tools that do not match)", IDC_INS_YES, 14, 108, 350, 10
+    PUSHBUTTON      "Install and compile", IDC_INS_START, 14, 120, 110, 14
+    PUSHBUTTON      "Open in a console", IDC_INS_CONSOLE, 130, 120, 90, 14
+    PUSHBUTTON      "Cancel", IDC_INS_CANCEL, 226, 120, 60, 14, WS_DISABLED
 
-    GROUPBOX        "Progress", IDC_INS_PROG_GROUP, 6, 136, 366, 148
-    LTEXT           "", IDC_INS_STEP, 14, 148, 290, 8, SS_ENDELLIPSIS
-    RTEXT           "", IDC_INS_TIME, 306, 148, 58, 8
-    CONTROL         "", IDC_INS_PROGRESS, "msctls_progress32", WS_BORDER, 14, 159, 350, 8
-    EDITTEXT        IDC_INS_LOG, 14, 171, 350, 86, ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | ES_AUTOHSCROLL | WS_VSCROLL | WS_HSCROLL
+    GROUPBOX        "Progress", IDC_INS_PROG_GROUP, 6, 141, 366, 143
+    LTEXT           "", IDC_INS_STEP, 14, 153, 290, 8, SS_ENDELLIPSIS
+    RTEXT           "", IDC_INS_TIME, 306, 153, 58, 8
+    CONTROL         "", IDC_INS_PROGRESS, "msctls_progress32", WS_BORDER, 14, 164, 350, 8
+    EDITTEXT        IDC_INS_LOG, 14, 176, 350, 81, ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | ES_AUTOHSCROLL | WS_VSCROLL | WS_HSCROLL
     LTEXT           "", IDC_INS_RESULT, 14, 261, 208, 18
     PUSHBUTTON      "Copy log", IDC_INS_COPY, 226, 264, 60, 14
     PUSHBUTTON      "Logs folder", IDC_INS_OPENLOGS, 292, 264, 72, 14
@@ -146,6 +147,20 @@ BEGIN
     PUSHBUTTON      "Cancel", IDCANCEL, 277, 246, 56, 15
 END
 
+// ------------------------------------------------------------------------------------------------ download the port
+IDD_FETCH DIALOGEX 0, 0, 300, 172
+STYLE DS_SHELLFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Tsukihime launcher - download the port"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "", IDC_FETCH_TEXT, 7, 7, 286, 78
+    CONTROL         "", IDC_FETCH_LINK, "SysLink", WS_TABSTOP, 7, 88, 286, 10
+    LTEXT           "", IDC_FETCH_STATUS, 7, 103, 286, 38
+    CONTROL         "", IDC_FETCH_PROGRESS, "msctls_progress32", PBS_MARQUEE | WS_BORDER, 7, 144, 286, 6
+    DEFPUSHBUTTON   "Download", IDC_FETCH_GO, 160, 154, 80, 14
+    PUSHBUTTON      "Close", IDCANCEL, 246, 154, 47, 14
+END
+
 // ------------------------------------------------------------------------------------------------ restore a backup
 IDD_RESTORE DIALOGEX 0, 0, 260, 170
 STYLE DS_SHELLFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
@@ -157,4 +172,3 @@ BEGIN
     DEFPUSHBUTTON   "Restore", IDOK, 141, 149, 54, 15
     PUSHBUTTON      "Cancel", IDCANCEL, 199, 149, 54, 15
 END
-

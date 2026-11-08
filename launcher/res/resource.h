@@ -37,6 +37,7 @@
 #define IDC_SAVE_BACKUP         1126
 #define IDC_SAVE_RESTORE        1127
 #define IDC_SAVE_OPENBACKUPS    1128
+#define IDC_SAVE_IMPORT         1129
 #define IDC_PLAY_RUNNING        1130
 
 // Install and recompile
