@@ -78,6 +78,46 @@ struct Extractor::Impl {
     mutable std::recursive_mutex m;  // el juego llama desde varios hilos
     std::string data;
     int64_t pos = 0;
+    // AP_MOVIE_STREAM: a reader in place of `data`; reads go through one read-ahead chunk
+    std::function<int64_t(uint64_t, void*, size_t)> rd;
+    uint64_t rsize = 0;
+    bool stream = false;
+    std::vector<uint8_t> ra;
+    uint64_t ra_off = 0;
+    static size_t ra_chunk() {
+        static const size_t n = [] {
+            const char* e = std::getenv("NX_MOVIE_IO_KB");
+            long v = e ? std::strtol(e, nullptr, 10) : 4096;
+            if (v < 64 || v > 65536) v = 4096;
+            return size_t(v) << 10;
+        }();
+        return n;
+    }
+    int stream_read(uint8_t* buf, int n) {
+        if (pos < 0 || uint64_t(pos) >= rsize) return AVERROR_EOF;
+        if (uint64_t(pos) < ra_off || uint64_t(pos) >= ra_off + ra.size()) {
+            const size_t want = size_t(std::min<uint64_t>(ra_chunk(), rsize - uint64_t(pos)));
+            ra.resize(want);
+            const int64_t got = rd(uint64_t(pos), ra.data(), want);
+            if (got <= 0) {
+                ra.clear();
+                return AVERROR(EIO);
+            }
+            ra.resize(size_t(got));
+            ra_off = uint64_t(pos);
+        }
+        const size_t k = size_t(std::min<uint64_t>(uint64_t(n), ra_off + ra.size() - uint64_t(pos)));
+        std::memcpy(buf, ra.data() + (uint64_t(pos) - ra_off), k);
+        pos += int64_t(k);
+        return int(k);
+    }
+    int64_t stream_seek(int64_t off, int whence) {
+        if (whence == AVSEEK_SIZE) return int64_t(rsize);
+        int64_t base = (whence & 3) == SEEK_CUR ? pos : (whence & 3) == SEEK_END ? int64_t(rsize) : 0;
+        int64_t np = base + off;
+        if (np < 0 || np > int64_t(rsize)) return -1;
+        return pos = np;
+    }
     AVIOContext* io = nullptr;
     AVFormatContext* fmt = nullptr;
     std::vector<bool> selected;
@@ -100,6 +140,7 @@ struct Extractor::Impl {
 
     static int read_cb(void* o, uint8_t* buf, int n) {
         auto* s = static_cast<Impl*>(o);
+        if (s->stream) return s->stream_read(buf, n);  // AP_MOVIE_STREAM
         int64_t left = int64_t(s->data.size()) - s->pos;
         if (left <= 0) return AVERROR_EOF;
         int k = int(std::min<int64_t>(n, left));
@@ -109,6 +150,7 @@ struct Extractor::Impl {
     }
     static int64_t seek_cb(void* o, int64_t off, int whence) {
         auto* s = static_cast<Impl*>(o);
+        if (s->stream) return s->stream_seek(off, whence);  // AP_MOVIE_STREAM
         if (whence == AVSEEK_SIZE) return int64_t(s->data.size());
         int64_t base = (whence & 3) == SEEK_CUR ? s->pos : (whence & 3) == SEEK_END ? int64_t(s->data.size()) : 0;
         int64_t np = base + off;
@@ -158,6 +200,17 @@ struct Extractor::Impl {
 
 Extractor::Extractor() : p_(new Impl) {}
 Extractor::~Extractor() = default;
+
+// AP_MOVIE_STREAM (apply_movie_stream.py): the demuxer reads the file through `reader` instead of from memory.
+Status Extractor::open_stream(uint64_t size, std::function<int64_t(uint64_t, void*, size_t)> reader) {
+    std::lock_guard<std::recursive_mutex> lk(p_->m);
+    if (p_->fmt) return kInvalidState;
+    if (!reader || size == 0) return kInvalidArgument;
+    p_->rd = std::move(reader);
+    p_->rsize = size;
+    p_->stream = true;
+    return open_memory(std::string());  // the AVIO callbacks go to the reader while p_->stream is set
+}
 
 Status Extractor::open_memory(std::string data) {
     std::lock_guard<std::recursive_mutex> lk(p_->m);

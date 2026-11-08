@@ -7,6 +7,9 @@
 #   NX_RECOMP_JT_LSR=1  jump tables with an "lsr + cmp" check (apply_jt_lsr.py; crash main+9eba4)
 #   NX_RECOMP_JT_MOV=1  jump tables with the bound in a register (apply_jt_mov.py, made for the global): the base main has
 #                       none; the main of the updates of updates\ does (main+999e0, crash "call into the middle" main+99a2c)
+#   NX_RECOMP_HOOKS     functions emitted as <name>_orig + a stub to a native hook (apply_recomp_hooks.py, AP_RECOMP_HOOKS;
+#                       hooks in games\tsukihime_common\hle_hooks_tsuki.cpp): main+0xa90c0 (file name lookup, checked
+#                       by size and first word) and the sdk memcmp
 # After: cmake --build build\tsukihime
 # Paths relative to the script: <root>\tools\internal\regen_tsuki.ps1 -> the root is two folders up (or -Root <folder>).
 # -MainNso <file>: recompiles main from that NSO instead of <data>\exefs\main (the main of a patch in mods\, recomp_tsukihime.ps1).
@@ -43,15 +46,22 @@ if (-not (Select-String -Path (Join-Path $Framework 'recomp\analysis.py') -Patte
 if (-not (Select-String -Path (Join-Path $Framework 'recomp\analysis.py') -Pattern '_JT_MOV = ' -Quiet)) {
     throw 'recomp\analysis.py without apply_jt_mov.py: apply it first'
 }
+# AP_RECOMP_HOOKS: native hooks for hot functions
+if (-not (Select-String -Path (Join-Path $Framework 'recomp\__main__.py') -Pattern 'AP_RECOMP_HOOKS' -Quiet)) {
+    throw 'recomp\__main__.py without apply_recomp_hooks.py: apply it first'
+}
 
 $prev = $env:NX_RECOMP_JT_LSR
 $env:NX_RECOMP_JT_LSR = '1'
 $prevJtMov = $env:NX_RECOMP_JT_MOV
 $env:NX_RECOMP_JT_MOV = '1'
+$prevHooks = $env:NX_RECOMP_HOOKS  # AP_RECOMP_HOOKS
+$env:NX_RECOMP_HOOKS = 'main:tsuki_lookup:0xa90c0,0x1278,0xd10283ff;sdk:memcmp:memcmp'
 Push-Location $Framework
 try {
     foreach ($m in $Modules) {
         if (-not $Bases.ContainsKey($m)) { throw "unknown module: $m (known: $($Bases.Keys -join ', '))" }
+        if ("$env:NX_RECOMP_HOOKS" -notlike '*:tsuki_name_table:*') { $env:NX_RECOMP_HOOKS = "$env:NX_RECOMP_HOOKS;main:tsuki_name_table:0x56720,0xa88,0xd10143ff" }  # AP_HOOK_NAME_TABLE
         Write-Host "== recomp $m (base $($Bases[$m]), NX_RECOMP_JT_LSR=1, NX_RECOMP_JT_MOV=1)"
         $src = if ($m -eq 'main' -and $MainNso) { [IO.Path]::GetFullPath($MainNso) } else { Join-Path $ExeFS $m }
         if ($src -ne (Join-Path $ExeFS $m)) { Write-Host "   main from $src" }
@@ -62,5 +72,6 @@ try {
     Pop-Location
     if ($null -eq $prev) { Remove-Item Env:NX_RECOMP_JT_LSR -ErrorAction SilentlyContinue } else { $env:NX_RECOMP_JT_LSR = $prev }
     if ($null -eq $prevJtMov) { Remove-Item Env:NX_RECOMP_JT_MOV -ErrorAction SilentlyContinue } else { $env:NX_RECOMP_JT_MOV = $prevJtMov }
+    if ($null -eq $prevHooks) { Remove-Item Env:NX_RECOMP_HOOKS -ErrorAction SilentlyContinue } else { $env:NX_RECOMP_HOOKS = $prevHooks }  # AP_RECOMP_HOOKS
 }
 Write-Host 'Done. Now: cmake --build build\tsukihime'

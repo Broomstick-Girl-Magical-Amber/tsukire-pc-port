@@ -726,6 +726,14 @@ size_t loop_index(int track, const Config& c) {
     return size_t(c.loop02 * 50.0);  // 20 ms per packet
 }
 
+// AP_TITLE_MUSIC_LOOP (apply_title_music_loop.py): the packet after which the track goes back to loop_index().
+// MOON01_BGM59: the game loops from packet 4893 to 892 (it never plays the last 99 packets). MOON01_BGM02: the end of
+// the file (the game's loop end for it is not known).
+size_t loop_end(int track, size_t packets) {
+    if (track == 1) return std::min<size_t>(4894, packets);
+    return packets;
+}
+
 // F6 (dir = +1) / F5 (-1) on the title screen, or a click on the logo (+1): the next / previous video of the pool, with a
 // fade. Runs in the window thread (keys) or the game's (the click, from hid). false: nothing changes.
 bool change_video(int dir, const char* who) {
@@ -902,7 +910,8 @@ bool music_packet(const uint8_t* in, uint32_t len, std::vector<uint8_t>* out, fl
     const uint32_t sz = (uint32_t(uint8_t(t.data[o])) << 24) | (uint32_t(uint8_t(t.data[o + 1])) << 16) |
                         (uint32_t(uint8_t(t.data[o + 2])) << 8) | uint8_t(t.data[o + 3]);
     out->assign(t.data.begin() + o + 8, t.data.begin() + o + 8 + sz);
-    if (++st.sub_idx >= t.offs.size()) st.sub_idx = std::min(loop_index(target, c), t.offs.size() - 1);
+    if (++st.sub_idx >= loop_end(target, t.offs.size()))  // AP_TITLE_MUSIC_LOOP
+        st.sub_idx = std::min(loop_index(target, c), t.offs.size() - 1);
     return true;
 }
 

@@ -979,6 +979,41 @@ void add_virtual_file(const std::string& path, std::string data) {
     g_virtual[virtual_key(fs::u8path(path))] = std::move(data);
 }
 
+// AP_MOVIE_STREAM (apply_movie_stream.py): read_game_file's lookup (mods layer, extract/romfs, the dump) as a reader.
+std::function<int64_t(uint64_t, void*, size_t)> open_game_stream(const std::string& relative_to_romfs, uint64_t* size) {
+    fs::path src = data_root() / "extract" / "romfs" / fs::u8path(relative_to_romfs);
+#ifdef NX_ROMFS_MODS
+    {
+        std::string rest = relative_to_romfs;
+        while (!rest.empty() && (rest[0] == '/' || rest[0] == '\\')) rest.erase(0, 1);
+        fs::path q = rom_layer_path(rest, src);
+        if (!q.empty()) src = q;
+    }
+#endif
+#ifdef NX_ROMFS_DIRECT
+    if (is_recipe(src)) return {};  // a recipe is rebuilt whole
+#endif
+    FILE* raw = plat::fopen_utf8(utf8(src), "rb");
+    if (raw) {
+        std::shared_ptr<FILE> f(raw, [](FILE* p) { std::fclose(p); });
+        if (std::fseek(raw, 0, SEEK_END) != 0) return {};
+        const int64_t sz = plat::ftell64(raw);
+        if (sz <= 0) return {};
+        *size = uint64_t(sz);
+        return [f](uint64_t off, void* buf, size_t n) -> int64_t { return int64_t(plat::read_at(f.get(), int64_t(off), buf, n)); };
+    }
+#ifdef NX_ROMFS_DIRECT
+    if (std::string rel; rom_direct_rel(src, rel)) {
+        tsuki_romfs::Handle* h = tsuki_romfs::open(rel);
+        if (!h) return {};
+        std::shared_ptr<tsuki_romfs::Handle> hp(h, [](tsuki_romfs::Handle* p) { tsuki_romfs::close(p); });
+        *size = tsuki_romfs::size(h);
+        return [hp](uint64_t off, void* buf, size_t n) -> int64_t { return int64_t(tsuki_romfs::read(hp.get(), int64_t(off), buf, n)); };
+    }
+#endif
+    return {};
+}
+
 std::string read_game_file(const std::string& relative_to_romfs) {
     fs::path src = data_root() / "extract" / "romfs" / fs::u8path(relative_to_romfs);
 #ifdef NX_ROMFS_MODS

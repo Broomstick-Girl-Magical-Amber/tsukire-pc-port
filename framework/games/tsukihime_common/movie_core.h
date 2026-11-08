@@ -14,6 +14,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <functional>  // AP_MOVIE_STREAM
 #include <map>
 #include <memory>
 #include <string>
@@ -91,6 +92,9 @@ public:
     Status track_index_for_available_data(uint64_t* track);
     // Copia la muestra actual a dst. Si no cabe devuelve kInvalidArgument y *size con lo necesario.
     Status read(uint8_t* dst, size_t capacity, size_t* size);
+    // AP_MOVIE_STREAM: like open_memory, but the file is read through reader(offset, buffer, size) -> bytes read,
+    // with a read-ahead chunk of its own (NX_MOVIE_IO_KB), while it plays.
+    Status open_stream(uint64_t size, std::function<int64_t(uint64_t, void*, size_t)> reader);
     Status advance();
     Status sample_time(int64_t* time_us);
     Status sample_metadata(MediaDataStore* out);
