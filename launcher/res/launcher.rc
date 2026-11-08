@@ -89,9 +89,9 @@ BEGIN
     LTEXT           "", IDC_INS_TOOLS, 14, 40, 350, 8, SS_ENDELLIPSIS
 
     GROUPBOX        "Compile", IDC_INS_RUN_GROUP, 6, 58, 366, 80
-    AUTOCHECKBOX    "Japanese edition (cartridge)", IDC_INS_JP, 14, 70, 150, 10
+    AUTOCHECKBOX    "Japanese edition", IDC_INS_JP, 14, 70, 150, 10
     LTEXT           "", IDC_INS_JP_STATE, 168, 71, 196, 8, SS_ENDELLIPSIS
-    AUTOCHECKBOX    "Global edition (eShop)", IDC_INS_GL, 14, 83, 150, 10
+    AUTOCHECKBOX    "Global edition", IDC_INS_GL, 14, 83, 150, 10
     LTEXT           "", IDC_INS_GL_STATE, 168, 84, 196, 8, SS_ENDELLIPSIS
     AUTOCHECKBOX    "Install or check the requirements first (needed the first time)", IDC_INS_REQ, 14, 96, 350, 10
     AUTOCHECKBOX    "Answer yes to the install questions (it may replace tools that do not match)", IDC_INS_YES, 14, 108, 350, 10
