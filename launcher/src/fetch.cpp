@@ -250,6 +250,8 @@ INT_PTR CALLBACK FetchProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
         SetWindowLongPtrW(dlg, DWLP_USER, lp);
         f->dlg = dlg;
         ApplyDialogText(dlg, IDD_FETCH);
+        SendMessageW(dlg, WM_SETICON, ICON_BIG, LPARAM(LoadImageW(g.inst, MAKEINTRESOURCEW(IDI_LAUNCHER), IMAGE_ICON, GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), 0)));
+        SendMessageW(dlg, WM_SETICON, ICON_SMALL, LPARAM(LoadImageW(g.inst, MAKEINTRESOURCEW(IDI_LAUNCHER), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), 0)));
         f->tag = LAUNCHER_TAG;
         std::wstring over = IniGet(L"fetch_base", L"");   // tests only: another folder URL for the assets
         f->base = !over.empty() ? over : (f->tag.empty() ? std::wstring(kRepo) + L"/releases/latest/download"

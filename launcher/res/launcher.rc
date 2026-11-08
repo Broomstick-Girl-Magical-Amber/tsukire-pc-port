@@ -1,25 +1,32 @@
-// tsukihime.rc - recursos del exe: icono (el 1 lo usa la ventana con NX_WINDOW_ICON, apply_game_window.py) y
-// la informacion de version que muestran el Explorador y el Administrador de tareas.
-#include <winver.h>
+// launcher.rc - dialogs, icon and manifest of tsukihime_launcher.exe. ASCII only: llvm-rc reads it as ASCII on Linux.
+// The English text is the one shown here; the Spanish one is set at run time (src/text.cpp, by control ID).
+#include "rcdefs.h"
+#include "resource.h"
 
-1 ICON "tsukihime.ico"
+IDI_LAUNCHER ICON "launcher.ico"
+
+// Common Controls 6 (themed controls, SysLink), DPI awareness, no elevation.
+1 24 "launcher.manifest"
 
 VS_VERSION_INFO VERSIONINFO
 FILEVERSION 1,0,0,0
 PRODUCTVERSION 1,0,0,0
+FILEFLAGSMASK 0x3fL
+FILEFLAGS 0x0L
 FILEOS VOS_NT_WINDOWS32
 FILETYPE VFT_APP
+FILESUBTYPE 0x0L
 BEGIN
     BLOCK "StringFileInfo"
     BEGIN
-        BLOCK "040904B0"
+        BLOCK "040904b0"
         BEGIN
-            VALUE "FileDescription", "Tsukihime -A piece of blue glass moon-"
-            VALUE "ProductName", "Tsukihime -A piece of blue glass moon- (PC recomp)"
-            VALUE "FileVersion", "1.0.0.0"
-            VALUE "ProductVersion", "1.0.0.0"
-            VALUE "OriginalFilename", "tsukihime.exe"
-            VALUE "InternalName", "tsukihime"
+            VALUE "FileDescription", "Tsukihime PC port launcher"
+            VALUE "FileVersion", "1.0.0"
+            VALUE "InternalName", "tsukihime_launcher"
+            VALUE "OriginalFilename", "tsukihime_launcher.exe"
+            VALUE "ProductName", "tsukire-pc-port"
+            VALUE "ProductVersion", "1.0.0"
         END
     END
     BLOCK "VarFileInfo"
@@ -27,3 +34,127 @@ BEGIN
         VALUE "Translation", 0x409, 1200
     END
 END
+
+// ------------------------------------------------------------------------------------------------ main window
+IDD_MAIN DIALOGEX 0, 0, 400, 340
+STYLE DS_SHELLFONT | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX
+EXSTYLE WS_EX_APPWINDOW
+CAPTION "Tsukihime PC port - Launcher"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    CONTROL         "", IDC_TAB, "SysTabControl32", WS_TABSTOP, 7, 7, 386, 306
+    LTEXT           "", IDC_FOOTER, 9, 322, 230, 8, SS_PATHELLIPSIS
+    DEFPUSHBUTTON   "Play", IDOK, 251, 318, 68, 15
+    PUSHBUTTON      "Close", IDCANCEL, 325, 318, 68, 15
+END
+
+// ------------------------------------------------------------------------------------------------ Play / save data
+IDD_PLAY DIALOGEX 0, 0, 378, 288
+STYLE DS_SHELLFONT | DS_CONTROL | WS_CHILD
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    GROUPBOX        "Game", IDC_PLAY_GROUP, 6, 4, 366, 132
+    LTEXT           "Edition", IDC_PLAY_EDITION_LABEL, 14, 19, 50, 8
+    COMBOBOX        IDC_PLAY_EDITION, 70, 17, 160, 60, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "", IDC_PLAY_EXE, 14, 37, 350, 8, SS_PATHELLIPSIS
+    LTEXT           "", IDC_PLAY_DUMP, 14, 49, 350, 8, SS_PATHELLIPSIS
+    LTEXT           "", IDC_PLAY_STATE, 14, 61, 350, 18
+    AUTOCHECKBOX    "Show the game's log console", IDC_PLAY_CONSOLE, 14, 83, 300, 10
+    AUTOCHECKBOX    "Close this window when the game starts", IDC_PLAY_CLOSE, 14, 96, 300, 10
+    PUSHBUTTON      "Open nx.log", IDC_PLAY_LOG, 14, 113, 84, 14
+    PUSHBUTTON      "Open data folder", IDC_PLAY_DATA, 104, 113, 84, 14
+    PUSHBUTTON      "Install / recompile...", IDC_PLAY_GOINSTALL, 194, 113, 90, 14
+
+    GROUPBOX        "Save data", IDC_SAVE_GROUP, 6, 142, 366, 112
+    LTEXT           "", IDC_SAVE_PATH, 14, 156, 350, 8, SS_PATHELLIPSIS
+    LTEXT           "", IDC_SAVE_INFO, 14, 168, 350, 8
+    LTEXT           "", IDC_SAVE_BACKUPS, 14, 180, 350, 8, SS_PATHELLIPSIS
+    LTEXT           "Saves belong to the edition: recompiling or updating keeps them. Close the game before restoring a backup; the current saves are backed up first.", IDC_SAVE_NOTE, 14, 194, 350, 26
+    PUSHBUTTON      "Open folder", IDC_SAVE_OPEN, 14, 230, 84, 14
+    PUSHBUTTON      "Back up now", IDC_SAVE_BACKUP, 104, 230, 84, 14
+    PUSHBUTTON      "Restore...", IDC_SAVE_RESTORE, 194, 230, 84, 14
+    PUSHBUTTON      "Backups folder", IDC_SAVE_OPENBACKUPS, 284, 230, 80, 14
+
+    LTEXT           "", IDC_PLAY_RUNNING, 8, 262, 362, 18
+END
+
+// ------------------------------------------------------------------------------------------------ install / recompile
+IDD_INSTALL DIALOGEX 0, 0, 378, 288
+STYLE DS_SHELLFONT | DS_CONTROL | WS_CHILD
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    GROUPBOX        "Your files", IDC_INS_FILES_GROUP, 6, 4, 366, 50
+    LTEXT           "", IDC_INS_DUMPS, 14, 16, 350, 8, SS_ENDELLIPSIS
+    LTEXT           "", IDC_INS_KEYS, 14, 28, 350, 8, SS_ENDELLIPSIS
+    LTEXT           "", IDC_INS_TOOLS, 14, 40, 350, 8, SS_ENDELLIPSIS
+
+    GROUPBOX        "Compile", IDC_INS_RUN_GROUP, 6, 58, 366, 74
+    AUTOCHECKBOX    "Japanese edition (cartridge)", IDC_INS_JP, 14, 70, 150, 10
+    LTEXT           "", IDC_INS_JP_STATE, 168, 71, 196, 8, SS_ENDELLIPSIS
+    AUTOCHECKBOX    "Global edition (eShop)", IDC_INS_GL, 14, 83, 150, 10
+    LTEXT           "", IDC_INS_GL_STATE, 168, 84, 196, 8, SS_ENDELLIPSIS
+    AUTOCHECKBOX    "Install or check the requirements first (needed the first time)", IDC_INS_REQ, 14, 96, 350, 10
+    PUSHBUTTON      "Install and compile", IDC_INS_START, 14, 112, 110, 14
+    PUSHBUTTON      "Open in a console", IDC_INS_CONSOLE, 130, 112, 90, 14
+    PUSHBUTTON      "Cancel", IDC_INS_CANCEL, 226, 112, 60, 14, WS_DISABLED
+
+    GROUPBOX        "Progress", IDC_INS_PROG_GROUP, 6, 136, 366, 148
+    LTEXT           "", IDC_INS_STEP, 14, 148, 290, 8, SS_ENDELLIPSIS
+    RTEXT           "", IDC_INS_TIME, 306, 148, 58, 8
+    CONTROL         "", IDC_INS_PROGRESS, "msctls_progress32", WS_BORDER, 14, 159, 350, 8
+    EDITTEXT        IDC_INS_LOG, 14, 171, 350, 86, ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | ES_AUTOHSCROLL | WS_VSCROLL | WS_HSCROLL
+    LTEXT           "", IDC_INS_RESULT, 14, 261, 208, 18
+    PUSHBUTTON      "Copy log", IDC_INS_COPY, 226, 264, 60, 14
+    PUSHBUTTON      "Logs folder", IDC_INS_OPENLOGS, 292, 264, 72, 14
+END
+
+// ------------------------------------------------------------------------------------------------ mods (part 2)
+IDD_MODS DIALOGEX 0, 0, 378, 288
+STYLE DS_SHELLFONT | DS_CONTROL | WS_CHILD
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    GROUPBOX        "Mods and updates", IDC_MODS_GROUP, 6, 4, 366, 120
+    LTEXT           "", IDC_MODS_TEXT, 14, 18, 350, 78
+    PUSHBUTTON      "Open mods folder", IDC_MODS_OPEN, 14, 102, 90, 14
+    PUSHBUTTON      "Open updates folder", IDC_MODS_UPDATES, 110, 102, 90, 14
+END
+
+// ------------------------------------------------------------------------------------------------ controls / title (part 3)
+IDD_CONTROLS DIALOGEX 0, 0, 378, 288
+STYLE DS_SHELLFONT | DS_CONTROL | WS_CHILD
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    GROUPBOX        "Keyboard, controller and title screen", IDC_CTL_GROUP, 6, 4, 366, 120
+    LTEXT           "", IDC_CTL_TEXT, 14, 18, 350, 78
+    PUSHBUTTON      "Open data folder", IDC_CTL_OPENDATA, 14, 102, 90, 14
+    PUSHBUTTON      "Open the examples", IDC_CTL_EXAMPLES, 110, 102, 90, 14
+END
+
+// ------------------------------------------------------------------------------------------------ license
+IDD_LICENSE DIALOGEX 0, 0, 340, 268
+STYLE DS_SHELLFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Licenses"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    GROUPBOX        "Microsoft license (Windows CRT and SDK)", IDC_LIC_MS_GROUP, 7, 7, 326, 100
+    LTEXT           "", IDC_LIC_MS_TEXT, 15, 20, 310, 50
+    CONTROL         "", IDC_LIC_LINK, "SysLink", WS_TABSTOP, 15, 74, 310, 10
+    AUTOCHECKBOX    "I have read and accept the Microsoft license terms", IDC_LIC_ACCEPT, 15, 90, 310, 10
+    GROUPBOX        "This port (LICENSE and NOTICE.md)", IDC_LIC_PORT_GROUP, 7, 112, 326, 128
+    EDITTEXT        IDC_LIC_PORT_TEXT, 15, 124, 310, 108, ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL
+    DEFPUSHBUTTON   "Accept and continue", IDOK, 191, 246, 80, 15, WS_DISABLED
+    PUSHBUTTON      "Cancel", IDCANCEL, 277, 246, 56, 15
+END
+
+// ------------------------------------------------------------------------------------------------ restore a backup
+IDD_RESTORE DIALOGEX 0, 0, 260, 170
+STYLE DS_SHELLFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Restore saves"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "", IDC_RESTORE_TEXT, 7, 7, 246, 18
+    LISTBOX         IDC_RESTORE_LIST, 7, 28, 246, 114, LBS_NOTIFY | LBS_NOINTEGRALHEIGHT | WS_VSCROLL | WS_TABSTOP | WS_BORDER
+    DEFPUSHBUTTON   "Restore", IDOK, 141, 149, 54, 15
+    PUSHBUTTON      "Cancel", IDCANCEL, 199, 149, 54, 15
+END
+

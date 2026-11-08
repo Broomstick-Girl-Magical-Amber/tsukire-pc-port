@@ -20,6 +20,10 @@ add_executable(tsukihime_launcher WIN32
     src/text.cpp
     res/launcher.rc
 )
+# The .rc names its icon, manifest and headers by path and CMake does not scan them: without this, changing
+# launcher.ico (or the manifest) leaves "ninja: no work to do" and the exe keeps the old icon.
+set_source_files_properties(res/launcher.rc PROPERTIES OBJECT_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/res/launcher.ico;${CMAKE_CURRENT_SOURCE_DIR}/res/launcher.manifest;${CMAKE_CURRENT_SOURCE_DIR}/res/resource.h;${CMAKE_CURRENT_SOURCE_DIR}/res/rcdefs.h")
 target_compile_definitions(tsukihime_launcher PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00)
 target_link_libraries(tsukihime_launcher PRIVATE comctl32 shell32 uxtheme user32 gdi32 bcrypt)
 
