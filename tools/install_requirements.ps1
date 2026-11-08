@@ -47,6 +47,7 @@ param(
     [ValidateRange(0, 11)][int]$To = 11,
     [switch]$Check,
     [switch]$NonInteractive,
+    [switch]$AssumeYes,   # AP_INSTALL_YES: answer yes to every question (replace/move what does not match), except the Microsoft license
     [switch]$CrossRecomp,
     [switch]$Recomp,
     [string]$InputFile = '',
@@ -153,6 +154,8 @@ function Problem([string]$t) {
     else { Fail $t }
 }
 function Ask([string]$t) {
+    # AP_INSTALL_YES: -AssumeYes says yes to everything but the Microsoft license (only -AcceptLicense or a typed y accept that)
+    if ($AssumeYes -and $t -notmatch '^Do you accept the Microsoft license') { Info "$t -> yes (-AssumeYes)"; return $true }
     if ($NonInteractive) { Info "$t -> no (-NonInteractive)"; return $false }
     $r = Read-Host "   $t [y/N]"
     return ($r -match '^\s*(y|yes)\s*$')

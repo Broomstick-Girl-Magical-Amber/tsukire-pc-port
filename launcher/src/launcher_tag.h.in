@@ -1,0 +1,3 @@
+// launcher_tag.h - generated from launcher_tag.h.in by CMake (LAUNCHER_TAG); do not edit.
+#pragma once
+#define LAUNCHER_TAG L"@LAUNCHER_TAG@"

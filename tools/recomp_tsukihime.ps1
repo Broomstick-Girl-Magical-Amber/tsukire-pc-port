@@ -207,6 +207,7 @@ $Markers = @(
     @('both', 'framework\games\tsukihime_common\tsukihime_common.cmake', 'AP_HUD_GLYPHS', 'apply_hud_glyphs.py', $false),
     @('both', 'framework\games\tsukihime_common\tsukihime_common.cmake', 'AP_FFMPEG_PREBUILT', 'apply_ffmpeg_prebuilt.py', $false),
     @('both', 'tools\install_requirements.ps1', 'AP_FFMPEG_PREBUILT', 'apply_ffmpeg_prebuilt.py', $false),
+    @('both', 'tools\install_requirements.ps1', 'AP_INSTALL_YES', 'apply_install_yes.py', $false),
     @('both', 'framework\runtime\src\hle_fs.cpp', 'AP_ROMFS_DIRECT', 'apply_romfs_direct.py', $false),
     @('both', 'framework\games\tsukihime_common\tsukihime_common.cmake', 'AP_ROMFS_DIRECT', 'apply_romfs_direct.py', $false),
     @('both', 'framework\games\tsukihime_common\romfs_direct.cpp', 'AP_ROMFS_DIRECT', 'romfs_direct.cpp (copy it to games\tsukihime_common)', $false),
