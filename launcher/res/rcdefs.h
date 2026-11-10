@@ -29,6 +29,10 @@
 #define PBS_MARQUEE         0x00000008L
 #define SS_PATHELLIPSIS     0x00008000L
 #define LBS_NOTIFY          0x0001L
+#define LVS_REPORT          0x0001L
+#define LVS_SINGLESEL       0x0004L
+#define LVS_SHOWSELALWAYS   0x0008L
+#define LVS_NOSORTHEADER    0x8000L
 #define LBS_NOINTEGRALHEIGHT 0x0100L
 #define IDOK                1
 #define IDCANCEL            2

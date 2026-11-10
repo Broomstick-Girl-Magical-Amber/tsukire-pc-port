@@ -115,6 +115,7 @@ void ParseLine(const std::wstring& raw) {
     std::wstring line = raw;
     size_t a = line.find_first_not_of(L' ');
     std::wstring t = a == std::wstring::npos ? L"" : line.substr(a);
+    NoteRecompLine(t);   // mods.cpp: an .nsp "not for this edition"
 
     if (t.rfind(L"recomp_tsukihime: edition ", 0) == 0) {   // a recompile starts
         p.inRecomp = true;

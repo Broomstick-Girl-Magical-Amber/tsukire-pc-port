@@ -109,15 +109,29 @@ BEGIN
     PUSHBUTTON      "Logs folder", IDC_INS_OPENLOGS, 292, 264, 72, 14
 END
 
-// ------------------------------------------------------------------------------------------------ mods (part 2)
+// ------------------------------------------------------------------------------------------------ mods and updates
 IDD_MODS DIALOGEX 0, 0, 378, 288
 STYLE DS_SHELLFONT | DS_CONTROL | WS_CHILD
 FONT 8, "MS Shell Dlg", 400, 0, 0x1
 BEGIN
-    GROUPBOX        "Mods and updates", IDC_MODS_GROUP, 6, 4, 366, 120
-    LTEXT           "", IDC_MODS_TEXT, 14, 18, 350, 78
-    PUSHBUTTON      "Open mods folder", IDC_MODS_OPEN, 14, 102, 90, 14
-    PUSHBUTTON      "Open updates folder", IDC_MODS_UPDATES, 110, 102, 90, 14
+    LTEXT           "Edition", IDC_MODS_EDITION_LABEL, 8, 8, 40, 8
+    COMBOBOX        IDC_MODS_EDITION, 50, 6, 120, 60, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "", IDC_MODS_BANNER, 8, 23, 286, 18
+    PUSHBUTTON      "Recompile...", IDC_MODS_RECOMP, 300, 24, 72, 14
+
+    GROUPBOX        "Mods", IDC_MODS_GROUP, 6, 42, 366, 136
+    CONTROL         "", IDC_MODS_LIST, "SysListView32", LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | LVS_NOSORTHEADER | WS_BORDER | WS_TABSTOP, 12, 53, 354, 82
+    LTEXT           "", IDC_MODS_DETAIL, 12, 138, 354, 18
+    PUSHBUTTON      "Add mod...", IDC_MODS_ADD, 12, 160, 80, 14
+    PUSHBUTTON      "Remove...", IDC_MODS_REMOVE, 96, 160, 60, 14
+    PUSHBUTTON      "Open folder", IDC_MODS_OPEN, 160, 160, 70, 14
+
+    GROUPBOX        "Updates and patches (.nsp in updates)", IDC_UPD_GROUP, 6, 182, 366, 104
+    CONTROL         "", IDC_UPD_LIST, "SysListView32", LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | LVS_NOSORTHEADER | WS_BORDER | WS_TABSTOP, 12, 193, 354, 50
+    LTEXT           "", IDC_UPD_DETAIL, 12, 246, 354, 18
+    PUSHBUTTON      "Add .nsp...", IDC_UPD_ADD, 12, 268, 80, 14
+    PUSHBUTTON      "Remove...", IDC_UPD_REMOVE, 96, 268, 60, 14
+    PUSHBUTTON      "Open folder", IDC_MODS_UPDATES, 160, 268, 70, 14
 END
 
 // ------------------------------------------------------------------------------------------------ controls / title (part 3)
@@ -171,4 +185,27 @@ BEGIN
     LISTBOX         IDC_RESTORE_LIST, 7, 28, 246, 114, LBS_NOTIFY | LBS_NOINTEGRALHEIGHT | WS_VSCROLL | WS_TABSTOP | WS_BORDER
     DEFPUSHBUTTON   "Restore", IDOK, 141, 149, 54, 15
     PUSHBUTTON      "Cancel", IDCANCEL, 199, 149, 54, 15
+END// ------------------------------------------------------------------------------------------------ name of a mod being added
+IDD_MODNAME DIALOGEX 0, 0, 290, 124
+STYLE DS_SHELLFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Add mod"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "", IDC_MODNAME_TEXT, 7, 7, 276, 66
+    EDITTEXT        IDC_MODNAME_EDIT, 7, 76, 276, 12, ES_AUTOHSCROLL | WS_TABSTOP
+    LTEXT           "", IDC_MODNAME_ERR, 7, 91, 276, 8
+    DEFPUSHBUTTON   "Add", IDOK, 175, 104, 54, 14
+    PUSHBUTTON      "Cancel", IDCANCEL, 233, 104, 50, 14
+END
+
+// ------------------------------------------------------------------------------------------------ copy with progress
+IDD_COPY DIALOGEX 0, 0, 250, 66
+STYLE DS_SHELLFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION
+CAPTION "Copying"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "", IDC_COPY_TEXT, 7, 7, 236, 16, SS_PATHELLIPSIS
+    CONTROL         "", IDC_COPY_PROGRESS, "msctls_progress32", WS_BORDER, 7, 26, 236, 8
+    LTEXT           "", IDC_COPY_SIZE, 7, 38, 160, 8
+    PUSHBUTTON      "Cancel", IDCANCEL, 189, 46, 54, 14
 END

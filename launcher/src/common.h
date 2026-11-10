@@ -53,6 +53,9 @@ bool IsWine();
 std::wstring Format(const wchar_t* fmt, ...);
 std::wstring GetDlgText(HWND dlg, int id);
 bool CopyToClipboard(HWND owner, const std::wstring& text);
+// Standard Open dialog (IFileOpenDialog): a folder, or a file (filterSpec like L"*.nsp", nullptr = any). "" = cancelled.
+std::wstring PickPath(HWND owner, const wchar_t* title, bool folder, const wchar_t* filterName = nullptr, const wchar_t* filterSpec = nullptr);
+bool ToRecycleBin(HWND owner, const std::wstring& path);   // file or folder; false if it is still there
 
 // launcher.ini (root of the port; never versioned: the .gitignore keeps the root out)
 std::wstring IniGet(const wchar_t* key, const wchar_t* def);
@@ -77,7 +80,8 @@ std::wstring PowerShellExe();
 
 // ---------------------------------------------------------------------------------------------- fetch.cpp
 bool ValidRoot(const std::wstring& r);                      // tools\*.ps1 + framework\ are in r
-bool DownloadPort();                                        // asks, then downloads + verifies + unpacks the port into g.root; true when done
+bool DownloadPort();
+bool Sha256File(const std::wstring& path, std::wstring& hex);   // lowercase hex                                        // asks, then downloads + verifies + unpacks the port into g.root; true when done
 
 // ---------------------------------------------------------------------------------------------- runner.cpp
 // Runs one command line hidden, with stdout+stderr in a pipe and the whole process tree in a job (Cancel kills it).

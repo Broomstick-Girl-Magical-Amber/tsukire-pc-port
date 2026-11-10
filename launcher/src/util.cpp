@@ -3,6 +3,7 @@
 
 #include <shellapi.h>
 #include <shlobj.h>
+#include <shobjidl.h>
 #include <tlhelp32.h>
 
 #include <cstdarg>
@@ -150,6 +151,55 @@ void CountTree(const std::wstring& p, int& files, ULONGLONG& bytes, FILETIME& ne
         }
     } while (FindNextFileW(h, &fd));
     FindClose(h);
+}
+
+std::wstring PickPath(HWND owner, const wchar_t* title, bool folder, const wchar_t* filterName, const wchar_t* filterSpec) {
+    // The GUIDs are written here so the exe needs no uuid.lib.
+    static const GUID kClsid = {0xDC1C5A9C, 0xE88A, 0x4DDE, {0xA5, 0xA1, 0x60, 0xF8, 0x2A, 0x20, 0xAE, 0xF7}};   // CLSID_FileOpenDialog
+    static const GUID kIid = {0xD57C7288, 0xD4AD, 0x4768, {0xBE, 0x02, 0x9D, 0x96, 0x95, 0x32, 0xD9, 0x60}};     // IID_IFileOpenDialog
+    std::wstring out;
+    HRESULT init = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    IFileOpenDialog* dlg = nullptr;
+    if (SUCCEEDED(CoCreateInstance(kClsid, nullptr, CLSCTX_INPROC_SERVER, kIid, reinterpret_cast<void**>(&dlg))) && dlg) {
+        DWORD opts = 0;
+        dlg->GetOptions(&opts);
+        opts |= FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST;
+        opts |= folder ? FOS_PICKFOLDERS : FOS_FILEMUSTEXIST;
+        dlg->SetOptions(opts);
+        dlg->SetTitle(title);
+        if (!folder && filterSpec) {
+            COMDLG_FILTERSPEC spec[2] = {{filterName ? filterName : filterSpec, filterSpec}, {L"*.*", L"*.*"}};
+            dlg->SetFileTypes(2, spec);
+        }
+        if (SUCCEEDED(dlg->Show(owner))) {
+            IShellItem* item = nullptr;
+            if (SUCCEEDED(dlg->GetResult(&item)) && item) {
+                PWSTR path = nullptr;
+                if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &path)) && path) {
+                    out = path;
+                    CoTaskMemFree(path);
+                }
+                item->Release();
+            }
+        }
+        dlg->Release();
+    }
+    if (SUCCEEDED(init)) CoUninitialize();
+    while (folder && out.size() > 3 && out.back() == L'\\') out.pop_back();
+    return out;
+}
+
+bool ToRecycleBin(HWND owner, const std::wstring& path) {
+    std::wstring from = path;
+    from.push_back(L'\0');   // the list ends with two NULs
+    SHFILEOPSTRUCTW op{};
+    op.hwnd = owner;
+    op.wFunc = FO_DELETE;
+    op.pFrom = from.c_str();
+    // To the Recycle Bin; Windows asks before deleting for good (too big for the bin, or a drive without one).
+    op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_WANTNUKEWARNING | FOF_NOERRORUI;
+    SHFileOperationW(&op);
+    return GetFileAttributesW(path.c_str()) == INVALID_FILE_ATTRIBUTES;
 }
 
 void OpenInShell(HWND owner, const std::wstring& path) {

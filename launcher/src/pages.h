@@ -14,6 +14,10 @@ void RefreshAll();               // re-reads the port folder (every tab)
 void RefreshPlay();
 void RefreshInstall();
 void PreselectInstall(int ed);   // Install tab with that edition ticked
+void RefreshMods();              // re-reads mods\ and updates\ (only while the tab is shown; otherwise on showing it)
+void RefreshModsButtons();       // only what the game / a compilation running enables
+bool ModsAllowPlay(HWND owner);  // false when the mods need a recompilation and the player chose not to play yet
+void NoteRecompLine(const std::wstring& line);   // a recompilation output line (remembers .nsp of the other edition)
 bool LicenseAccepted(HWND owner);   // shows the license window unless it was accepted before (launcher.ini)
 void PlayGame();
 void OnGameExit(DWORD code);

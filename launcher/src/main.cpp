@@ -1,4 +1,5 @@
-// main.cpp - tsukihime_launcher.exe: the window, the Play / save data tab, the license, and the tabs of parts 2 and 3.
+// main.cpp - tsukihime_launcher.exe: the window, the Play / save data tab, the license, and the tab of part 3.
+// The Mods and updates tab is in mods.cpp.
 //
 // The launcher goes in the root of the port (next to tools\, framework\, your .xci/.nsp and prod.keys). It needs
 // nothing installed: it runs the port's own scripts with Windows PowerShell and starts the compiled game.
@@ -275,35 +276,6 @@ void DoRestore(HWND page) {
 }
 
 // ---- import one save file
-// File picker (IFileOpenDialog). The GUIDs are written here so the exe needs no uuid.lib.
-std::wstring PickFile(HWND owner, const wchar_t* title) {
-    static const GUID kClsid = {0xDC1C5A9C, 0xE88A, 0x4DDE, {0xA5, 0xA1, 0x60, 0xF8, 0x2A, 0x20, 0xAE, 0xF7}};   // CLSID_FileOpenDialog
-    static const GUID kIid = {0xD57C7288, 0xD4AD, 0x4768, {0xBE, 0x02, 0x9D, 0x96, 0x95, 0x32, 0xD9, 0x60}};     // IID_IFileOpenDialog
-    std::wstring out;
-    HRESULT init = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-    IFileOpenDialog* dlg = nullptr;
-    if (SUCCEEDED(CoCreateInstance(kClsid, nullptr, CLSCTX_INPROC_SERVER, kIid, reinterpret_cast<void**>(&dlg))) && dlg) {
-        DWORD opts = 0;
-        dlg->GetOptions(&opts);
-        dlg->SetOptions(opts | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST | FOS_FILEMUSTEXIST);
-        dlg->SetTitle(title);
-        if (SUCCEEDED(dlg->Show(owner))) {
-            IShellItem* item = nullptr;
-            if (SUCCEEDED(dlg->GetResult(&item)) && item) {
-                PWSTR path = nullptr;
-                if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &path)) && path) {
-                    out = path;
-                    CoTaskMemFree(path);
-                }
-                item->Release();
-            }
-        }
-        dlg->Release();
-    }
-    if (SUCCEEDED(init)) CoUninitialize();
-    return out;
-}
-
 bool SamePath(std::wstring a, std::wstring b) {
     for (wchar_t& c : a) c = wchar_t(towlower(c == L'/' ? L'\\' : c));
     for (wchar_t& c : b) c = wchar_t(towlower(c == L'/' ? L'\\' : c));
@@ -356,7 +328,7 @@ std::wstring SaveTargetFor(int ed, const std::wstring& picked, std::wstring* why
     FindByName(save, file, &all);
     if (all.empty()) {
         *why = Format(L2(L"No save file called \"%ls\" exists in this edition, so there is nothing to replace.\nPick a file with the same name as one of the current saves (see \"Open folder\").",
-                         L"No hay ningún archivo de partida llamado \"%ls\" en esta edición, así que no hay nada que reemplazar.\nElige un archivo con el mismo nombre que una de las partidas actuales (mira \"Abrir carpeta\")."),
+                         L"No hay ning\u00fan archivo de partida llamado \"%ls\" en esta edici\u00f3n, as\u00ed que no hay nada que reemplazar.\nElige un archivo con el mismo nombre que una de las partidas actuales (mira \"Abrir carpeta\")."),
                       file.c_str());
         return L"";
     }
@@ -370,7 +342,7 @@ std::wstring SaveTargetFor(int ed, const std::wstring& picked, std::wstring* why
     }
     if (same.size() == 1) return same[0];
     *why = Format(L2(L"There are several save files called \"%ls\" and the folder of the picked file (\"%ls\") does not tell which one it is.\nPut it in a folder named like the one it belongs to (for example save00\\%ls) and pick it again.",
-                     L"Hay varios archivos de partida llamados \"%ls\" y la carpeta del archivo elegido (\"%ls\") no dice cuál es.\nPonlo en una carpeta con el nombre de la que le corresponde (por ejemplo save00\\%ls) y eligélo otra vez."),
+                     L"Hay varios archivos de partida llamados \"%ls\" y la carpeta del archivo elegido (\"%ls\") no dice cu\u00e1l es.\nPonlo en una carpeta con el nombre de la que le corresponde (por ejemplo save00\\%ls) y el\u00edgelo otra vez."),
                   file.c_str(), folder.c_str(), file.c_str());
     return L"";
 }
@@ -382,7 +354,7 @@ void DoImport(HWND page) {
         return;
     }
     std::wstring picked = IniGet(L"import_source", L"");   // tests only: skips the file picker
-    if (picked.empty()) picked = PickFile(page, L2(L"Pick the save file to import", L"Elige el archivo de partida a importar"));
+    if (picked.empty()) picked = PickPath(page, L2(L"Pick the save file to import", L"Elige el archivo de partida a importar"), false);
     if (picked.empty()) return;
     WIN32_FILE_ATTRIBUTE_DATA info{};
     if (!GetFileAttributesExW(picked.c_str(), GetFileExInfoStandard, &info) || (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
@@ -399,10 +371,9 @@ void DoImport(HWND page) {
         Message(page, MB_ICONINFORMATION, L2(L"That is the current save file itself.", L"Ese es el propio archivo de partida actual."));
         return;
     }
-    ULONGLONG size = (ULONGLONG(info.nFileSizeHigh) << 32) | info.nFileSizeLow;
-    std::wstring warn = Format(L2(L"Import this save file into the %ls edition?\n\n%ls\n\n\nIt will REPLACE this save:\n%ls\n\nAll the current saves are copied first to %ls (\"_before_import\") folder, and \"Restore...\" brings them back.",
-                                  L"¿Importar este archivo de partida a la edición %ls?\n\n%ls\n\n\nREEMPLAZARÁ esta partida:\n%ls\n\nAntes se copian todas las partidas actuales a la carpeta %ls (\"_before_import\") y \"Restaurar...\" las recupera."),
-                               EditionName(ed).c_str(), picked.c_str(), Size(size).c_str(), Rel(target).c_str(), Rel(BackupDir(ed)).c_str());
+    std::wstring warn = Format(L2(L"Import this save file into the %ls edition?\n\n%ls\n\nIt will REPLACE this save:\n%ls\n\nAll the current saves are copied first to %ls (\"_before_import\") folder, and \"Restore...\" brings them back.",
+                                  L"\u00bfImportar este archivo de partida a la edici\u00f3n %ls?\n\n%ls\n\nREEMPLAZAR\u00c1 esta partida:\n%ls\n\nAntes se copian todas las partidas actuales a la carpeta %ls (\"_before_import\") y \"Restaurar...\" las recupera."),
+                               EditionName(ed).c_str(), picked.c_str(), Rel(target).c_str(), Rel(BackupDir(ed)).c_str());
     if (Message(page, MB_ICONWARNING | MB_YESNO | MB_DEFBUTTON2, warn) != IDYES) return;
     if (GameRunning(ed)) {
         Message(page, MB_ICONWARNING, L2(L"Close the game first.", L"Cierra el juego primero."));
@@ -411,7 +382,7 @@ void DoImport(HWND page) {
     std::wstring safety = BackupSaves(ed, L"_before_import", nullptr);
     if (safety.empty()) {
         Message(page, MB_ICONERROR, L2(L"The current saves could not be backed up: nothing was changed.",
-                                       L"No se pudo copiar las partidas actuales: no se cambió nada."));
+                                       L"No se pudo copiar las partidas actuales: no se cambi\u00f3 nada."));
         return;
     }
     // Copy next to the target and swap, so a failed copy leaves the original untouched.
@@ -420,10 +391,10 @@ void DoImport(HWND page) {
         !MoveFileExW(tmp.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING)) {
         DeleteFileW(tmp.c_str());
         Message(page, MB_ICONERROR, L2(L"The file could not be copied: the current save was left as it was.",
-                                       L"No se pudo copiar el archivo: la partida actual quedó como estaba."));
+                                       L"No se pudo copiar el archivo: la partida actual qued\u00f3 como estaba."));
         return;
     }
-    std::wstring t = Format(L2(L"Imported over %ls.\nThe previous saves are in %ls", L"Importado sobre %ls.\nLas partidas anteriores están en %ls"),
+    std::wstring t = Format(L2(L"Imported over %ls.\nThe previous saves are in %ls", L"Importado sobre %ls.\nLas partidas anteriores est\u00e1n en %ls"),
                             Rel(target).c_str(), Rel(safety).c_str());
     Message(page, MB_ICONINFORMATION, t);
     RefreshPlay();
@@ -436,6 +407,7 @@ void RefreshPlay() {
     HWND p = g.pages[kPagePlay];
     if (!p) return;
     int ed = g.edition;
+    SendDlgItemMessageW(p, IDC_PLAY_EDITION, CB_SETCURSEL, ed, 0);   // it can change from the Mods tab
     std::wstring exe = ExePath(ed);
     FILETIME ft{};
     bool built = GetFileTime64(exe, ft);
@@ -476,13 +448,13 @@ void RefreshPlay() {
     FILETIME newest{};
     CountTree(save, files, bytes, newest);
     std::wstring info = L2(L"No saves yet.", L"Todav\u00eda no hay partidas.");
-    if (files == 1) info = Format(L2(L"1 file, last saved %ls", L"1 archivo, guardado por \u00faltima vez el %ls"), Size(bytes).c_str(), FormatFileTime(newest).c_str());
+    if (files == 1) info = Format(L2(L"1 file, last saved %ls", L"1 archivo, guardado por \u00faltima vez el %ls"), FormatFileTime(newest).c_str());
     else if (files) info = Format(L2(L"%d files (%ls), last saved %ls", L"%d archivos (%ls), guardado por \u00faltima vez el %ls"), files, Size(bytes).c_str(), FormatFileTime(newest).c_str());
     SetDlgItemTextW(p, IDC_SAVE_INFO, info.c_str());
     std::vector<std::wstring> backups = ListBackups(ed);
     SetDlgItemTextW(p, IDC_SAVE_BACKUPS, backups.empty() ? Format(L2(L"Backups: none yet (they go to %ls)", L"Copias: ninguna todav\u00eda (van a %ls)"), Rel(BackupDir(ed)).c_str()).c_str()
                                                          : Format(L2(L"Backups: %d in %ls", L"Copias: %d en %ls"),
-                                                                  int(backups.size()), Rel(BackupDir(ed)).c_str(), backups[0].c_str()).c_str());
+                                                                  int(backups.size()), Rel(BackupDir(ed)).c_str()).c_str());
     EnableWindow(GetDlgItem(p, IDC_SAVE_RESTORE), !backups.empty() && !running);
     EnableWindow(GetDlgItem(p, IDC_SAVE_IMPORT), !running);
     EnableWindow(GetDlgItem(p, IDC_SAVE_BACKUP), files > 0);
@@ -498,7 +470,7 @@ INT_PTR CALLBACK PlayProc(HWND dlg, UINT msg, WPARAM wp, LPARAM) {
         for (int ed = 0; ed < 2; ed++) SendMessageW(combo, CB_ADDSTRING, 0, LPARAM(EditionName(ed).c_str()));
         SendMessageW(combo, CB_SETCURSEL, g.edition, 0);
         CheckDlgButton(dlg, IDC_PLAY_CONSOLE, IniGet(L"show_console", L"0") == L"1" ? BST_CHECKED : BST_UNCHECKED);
-        CheckDlgButton(dlg, IDC_PLAY_CLOSE, IniGet(L"close_on_play", L"0") == L"1" ? BST_CHECKED : BST_UNCHECKED);
+        CheckDlgButton(dlg, IDC_PLAY_CLOSE, IniGet(L"close_on_play", L"1") == L"1" ? BST_CHECKED : BST_UNCHECKED);
         return TRUE;
     }
     case WM_COMMAND:
@@ -564,6 +536,7 @@ void PlayGame() {
         Message(g.main, MB_ICONINFORMATION, L2(L"The game is already running.", L"El juego ya est\u00e1 abierto."));
         return;
     }
+    if (!ModsAllowPlay(g.main)) return;   // mods or updates changed and need a recompilation (mods.cpp)
     bool extracted = DirExists(Join(DataDir(ed), L"extract\\romfs\\shader"));
     if (!extracted && FindDumps().empty() &&
         Message(g.main, MB_ICONWARNING | MB_YESNO, L2(L"There is no .xci / .nsp in the port folder. The game reads its data from your dump and will say \"Game data not found\". Start it anyway?",
@@ -592,7 +565,7 @@ void PlayGame() {
     HANDLE dup = nullptr;
     DuplicateHandle(GetCurrentProcess(), pi.hProcess, GetCurrentProcess(), &dup, SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, 0);
     if (dup) CloseHandle(CreateThread(nullptr, 0, GameWaiter, dup, 0, nullptr));
-    if (IniGet(L"close_on_play", L"0") == L"1") {
+    if (IniGet(L"close_on_play", L"1") == L"1") {
         DestroyWindow(g.main);
         return;
     }
@@ -625,38 +598,7 @@ void OnGameExit(DWORD code) {
     }
 }
 
-// ---------------------------------------------------------------------------------------------- tabs of parts 2 and 3
-INT_PTR CALLBACK ModsProc(HWND dlg, UINT msg, WPARAM wp, LPARAM) {
-    switch (msg) {
-    case WM_INITDIALOG:
-        EnableThemeDialogTexture(dlg, ETDT_ENABLETAB);
-        ApplyDialogText(dlg, IDD_MODS);
-        SetDlgItemTextW(dlg, IDC_MODS_TEXT,
-            L2(L"Managing mods and updates from here comes in the next version of the launcher. Meanwhile:\n\n"
-               L"- Updates and translation patches (.nsp): put them in the updates folder and recompile the edition.\n"
-               L"- Loose mods: copy them to mods\\<edition>\\<any name>\\romfs\\ (no need to recompile). A folder whose name "
-               L"starts with _ is turned off.",
-               L"Gestionar mods y actualizaciones desde aqu\u00ed llega en la pr\u00f3xima versi\u00f3n del launcher. Mientras tanto:\n\n"
-               L"- Actualizaciones y parches de traducci\u00f3n (.nsp): ponlos en la carpeta updates y recompila la edici\u00f3n.\n"
-               L"- Mods sueltos: c\u00f3pialos a mods\\<edici\u00f3n>\\<cualquier nombre>\\romfs\\ (sin recompilar). Una carpeta cuyo "
-               L"nombre empieza con _ queda desactivada."));
-        return TRUE;
-    case WM_COMMAND:
-        if (LOWORD(wp) == IDC_MODS_OPEN) {
-            std::wstring d = Join(g.root, std::wstring(L"mods\\") + kEditions[g.edition].key);
-            EnsureDir(d);
-            OpenInShell(dlg, d);
-        }
-        if (LOWORD(wp) == IDC_MODS_UPDATES) {
-            std::wstring d = Join(g.root, L"updates");
-            EnsureDir(d);
-            OpenInShell(dlg, d);
-        }
-        return TRUE;
-    }
-    return FALSE;
-}
-
+// ---------------------------------------------------------------------------------------------- tab of part 3
 INT_PTR CALLBACK ControlsProc(HWND dlg, UINT msg, WPARAM wp, LPARAM) {
     switch (msg) {
     case WM_INITDIALOG:
@@ -690,6 +632,7 @@ void ShowPage(int page) {
 void RefreshAll() {
     RefreshPlay();
     RefreshInstall();
+    RefreshMods();
 }
 
 namespace {
@@ -734,7 +677,7 @@ INT_PTR CALLBACK MainProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
         auto* nm = reinterpret_cast<NMHDR*>(lp);
         if (nm->idFrom == IDC_TAB && nm->code == TCN_SELCHANGE) {
             ShowPage(TabCtrl_GetCurSel(g.tab));
-            RefreshAll();
+            RefreshAll();   // also the tab just shown (RefreshMods only works on a visible tab)
         }
         break;
     }
@@ -743,6 +686,7 @@ INT_PTR CALLBACK MainProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
         break;
     case WM_TIMER:
         if (wp == kTimerRefresh && !RunnerBusy()) RefreshPlay();   // the game started or closed outside the launcher
+        if (wp == kTimerRefresh) RefreshModsButtons();
         return TRUE;
     case WM_APP_GAME_EXIT:
         OnGameExit(DWORD(wp));
@@ -813,7 +757,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
         return 0;
     }
 
-    INITCOMMONCONTROLSEX icc{sizeof icc, ICC_TAB_CLASSES | ICC_PROGRESS_CLASS | ICC_LINK_CLASS | ICC_STANDARD_CLASSES};
+    INITCOMMONCONTROLSEX icc{sizeof icc, ICC_TAB_CLASSES | ICC_PROGRESS_CLASS | ICC_LINK_CLASS | ICC_STANDARD_CLASSES | ICC_LISTVIEW_CLASSES};
     InitCommonControlsEx(&icc);
     g.edition = IniGet(L"edition", L"japan") == L"global" ? 1 : 0;
 

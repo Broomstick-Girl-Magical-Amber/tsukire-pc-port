@@ -32,6 +32,32 @@ bool ValidRoot(const std::wstring& r) {
            DirExists(Join(r, L"framework"));
 }
 
+// SHA-256 of a file, lowercase hex (bcrypt).
+bool Sha256File(const std::wstring& path, std::wstring& hex) {
+    HANDLE f = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return false;
+    BCRYPT_ALG_HANDLE alg = nullptr;
+    BCRYPT_HASH_HANDLE h = nullptr;
+    bool ok = BCryptOpenAlgorithmProvider(&alg, BCRYPT_SHA256_ALGORITHM, nullptr, 0) >= 0 &&
+              BCryptCreateHash(alg, &h, nullptr, 0, nullptr, 0, 0) >= 0;
+    std::vector<unsigned char> buf(1 << 20);
+    while (ok) {
+        DWORD got = 0;
+        if (!ReadFile(f, buf.data(), DWORD(buf.size()), &got, nullptr)) { ok = false; break; }
+        if (got == 0) break;
+        ok = BCryptHashData(h, buf.data(), got, 0) >= 0;
+    }
+    unsigned char digest[32] = {};
+    if (ok) ok = BCryptFinishHash(h, digest, sizeof digest, 0) >= 0;
+    if (h) BCryptDestroyHash(h);
+    if (alg) BCryptCloseAlgorithmProvider(alg, 0);
+    CloseHandle(f);
+    if (!ok) return false;
+    hex.clear();
+    for (unsigned char c : digest) hex += Format(L"%02x", c);
+    return true;
+}
+
 namespace {
 
 constexpr const wchar_t* kRepo = L"https://github.com/Broomstick-Girl-Magical-Amber/tsukire-pc-port";
@@ -74,31 +100,6 @@ std::wstring Trim(std::wstring s) {
     while (a < b && (s[a] == L' ' || s[a] == L'\t' || s[a] == L'\r' || s[a] == L'\n' || s[a] == 0xFEFF)) a++;
     while (b > a && (s[b - 1] == L' ' || s[b - 1] == L'\t' || s[b - 1] == L'\r' || s[b - 1] == L'\n')) b--;
     return s.substr(a, b - a);
-}
-
-bool Sha256File(const std::wstring& path, std::wstring& hex) {
-    HANDLE f = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
-    if (f == INVALID_HANDLE_VALUE) return false;
-    BCRYPT_ALG_HANDLE alg = nullptr;
-    BCRYPT_HASH_HANDLE h = nullptr;
-    bool ok = BCryptOpenAlgorithmProvider(&alg, BCRYPT_SHA256_ALGORITHM, nullptr, 0) >= 0 &&
-              BCryptCreateHash(alg, &h, nullptr, 0, nullptr, 0, 0) >= 0;
-    std::vector<unsigned char> buf(1 << 20);
-    while (ok) {
-        DWORD got = 0;
-        if (!ReadFile(f, buf.data(), DWORD(buf.size()), &got, nullptr)) { ok = false; break; }
-        if (got == 0) break;
-        ok = BCryptHashData(h, buf.data(), got, 0) >= 0;
-    }
-    unsigned char digest[32] = {};
-    if (ok) ok = BCryptFinishHash(h, digest, sizeof digest, 0) >= 0;
-    if (h) BCryptDestroyHash(h);
-    if (alg) BCryptCloseAlgorithmProvider(alg, 0);
-    CloseHandle(f);
-    if (!ok) return false;
-    hex.clear();
-    for (unsigned char c : digest) hex += Format(L"%02x", c);
-    return true;
 }
 
 // First 64 hex digits of a "sha256sum" style file ("<hash>  <name>").

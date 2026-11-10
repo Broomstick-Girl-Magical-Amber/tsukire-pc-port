@@ -54,9 +54,22 @@ const Item kSpanish[] = {
     {IDD_INSTALL, IDC_INS_COPY, L"Copiar el log"},
     {IDD_INSTALL, IDC_INS_OPENLOGS, L"Carpeta de logs"},
 
-    {IDD_MODS, IDC_MODS_GROUP, L"Mods y actualizaciones"},
-    {IDD_MODS, IDC_MODS_OPEN, L"Carpeta de mods"},
-    {IDD_MODS, IDC_MODS_UPDATES, L"Carpeta updates"},
+    {IDD_MODS, IDC_MODS_EDITION_LABEL, L"Edici\u00f3n"},
+    {IDD_MODS, IDC_MODS_RECOMP, L"Recompilar..."},
+    {IDD_MODS, IDC_MODS_ADD, L"Agregar mod..."},
+    {IDD_MODS, IDC_MODS_REMOVE, L"Quitar..."},
+    {IDD_MODS, IDC_MODS_OPEN, L"Abrir carpeta"},
+    {IDD_MODS, IDC_UPD_GROUP, L"Actualizaciones y parches (.nsp en updates)"},
+    {IDD_MODS, IDC_UPD_ADD, L"Agregar .nsp..."},
+    {IDD_MODS, IDC_UPD_REMOVE, L"Quitar..."},
+    {IDD_MODS, IDC_MODS_UPDATES, L"Abrir carpeta"},
+
+    {IDD_MODNAME, 0, L"Agregar mod"},
+    {IDD_MODNAME, IDOK, L"Agregar"},
+    {IDD_MODNAME, IDCANCEL, L"Cancelar"},
+
+    {IDD_COPY, 0, L"Copiando"},
+    {IDD_COPY, IDCANCEL, L"Cancelar"},
 
     {IDD_CONTROLS, IDC_CTL_GROUP, L"Teclado, mando y pantalla de t\u00edtulo"},
     {IDD_CONTROLS, IDC_CTL_OPENDATA, L"Carpeta de datos"},

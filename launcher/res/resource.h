@@ -11,6 +11,8 @@
 #define IDD_LICENSE             105
 #define IDD_RESTORE             106
 #define IDD_FETCH               107
+#define IDD_MODNAME             108
+#define IDD_COPY                109
 
 // main window
 #define IDC_TAB                 1000
@@ -64,11 +66,23 @@
 #define IDC_INS_OPENLOGS        1227
 #define IDC_INS_YES             1228
 
-// Mods and updates (part 2: for now only the folders)
+// Mods and updates
 #define IDC_MODS_GROUP          1300
-#define IDC_MODS_TEXT           1301
+#define IDC_MODS_BANNER         1301
 #define IDC_MODS_OPEN           1302
 #define IDC_MODS_UPDATES        1303
+#define IDC_MODS_EDITION_LABEL  1304
+#define IDC_MODS_EDITION        1305
+#define IDC_MODS_RECOMP         1306
+#define IDC_MODS_LIST           1307
+#define IDC_MODS_DETAIL         1308
+#define IDC_MODS_ADD            1309
+#define IDC_MODS_REMOVE         1310
+#define IDC_UPD_GROUP           1311
+#define IDC_UPD_LIST            1312
+#define IDC_UPD_DETAIL          1313
+#define IDC_UPD_ADD             1314
+#define IDC_UPD_REMOVE          1315
 
 // Controls and title screen (part 3: for now only the folders)
 #define IDC_CTL_GROUP           1400
@@ -93,4 +107,12 @@
 
 // Restore a backup
 #define IDC_RESTORE_TEXT        1600
-#define IDC_RESTORE_LIST        1601
+#define IDC_RESTORE_LIST        1601// Name of a mod being added
+#define IDC_MODNAME_TEXT        1700
+#define IDC_MODNAME_EDIT        1701
+#define IDC_MODNAME_ERR         1702
+
+// Copy with progress
+#define IDC_COPY_TEXT           1710
+#define IDC_COPY_PROGRESS       1711
+#define IDC_COPY_SIZE           1712
