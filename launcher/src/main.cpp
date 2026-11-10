@@ -420,8 +420,8 @@ void RefreshPlay() {
     std::wstring dumpLine;
     bool extracted = DirExists(Join(DataDir(ed), L"extract\\romfs\\shader"));
     if (extracted) dumpLine = L2(L"Game data: extracted in the data folder.", L"Datos del juego: extra\u00eddos en la carpeta de datos.");
-    else if (dumps.empty()) dumpLine = L2(L"Game data: no .xci / .nsp in the port folder (the port reads its data from your dump).",
-                                          L"Datos del juego: no hay .xci / .nsp en la carpeta del port (el port lee sus datos del dump).");
+    else if (dumps.empty()) dumpLine = L2(L"Game data: no .xci / .nsp in the port folder.",
+                                          L"Datos del juego: no hay .xci / .nsp en la carpeta del port.");
     else {
         std::wstring names;
         for (size_t i = 0; i < dumps.size(); i++) names += (i ? L", " : L"") + dumps[i].name;
