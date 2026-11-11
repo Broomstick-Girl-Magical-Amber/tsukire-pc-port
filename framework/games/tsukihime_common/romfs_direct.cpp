@@ -56,6 +56,12 @@
 #endif
 #endif
 
+// AP_ANDROID_ROMFS (apply_android_romfs.py): ARMv8 AES instructions (the Android build has -march=armv8.2-a+crypto)
+#if defined(__aarch64__) && (defined(__ARM_FEATURE_AES) || defined(__ARM_FEATURE_CRYPTO))
+#define TSUKI_ROMFS_ARM 1
+#include <arm_neon.h>
+#endif
+
 namespace fs = std::filesystem;
 
 namespace tsuki_romfs {
@@ -172,6 +178,42 @@ TSUKI_AES_TARGET void ctr_blocks_ni(const uint8_t rk[176], const uint8_t upper[8
 }
 #endif
 
+#ifdef TSUKI_ROMFS_ARM
+// AP_ANDROID_ROMFS: as ctr_blocks_ni with AESE (AddRoundKey + SubBytes + ShiftRows) and AESMC (MixColumns): rounds 1-9
+// are AESE(k[r-1]) + AESMC, round 10 is AESE(k[9]) and the last key is XORed.
+void ctr_blocks_ce(const uint8_t rk[176], const uint8_t upper[8], uint64_t first_block, uint8_t* data, size_t blocks) {
+    uint8x16_t k[11];
+    for (int i = 0; i < 11; i++) k[i] = vld1q_u8(rk + 16 * i);
+    uint8_t ctr[8 * 16];
+    size_t b = 0;
+    while (b < blocks) {
+        const size_t n = std::min<size_t>(8, blocks - b);
+        uint8x16_t x[8];
+        for (size_t j = 0; j < n; j++) {
+            std::memcpy(ctr + 16 * j, upper, 8);
+            put_be64(ctr + 16 * j + 8, first_block + b + j);
+            x[j] = vld1q_u8(ctr + 16 * j);
+        }
+        for (int r = 0; r < 9; r++)
+            for (size_t j = 0; j < n; j++) x[j] = vaesmcq_u8(vaeseq_u8(x[j], k[r]));
+        for (size_t j = 0; j < n; j++) {
+            x[j] = veorq_u8(vaeseq_u8(x[j], k[9]), k[10]);
+            uint8_t* p = data + 16 * (b + j);
+            vst1q_u8(p, veorq_u8(vld1q_u8(p), x[j]));
+        }
+        b += n;
+    }
+}
+
+bool use_arm_aes() {
+    static const bool on = [] {
+        const char* e = std::getenv("NX_ROMFS_NO_AESNI");  // tests: force the plain C path
+        return !(e && *e && *e != '0');
+    }();
+    return on;
+}
+#endif
+
 void ctr_blocks_c(const uint8_t rk[176], const uint8_t upper[8], uint64_t first_block, uint8_t* data, size_t blocks) {
     uint8_t ctr[16], ks[16];
     std::memcpy(ctr, upper, 8);
@@ -201,7 +243,21 @@ void ctr_blocks(const uint8_t rk[176], const uint8_t upper[8], uint64_t first_bl
         return;
     }
 #endif
+#ifdef TSUKI_ROMFS_ARM  // AP_ANDROID_ROMFS
+    if (use_arm_aes()) {
+        ctr_blocks_ce(rk, upper, first_block, data, blocks);
+        return;
+    }
+#endif
     ctr_blocks_c(rk, upper, first_block, data, blocks);
+}
+
+// AP_ANDROID_ROMFS: which AES the reads use, for the log
+const char* aes_kind() {
+#ifdef TSUKI_ROMFS_ARM
+    if (use_arm_aes()) return "ARMv8";
+#endif
+    return use_aesni() ? "NI" : "C";
 }
 
 // ---- the table -------------------------------------------------------------------------------------------------
@@ -434,7 +490,7 @@ Source& src() {
         }
         s.usable = true;
         nx::log("romfs: read straight from %s (program %016llx, %zu files, AES-%s)", s.dump.c_str(),
-                (unsigned long long)s.program_id, s.files.size(), use_aesni() ? "NI" : "C");
+                (unsigned long long)s.program_id, s.files.size(), aes_kind());  // AP_ANDROID_ROMFS
     });
     return s;
 }

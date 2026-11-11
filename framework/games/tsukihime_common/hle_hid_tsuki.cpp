@@ -182,7 +182,7 @@ struct TouchSample {
     int32_t x = 0, y = 0;
 };
 
-#if defined(_WIN32)
+#if defined(_WIN32) || defined(__ANDROID__)  // AP_ANDROID_INPUT: on Android a finger is the left button
 // Ventana -> pantalla del juego: el rectangulo donde el framework presenta la imagen (plat::picture_rect,
 // apply_aspect.py): con NX_FIXED_ASPECT la imagen con franjas, sin ella el area cliente entera (estirada).
 struct ScreenPoint {
@@ -194,7 +194,14 @@ ScreenPoint to_screen(const plat::PointerState& p) {
     const plat::PictureRect r = plat::picture_rect(p.w, p.h);
     if (!r.w || !r.h) return {false, 0, 0};
     double u = double(p.x - r.x) / r.w, v = double(p.y - r.y) / r.h;
-    return {u >= 0 && u < 1 && v >= 0 && v < 1, std::clamp(int32_t(u * kTouchW), 0, kTouchW - 1),
+#if defined(__ANDROID__)
+    // AP_ANDROID_INPUT: a touch on the black bars counts too, moved to the nearest edge of the picture (the clamps
+    // below). NX_TOUCH_BARS=0: ignored, as on PC.
+    static const bool bars = env_on("NX_TOUCH_BARS", true);
+#else
+    constexpr bool bars = false;
+#endif
+    return {bars || (u >= 0 && u < 1 && v >= 0 && v < 1), std::clamp(int32_t(u * kTouchW), 0, kTouchW - 1),
             std::clamp(int32_t(v * kTouchH), 0, kTouchH - 1)};
 }
 
@@ -226,7 +233,7 @@ TouchSample next_touch_sample() {
     const uint64_t now = plat::monotonic_ns();
     s.delta = g_touch_last_ns ? int64_t(now - g_touch_last_ns) : 0;
     g_touch_last_ns = now;
-#if defined(_WIN32)
+#if defined(_WIN32) || defined(__ANDROID__)  // AP_ANDROID_INPUT
     if (!mouse_on()) return s;
     plat::PointerState p;
     plat::read_pointer(p);

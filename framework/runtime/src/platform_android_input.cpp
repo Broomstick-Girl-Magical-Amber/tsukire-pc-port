@@ -66,6 +66,20 @@ std::vector<Touch> g_touches;
 float g_w = 1, g_h = 1;
 bool g_gamepad = false;  // the last input came from a controller: the drawn touch controls hide
 
+// AP_ANDROID_INPUT (apply_android_input.py): pointer mode (Tsukihime). The first finger is the game's own touch
+// screen, not pad buttons: read_pointer hands it over as a left-button mouse (x, y in screen pixels, landscape) and
+// hle_hid_tsuki.cpp turns it into hid touch samples, as it does with the mouse on Windows.
+struct Pointer {
+    int32_t id = -1;
+    float x = 0, y = 0;
+    bool down = false;
+    uint32_t downs = 0;  // presses so far (a tap shorter than a frame still shows)
+} g_ptr;
+bool pointer_mode() {
+    static const bool on = std::strncmp(game::kInfo.id, "tsukihime", 9) == 0;
+    return on;
+}
+
 uint64_t key_to_button(int32_t k) {
     switch (k) {
         case AKEYCODE_BUTTON_A: return kB;  // bottom face button = Nintendo B
@@ -140,6 +154,26 @@ int32_t on_input(android_app*, AInputEvent* e) {
         return 1;
     }
     if ((src & AINPUT_SOURCE_TOUCHSCREEN) != AINPUT_SOURCE_TOUCHSCREEN) return 0;
+    if (pointer_mode()) {  // AP_ANDROID_INPUT: touch goes to the game as touch, no virtual stick or buttons
+        const int32_t pact = AMotionEvent_getAction(e);
+        const int32_t pkind = pact & AMOTION_EVENT_ACTION_MASK;
+        const size_t pidx =
+            size_t((pact & AMOTION_EVENT_ACTION_POINTER_INDEX_MASK) >> AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT);
+        if (ANativeWindow* w = android_window()) g_w = float(ANativeWindow_getWidth(w)), g_h = float(ANativeWindow_getHeight(w));
+        if (pkind == AMOTION_EVENT_ACTION_DOWN || (pkind == AMOTION_EVENT_ACTION_POINTER_DOWN && !g_ptr.down)) {
+            g_ptr.id = AMotionEvent_getPointerId(e, pidx);
+            g_ptr.x = AMotionEvent_getX(e, pidx), g_ptr.y = AMotionEvent_getY(e, pidx);
+            g_ptr.down = true;
+            g_ptr.downs++;
+        } else if (pkind == AMOTION_EVENT_ACTION_UP || pkind == AMOTION_EVENT_ACTION_CANCEL ||
+                   (pkind == AMOTION_EVENT_ACTION_POINTER_UP && AMotionEvent_getPointerId(e, pidx) == g_ptr.id)) {
+            g_ptr.down = false;
+        } else if (pkind == AMOTION_EVENT_ACTION_MOVE && g_ptr.down) {
+            for (size_t k = 0; k < AMotionEvent_getPointerCount(e); k++)
+                if (AMotionEvent_getPointerId(e, k) == g_ptr.id) g_ptr.x = AMotionEvent_getX(e, k), g_ptr.y = AMotionEvent_getY(e, k);
+        }
+        return 1;
+    }
     if (!touch_enabled()) return 0;  // NX_TOUCH_SHOW=0
     int32_t action = AMotionEvent_getAction(e);
     int32_t kind = action & AMOTION_EVENT_ACTION_MASK;
@@ -178,6 +212,20 @@ int32_t on_input(android_app*, AInputEvent* e) {
         }
     }
     return 1;
+}
+
+// AP_ANDROID_INPUT: the first finger as a left-button mouse over the screen (pointer mode, above). Touch coordinates
+// are in the display's landscape space; w, h follow that convention so picture_rect gets the same aspect.
+void read_pointer(PointerState& p) {
+    std::lock_guard lk(g_in);
+    p.x = int32_t(g_ptr.x);
+    p.y = int32_t(g_ptr.y);
+    p.w = uint32_t(std::max(g_w, g_h));
+    p.h = uint32_t(std::min(g_w, g_h));
+    p.buttons = g_ptr.down ? 1u : 0u;
+    p.downs[0] = g_ptr.downs;
+    p.downs[1] = p.downs[2] = 0;
+    p.wheel = 0;
 }
 
 bool headless() {  // NX_HEADLESS (platform.h)

@@ -18,8 +18,12 @@ target_compile_definitions(${NX_GAME} PRIVATE NX_DATA_ROOT_EXE)
 target_compile_definitions(${NX_GAME} PRIVATE NX_VK_REQUIRE_13)
 
 # Titulo e icono de la ventana (apply_game_window.py): kWindowTitle en game.cpp, icono 1 en tsukihime.rc
+# AP_ANDROID_BUILD (apply_android_build.py): Windows resources only (the NDK has no resource compiler; on Android
+# tsukihime_common.cmake skips tsukihime.rc)
+if(NOT ANDROID)
 enable_language(RC)
 target_compile_definitions(${NX_GAME} PRIVATE NX_CUSTOM_WINDOW_TITLE NX_WINDOW_ICON)
+endif()
 target_sources(${NX_GAME} PRIVATE "${NX_TSUKI_COMMON}/tsukihime.rc")
 
 # AP_DT_INIT: DT_INIT (_init) de main y sdk en +0x10 en el SDK 17.5.4 (el runtime asume +0x30; apply_dt_init.py)

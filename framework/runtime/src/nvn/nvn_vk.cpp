@@ -873,7 +873,26 @@ void gpu_present(uint64_t texture, const int32_t* crop) {
         if (g_swapchain) p_vkDestroySwapchainKHR(g_device, g_swapchain, nullptr);
         g_swapchain = VK_NULL_HANDLE;
         log("nvn/vk: new window: surface and swapchain re-made");
+#ifdef __ANDROID__  // AP_ANDROID_PRESENT (apply_android_present.py): keep the sRGB format of the old surface
+        const VkFormat kept_format = g_sc_format;
+#endif
         if (!make_surface()) return;
+#ifdef __ANDROID__
+        // make_surface went back to a UNORM format; the sRGB choice of apply_srgb_present.py runs once per run, so
+        // the sRGB format it chose for the first window is put back if the new surface offers it.
+        if (kept_format != g_sc_format) {
+            uint32_t nf = 0;
+            p_vkGetPhysicalDeviceSurfaceFormatsKHR(g_physical, g_surface, &nf, nullptr);
+            std::vector<VkSurfaceFormatKHR> fs(nf);
+            p_vkGetPhysicalDeviceSurfaceFormatsKHR(g_physical, g_surface, &nf, fs.data());
+            for (const VkSurfaceFormatKHR& f : fs)
+                if (f.format == kept_format) {
+                    g_sc_format = kept_format;
+                    log("nvn/vk: new window: swapchain format %d kept (sRGB)", int(kept_format));
+                    break;
+                }
+        }
+#endif
     }
     if (!g_swapchain) pick_swapchain_format(image_of(texture));  // apply_srgb_present.py
     if (!g_swapchain && !make_swapchain()) return;

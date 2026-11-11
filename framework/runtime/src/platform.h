@@ -124,6 +124,9 @@ struct PointerState {
 #if defined(_WIN32)
 void read_pointer(PointerState& p);  // platform_win.cpp
 #endif
+#if defined(__ANDROID__)  // AP_ANDROID_INPUT (apply_android_input.py): the first finger as a left-button mouse
+void read_pointer(PointerState& p);  // platform_android_input.cpp (pointer mode, Tsukihime)
+#endif
 // A game's own pad input on top of read_pad (hle_hid.cpp calls it for player 1); null (the default): none.
 using PadHook = void (*)(PadState& p);
 extern PadHook pad_hook;
