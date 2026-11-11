@@ -90,8 +90,6 @@
 #define IDC_UPD_REMOVE          1315
 
 // Controls and title screen (input.ini, title.ini, language.txt, config.txt)
-#define IDC_CTL_EDITION_LABEL   1404
-#define IDC_CTL_EDITION         1405
 #define IDC_CTL_NOTE            1406
 #define IDC_CTL_TABS            1407
 // - controls (input.ini)
@@ -104,7 +102,6 @@
 #define IDC_IN_RESET            1417
 #define IDC_IN_OPEN             1418
 #define IDC_IN_FILE             1419
-#define IDC_IN_COPY             1420
 // - title screen (title.ini)
 #define IDC_TI_GROUP            1430
 #define IDC_TI_VIDEO_L          1431

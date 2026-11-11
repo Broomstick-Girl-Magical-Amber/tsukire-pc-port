@@ -681,9 +681,9 @@ struct OptState {
 HWND Page(int i) { return s.pages[i]; }
 
 void Note(const std::wstring& extra) {
-    std::wstring t = L2(L"Every change is saved at once; the game reads them when it starts.",
-                        L"Cada cambio se guarda al momento; el juego los lee al iniciar.");
-    if (s.ed >= 0 && GameRunningNow(s.ed))
+    std::wstring t = L2(L"The game read the config when it starts.",
+                        L"El juego lee los cambios al iniciar.");
+    if (GameRunningNow(0) || GameRunningNow(1))
         t = L2(L"The game is running: the changes apply the next time you start it.",
                L"El juego est\u00e1 abierto: los cambios valen la pr\u00f3xima vez que lo inicies.");
     if (!extra.empty()) t = extra;
@@ -697,6 +697,73 @@ void Saved(bool ok, const std::wstring& path) {
         DWORD e = GetLastError();
         Message(s.dlg, MB_ICONERROR, Format(L2(L"%ls could not be written (error %lu).", L"No se pudo escribir %ls (error %lu)."), RelPath(path).c_str(), e));
     }
+}
+
+// ---------------------------------------------------------------------------------------------- both editions
+// The tab applies to both editions: it shows the files of one of them (SourceEdition) and writes every change to the
+// input.ini / title.ini of each edition that has a data folder (once if both resolve to the same file).
+int SourceEdition() {
+    if (DirExists(DataDir(g.edition))) return g.edition;
+    if (DirExists(DataDir(1 - g.edition))) return 1 - g.edition;
+    return g.edition;
+}
+
+std::vector<std::wstring> TargetPaths(const wchar_t* file, const wchar_t* envName) {
+    std::vector<std::wstring> v;
+    for (int ed : {s.ed, 1 - s.ed}) {
+        if (!DirExists(DataDir(ed))) continue;
+        std::wstring p = GameFilePath(ed, file, envName, ed == s.ed ? s.cfg : LoadConfig(ed));
+        bool dup = false;
+        for (const std::wstring& q : v) dup |= Same(p, q);
+        if (!dup) v.push_back(p);
+    }
+    return v;
+}
+
+std::wstring PathsText(const std::vector<std::wstring>& paths) {
+    std::wstring t;
+    for (size_t i = 0; i < paths.size(); i++) t += (i ? L2(L" and ", L" y ") : L"") + RelPath(paths[i]);
+    return t;
+}
+
+// For the file line of a page: "input.ini of both editions", or the path when there is only one.
+std::wstring FileLine(const std::vector<std::wstring>& paths, const std::wstring& fallback) {
+    if (paths.size() == 2) {
+        std::wstring name = paths[0].substr(paths[0].find_last_of(L"\\/") + 1);
+        return Format(L2(L"File: %ls of both editions", L"Archivo: %ls de las dos ediciones"), name.c_str());
+    }
+    return std::wstring(L2(L"File: ", L"Archivo: ")) + (paths.empty() ? RelPath(fallback) : RelPath(paths[0]));
+}
+
+// Writes `text` to every edition's file; the note says where (or the error of the first that failed).
+bool WriteAll(const wchar_t* file, const wchar_t* envName, const std::wstring& text) {
+    std::vector<std::wstring> paths = TargetPaths(file, envName);
+    for (const std::wstring& p : paths)
+        if (!WriteText(p, text)) {
+            Saved(false, p);
+            return false;
+        }
+    if (!paths.empty()) Note(Format(L2(L"Saved: %ls", L"Guardado: %ls"), PathsText(paths).c_str()));
+    return !paths.empty();
+}
+
+// An edition that has no copy of a file the other one has gets it (e.g. compiled after the changes were made). If
+// both have it and they differ, the note says so: the next change makes them equal again.
+std::wstring SyncEditions(const wchar_t* file, const wchar_t* envName, const std::wstring& source) {
+    if (!FileExists(source)) return L"";
+    std::wstring text = ReadTextFile(source), note;
+    for (const std::wstring& p : TargetPaths(file, envName)) {
+        if (Same(p, source)) continue;
+        if (!FileExists(p)) {
+            if (WriteText(p, text))
+                note = Format(L2(L"%ls copied to the other edition.", L"%ls copiado a la otra edici\u00f3n."), file);
+        } else if (ReadTextFile(p) != text) {
+            note = Format(L2(L"The editions have different %ls: %ls is shown; the next change is saved in both.",
+                             L"Las ediciones tienen distinto %ls: se muestra %ls; el pr\u00f3ximo cambio se guarda en las dos."),
+                          file, RelPath(source).c_str());
+        }
+    }
+    return note;
 }
 
 // ---------------------------------------------------------------------------------------------- controls page
@@ -737,7 +804,6 @@ void InputDetail() {
     EnableWindow(GetDlgItem(p, IDC_IN_EDIT), any);
     EnableWindow(GetDlgItem(p, IDC_IN_CLEAR), any && !s.in.binds[s.dev][a].empty());
     EnableWindow(GetDlgItem(p, IDC_IN_RESET), s.in.present[s.dev]);
-    EnableWindow(GetDlgItem(p, IDC_IN_COPY), DirExists(DataDir(1 - s.ed)));
 }
 
 void FillInput() {
@@ -761,7 +827,8 @@ void FillInput() {
     SendMessageW(s.list, WM_SETREDRAW, TRUE, 0);
     InvalidateRect(s.list, nullptr, TRUE);
     CheckRadioButton(p, IDC_IN_KB, IDC_IN_MOUSE, s.dev == kMouse ? IDC_IN_MOUSE : IDC_IN_KB);
-    SetDlgItemTextW(p, IDC_IN_FILE, (std::wstring(L2(L"File: ", L"Archivo: ")) + RelPath(s.in.path) +
+    std::vector<std::wstring> inPaths = TargetPaths(L"input.ini", L"NX_INPUT_INI");
+    SetDlgItemTextW(p, IDC_IN_FILE, (FileLine(inPaths, s.in.path) +
                                      (s.in.exists ? L"" : L2(L" (not created yet: the defaults)", L" (todav\u00eda no existe: valores por defecto)"))).c_str());
     InputDetail();
 }
@@ -773,9 +840,8 @@ void SaveInput() {
         FillInput();
         return;
     }
-    ok = WriteText(s.in.path, InputText(s.in));
+    ok = WriteAll(L"input.ini", L"NX_INPUT_INI", InputText(s.in));
     if (ok) s.in.exists = true;
-    Saved(ok, s.in.path);
     FillInput();
 }
 
@@ -967,20 +1033,6 @@ void ResetDevice() {
     SaveInput();
 }
 
-void CopyInputToOther() {
-    int other = 1 - s.ed;
-    ConfigFile cfg = LoadConfig(other);
-    InputFile dst = LoadInput(other, cfg);
-    if (Message(s.dlg, MB_ICONQUESTION | MB_YESNO | MB_DEFBUTTON2,
-                Format(L2(L"Use these controls in the %ls edition too? Its input.ini (%ls) is replaced.", L"\u00bfUsar estos controles tambi\u00e9n en la edici\u00f3n %ls? Se reemplaza su input.ini (%ls)."),
-                       EditionName(other).c_str(), RelPath(dst.path).c_str())) != IDYES)
-        return;
-    InputFile copy = s.in;
-    copy.path = dst.path;
-    bool ok = WriteText(dst.path, InputText(copy));
-    Saved(ok, dst.path);
-}
-
 // ---------------------------------------------------------------------------------------------- title page
 void FillTitle() {
     HWND p = Page(1);
@@ -998,16 +1050,16 @@ void FillTitle() {
     bool pool = s.ti.video == 5 || s.ti.video == 6;
     for (int id = IDC_TI_POOL1; id <= IDC_TI_POOL4; id++) EnableWindow(GetDlgItem(p, id), pool);
     EnableWindow(GetDlgItem(p, IDC_TI_POOL_L), pool);
-    SetDlgItemTextW(p, IDC_TI_FILE, (std::wstring(L2(L"File: ", L"Archivo: ")) + RelPath(s.ti.path) +
+    std::vector<std::wstring> tiPaths = TargetPaths(L"title.ini", L"NX_TITLE_INI");
+    SetDlgItemTextW(p, IDC_TI_FILE, (FileLine(tiPaths, s.ti.path) +
                                      (s.ti.exists ? L"" : L2(L" (not created yet: the defaults)", L" (todav\u00eda no existe: valores por defecto)"))).c_str());
     s.loading = false;
 }
 
 void SaveTitle() {
     TitleWriteAll(s.ti);
-    bool ok = WriteText(s.ti.path, JoinLines(s.ti.lines));
+    bool ok = WriteAll(L"title.ini", L"NX_TITLE_INI", JoinLines(s.ti.lines));
     if (ok) s.ti.exists = true;
-    Saved(ok, s.ti.path);
     FillTitle();
 }
 
@@ -1218,12 +1270,19 @@ void ShowInner(int i) {
     for (int k = 0; k < 2; k++) ShowWindow(s.pages[k], k == i ? SW_SHOW : SW_HIDE);
 }
 
-void LoadAll() {
-    s.ed = g.edition;
+// Reads the files of the source edition (after giving the other edition what it lacks). Returns the sync note.
+std::wstring ReadFiles() {
+    s.ed = SourceEdition();
     s.cfg = LoadConfig(s.ed);
     s.in = LoadInput(s.ed, s.cfg);
     s.ti = LoadTitle(s.ed, s.cfg);
-    SendDlgItemMessageW(s.dlg, IDC_CTL_EDITION, CB_SETCURSEL, s.ed, 0);
+    std::wstring a = SyncEditions(L"input.ini", L"NX_INPUT_INI", s.in.path);
+    std::wstring b = SyncEditions(L"title.ini", L"NX_TITLE_INI", s.ti.path);
+    return a.empty() ? b : b.empty() ? a : a + L" " + b;
+}
+
+void LoadAll() {
+    std::wstring sync = ReadFiles();
     bool data = DirExists(DataDir(s.ed));
     for (HWND p : s.pages) {
         for (HWND c = GetWindow(p, GW_CHILD); c; c = GetWindow(c, GW_HWNDNEXT)) EnableWindow(c, data);
@@ -1233,8 +1292,8 @@ void LoadAll() {
     if (!data)   // nothing to edit until the edition is compiled (the files go to its data folder)
         for (HWND p : s.pages)
             for (HWND c = GetWindow(p, GW_CHILD); c; c = GetWindow(c, GW_HWNDNEXT)) EnableWindow(c, FALSE);
-    Note(data ? L"" : L2(L"This edition is not compiled yet: its data folder appears when you compile it.",
-                         L"Esta edici\u00f3n todav\u00eda no est\u00e1 compilada: su carpeta de datos aparece al compilarla."));
+    Note(data ? sync : L2(L"No edition is compiled yet: the data folder appears when you compile one.",
+                          L"Todav\u00eda no hay ninguna edici\u00f3n compilada: la carpeta de datos aparece al compilar una."));
     s.dirty = false;
 }
 
@@ -1285,7 +1344,6 @@ INT_PTR CALLBACK InputPageProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
         case IDC_IN_EDIT: EditAction(SelectedAction()); return TRUE;
         case IDC_IN_CLEAR: ClearAction(SelectedAction()); return TRUE;
         case IDC_IN_RESET: ResetDevice(); return TRUE;
-        case IDC_IN_COPY: CopyInputToOther(); return TRUE;
         case IDC_IN_OPEN: OpenFile(s.in.path, InputText(s.in)); return TRUE;
         }
         break;
@@ -1368,8 +1426,7 @@ INT_PTR CALLBACK TitlePageProc(HWND dlg, UINT msg, WPARAM wp, LPARAM) {
         if (id == IDC_TI_OPEN) {
             if (!s.ti.exists) {
                 TitleWriteAll(s.ti);
-                Saved(WriteText(s.ti.path, JoinLines(s.ti.lines)), s.ti.path);
-                s.ti.exists = true;
+                s.ti.exists = WriteAll(L"title.ini", L"NX_TITLE_INI", JoinLines(s.ti.lines));
                 FillTitle();
             }
             OpenInShell(s.dlg, s.ti.path);
@@ -1486,16 +1543,15 @@ void RefreshControls() {
         s.dirty = true;
         return;
     }
-    if (s.dirty || s.ed != g.edition) {
+    if (s.dirty || s.ed != SourceEdition()) {
         LoadAll();
         return;
     }
     // Files changed by hand meanwhile are read again (they are small); the page keeps its selection.
-    s.cfg = LoadConfig(s.ed);
-    s.in = LoadInput(s.ed, s.cfg);
-    s.ti = LoadTitle(s.ed, s.cfg);
+    std::wstring sync = ReadFiles();
     FillInput();
     FillTitle();
+    if (!sync.empty()) Note(sync);
 }
 
 // The Options sub-tab of Play and saves: created there, inside its inner tab control.
@@ -1521,9 +1577,6 @@ INT_PTR CALLBACK ControlsProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
         s.tabs = GetDlgItem(dlg, IDC_CTL_TABS);
         EnableThemeDialogTexture(dlg, ETDT_ENABLETAB);
         ApplyDialogText(dlg, IDD_CONTROLS);
-        HWND combo = GetDlgItem(dlg, IDC_CTL_EDITION);
-        for (int ed = 0; ed < 2; ed++) SendMessageW(combo, CB_ADDSTRING, 0, LPARAM(EditionName(ed).c_str()));
-        SendMessageW(combo, CB_SETCURSEL, g.edition, 0);
         const wchar_t* names[2] = {L2(L"Controls", L"Controles"), L2(L"Title screen", L"Pantalla de t\u00edtulo")};
         for (int i = 0; i < 2; i++) {
             TCITEMW it{};
@@ -1550,18 +1603,6 @@ INT_PTR CALLBACK ControlsProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
         if (nm->hwndFrom == s.tabs && nm->code == TCN_SELCHANGE) ShowInner(TabCtrl_GetCurSel(s.tabs));
         break;
     }
-    case WM_COMMAND:
-        if (LOWORD(wp) == IDC_CTL_EDITION && HIWORD(wp) == CBN_SELCHANGE) {
-            int ed = int(SendDlgItemMessageW(dlg, IDC_CTL_EDITION, CB_GETCURSEL, 0, 0));
-            if (ed >= 0 && ed != g.edition) {
-                g.edition = ed;
-                IniSet(L"edition", kEditions[ed].key);
-                s.dirty = true;
-                RefreshAll();
-            }
-            return TRUE;
-        }
-        break;
     }
     return FALSE;
 }

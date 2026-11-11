@@ -145,9 +145,7 @@ IDD_CONTROLS DIALOGEX 0, 0, 378, 288
 STYLE DS_SHELLFONT | DS_CONTROL | WS_CHILD
 FONT 8, "MS Shell Dlg", 400, 0, 0x1
 BEGIN
-    LTEXT           "Edition", IDC_CTL_EDITION_LABEL, 8, 8, 40, 8
-    COMBOBOX        IDC_CTL_EDITION, 50, 6, 120, 60, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT           "", IDC_CTL_NOTE, 178, 4, 194, 18
+    LTEXT           "", IDC_CTL_NOTE, 8, 4, 364, 18
     CONTROL         "", IDC_CTL_TABS, "SysTabControl32", WS_TABSTOP, 6, 24, 366, 260
 END
 
@@ -162,7 +160,6 @@ BEGIN
     PUSHBUTTON      "Change...", IDC_IN_EDIT, 4, 192, 70, 14
     PUSHBUTTON      "Clear", IDC_IN_CLEAR, 78, 192, 60, 14
     PUSHBUTTON      "Restore defaults", IDC_IN_RESET, 142, 192, 90, 14
-    PUSHBUTTON      "Copy to the other edition", IDC_IN_COPY, 236, 192, 114, 14
     LTEXT           "", IDC_IN_FILE, 4, 213, 270, 8, SS_PATHELLIPSIS
     PUSHBUTTON      "Open input.ini", IDC_IN_OPEN, 280, 210, 70, 14
 END

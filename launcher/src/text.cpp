@@ -71,13 +71,11 @@ const Item kSpanish[] = {
     {IDD_COPY, 0, L"Copiando"},
     {IDD_COPY, IDCANCEL, L"Cancelar"},
 
-    {IDD_CONTROLS, IDC_CTL_EDITION_LABEL, L"Edici\u00f3n"},
     {IDD_CTL_INPUT, IDC_IN_KB, L"Teclado"},
     {IDD_CTL_INPUT, IDC_IN_MOUSE, L"Mouse"},
     {IDD_CTL_INPUT, IDC_IN_EDIT, L"Cambiar..."},
     {IDD_CTL_INPUT, IDC_IN_CLEAR, L"Quitar todo"},
     {IDD_CTL_INPUT, IDC_IN_RESET, L"Por defecto"},
-    {IDD_CTL_INPUT, IDC_IN_COPY, L"Copiar a la otra edici\u00f3n"},
     {IDD_CTL_INPUT, IDC_IN_OPEN, L"Abrir input.ini"},
     {IDD_CTL_TITLE, IDC_TI_GROUP, L"Video y m\u00fasica de la pantalla de t\u00edtulo"},
     {IDD_CTL_TITLE, IDC_TI_VIDEO_L, L"Video"},
