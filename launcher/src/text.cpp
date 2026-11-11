@@ -73,7 +73,6 @@ const Item kSpanish[] = {
 
     {IDD_CONTROLS, IDC_CTL_EDITION_LABEL, L"Edici\u00f3n"},
     {IDD_CTL_INPUT, IDC_IN_KB, L"Teclado"},
-    {IDD_CTL_INPUT, IDC_IN_PAD, L"Mando"},
     {IDD_CTL_INPUT, IDC_IN_MOUSE, L"Mouse"},
     {IDD_CTL_INPUT, IDC_IN_EDIT, L"Cambiar..."},
     {IDD_CTL_INPUT, IDC_IN_CLEAR, L"Quitar todo"},

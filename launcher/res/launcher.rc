@@ -156,8 +156,7 @@ STYLE DS_SHELLFONT | DS_CONTROL | WS_CHILD
 FONT 8, "MS Shell Dlg", 400, 0, 0x1
 BEGIN
     AUTORADIOBUTTON "Keyboard", IDC_IN_KB, 4, 4, 70, 10, WS_GROUP | WS_TABSTOP
-    AUTORADIOBUTTON "Controller", IDC_IN_PAD, 78, 4, 70, 10
-    AUTORADIOBUTTON "Mouse", IDC_IN_MOUSE, 152, 4, 70, 10
+    AUTORADIOBUTTON "Mouse", IDC_IN_MOUSE, 78, 4, 70, 10
     CONTROL         "", IDC_IN_LIST, "SysListView32", LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | LVS_NOSORTHEADER | WS_BORDER | WS_TABSTOP | WS_GROUP, 4, 18, 346, 150
     LTEXT           "", IDC_IN_DETAIL, 4, 171, 346, 18
     PUSHBUTTON      "Change...", IDC_IN_EDIT, 4, 192, 70, 14
@@ -264,7 +263,9 @@ BEGIN
     LISTBOX         IDC_RESTORE_LIST, 7, 28, 246, 114, LBS_NOTIFY | LBS_NOINTEGRALHEIGHT | WS_VSCROLL | WS_TABSTOP | WS_BORDER
     DEFPUSHBUTTON   "Restore", IDOK, 141, 149, 54, 15
     PUSHBUTTON      "Cancel", IDCANCEL, 199, 149, 54, 15
-END// ------------------------------------------------------------------------------------------------ name of a mod being added
+END
+
+// ------------------------------------------------------------------------------------------------ name of a mod being added
 IDD_MODNAME DIALOGEX 0, 0, 290, 124
 STYLE DS_SHELLFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Add mod"
@@ -287,7 +288,9 @@ BEGIN
     CONTROL         "", IDC_COPY_PROGRESS, "msctls_progress32", WS_BORDER, 7, 26, 236, 8
     LTEXT           "", IDC_COPY_SIZE, 7, 38, 160, 8
     PUSHBUTTON      "Cancel", IDCANCEL, 189, 46, 54, 14
-END// ------------------------------------------------------------------------------------------------ the buttons of one action
+END
+
+// ------------------------------------------------------------------------------------------------ the buttons of one action
 IDD_BIND DIALOGEX 0, 0, 250, 172
 STYLE DS_SHELLFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Buttons"

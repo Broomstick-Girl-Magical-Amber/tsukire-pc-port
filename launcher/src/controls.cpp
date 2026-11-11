@@ -1,6 +1,6 @@
 // controls.cpp - the "Controls and title screen" tab: an editor of the files the game reads when it starts.
 //
-//   input.ini     keyboard, controller and mouse (games/tsukihime_common/input_tsuki.cpp)
+//   input.ini     keyboard and mouse (games/tsukihime_common/input_tsuki.cpp; [mando] is kept as it is)
 //   title.ini     video and music of the title screen (title_bg.cpp)
 //   language.txt  language of the global edition (runtime/src/language.h)
 //   config.txt    the NX_* options (AP_CONFIG_ENV, tools/patches/apply_config_env.py: the exe turns its lines into
@@ -30,9 +30,9 @@
 
 namespace {
 
+// The launcher edits the keyboard and the mouse; [mando] of input.ini is read and written back as it is (no UI).
 enum Dev { kKb = 0, kPad = 1, kMouse = 2, kDevs = 3 };
 constexpr UINT WM_APP_KEY = WM_APP + 40;     // wParam = virtual key captured
-constexpr UINT_PTR kTimerPad = 1;
 
 // ---------------------------------------------------------------------------------------------- small helpers
 std::wstring Trim(const std::wstring& s) {
@@ -397,7 +397,7 @@ struct InputFile {
 int SectionDev(const std::wstring& name) {
     std::wstring n = Upper(Trim(name));
     if (n == L"TECLADO" || n == L"KEYBOARD") return kKb;
-    if (n == L"MANDO" || n == L"PAD" || n == L"GAMEPAD") return kPad;
+    // [mando] / [pad] / [gamepad]: not edited by the launcher; like an unknown section, kept exactly as it is written.
     if (n == L"MOUSE" || n == L"RATON") return kMouse;
     return -1;
 }
@@ -722,17 +722,13 @@ void InputDetail() {
     if (!s.in.present[s.dev]) {
         t = s.dev == kKb ? L2(L"The port's default keyboard.",
                               L"El teclado por defecto del port.")
-          : s.dev == kPad ? L2(L"The port's default controller.",
-                               L"El mando por defecto del port.")
                           : L2(L"The port's default mouse. The left button is the touch screen; here go the others and the wheel.",
                                L"El mouse por defecto del port. El bot\u00f3n izquierdo es la pantalla t\u00e1ctil; aqu\u00ed van los otros y la rueda.");
     } else if (a >= 0) {
         t = Format(L2(L"%ls (%ls on a Switch). Double-click or \"Change...\" to edit it.", L"%ls (%ls en una Switch). Doble clic o \"Cambiar...\" para editarlo."),
                    ActionText(a).c_str(), kActions[a].sw);
     } else {
-        t = s.dev == kPad ? L2(L"Buttons by position: A is the bottom one.",
-                               L"Botones por posici\u00f3n: A es el de abajo.")
-          : s.dev == kMouse ? L2(L"The left button is the touch screen; here go the others and the wheel.",
+        t = s.dev == kMouse ? L2(L"The left button is the touch screen; here go the others and the wheel.",
                                  L"El bot\u00f3n izquierdo es la pantalla t\u00e1ctil: aqu\u00ed van los otros y la rueda.")
                             : L2(L"F11 and Alt+Enter are fullscreen and cannot be assigned.", L"F11 y Alt+Enter son pantalla completa y no se pueden asignar.");
     }
@@ -764,7 +760,7 @@ void FillInput() {
     if (top > 0) ListView_EnsureVisible(s.list, std::min(top + ListView_GetCountPerPage(s.list) - 1, kActionCount - 1), FALSE);
     SendMessageW(s.list, WM_SETREDRAW, TRUE, 0);
     InvalidateRect(s.list, nullptr, TRUE);
-    CheckRadioButton(p, IDC_IN_KB, IDC_IN_MOUSE, IDC_IN_KB + s.dev);
+    CheckRadioButton(p, IDC_IN_KB, IDC_IN_MOUSE, s.dev == kMouse ? IDC_IN_MOUSE : IDC_IN_KB);
     SetDlgItemTextW(p, IDC_IN_FILE, (std::wstring(L2(L"File: ", L"Archivo: ")) + RelPath(s.in.path) +
                                      (s.in.exists ? L"" : L2(L" (not created yet: the defaults)", L" (todav\u00eda no existe: valores por defecto)"))).c_str());
     InputDetail();
@@ -783,8 +779,8 @@ void SaveInput() {
     FillInput();
 }
 
-// The buttons of one action, in a small window: a list, Remove, and a way to add one (press a key, press a controller
-// button, or pick it from the list).
+// The buttons of one action, in a small window: a list, Remove, and a way to add one (press a key, or pick a mouse
+// button from the list).
 struct BindEdit {
     int dev = kKb;
     int action = 0;
@@ -793,11 +789,6 @@ struct BindEdit {
     std::vector<std::pair<int, std::wstring>> moveFrom;              // taken from another action (applied on OK)
     HHOOK hook = nullptr;
     bool capturing = false;
-    HMODULE xinput = nullptr;
-    DWORD (WINAPI* getState)(DWORD, void*) = nullptr;
-    WORD padBase[4] = {};
-    BYTE trigBase[4][2] = {};
-    int padTicks = 0;
 } *g_bind = nullptr;
 
 HWND g_bindDlg = nullptr;
@@ -824,9 +815,7 @@ void StopCapture(HWND dlg) {
     b.capturing = false;
     if (b.hook) UnhookWindowsHookEx(b.hook);
     b.hook = nullptr;
-    KillTimer(dlg, kTimerPad);
-    SetDlgItemTextW(dlg, IDC_BI_CAPTURE, b.dev == kKb ? L2(L"Press a key...", L"Presionar una tecla...")
-                                                      : L2(L"Press it on the controller...", L"Presionar en el mando..."));
+    SetDlgItemTextW(dlg, IDC_BI_CAPTURE, L2(L"Press a key...", L"Presionar una tecla..."));
 }
 
 // Adds a name; if another action has it, asks whether to take it from there.
@@ -859,30 +848,19 @@ INT_PTR CALLBACK BindProc(HWND dlg, UINT msg, WPARAM wp, LPARAM) {
     case WM_INITDIALOG: {
         g_bindDlg = dlg;
         ApplyDialogText(dlg, IDD_BIND);
-        const wchar_t* devName = b->dev == kKb ? L2(L"keyboard", L"teclado") : b->dev == kPad ? L2(L"controller", L"mando") : L2(L"mouse", L"mouse");
+        const wchar_t* devName = b->dev == kKb ? L2(L"keyboard", L"teclado") : L2(L"mouse", L"mouse");
         SetWindowTextW(dlg, Format(L"%ls - %ls", ActionText(b->action).c_str(), devName).c_str());
-        const wchar_t* what = b->dev == kKb ? L2(L"Keys", L"Teclas") : b->dev == kPad ? L2(L"Controller buttons", L"Botones del mando")
-                                                                      : L2(L"Mouse buttons", L"Botones del mouse");
+        const wchar_t* what = b->dev == kKb ? L2(L"Keys", L"Teclas") : L2(L"Mouse buttons", L"Botones del mouse");
         SetDlgItemTextW(dlg, IDC_BI_TEXT, Format(L2(L"%ls for \"%ls\" (%ls on a Switch):", L"%ls para \"%ls\" (%ls en una Switch):"),
                                                  what, ActionText(b->action).c_str(), kActions[b->action].sw).c_str());
         HWND combo = GetDlgItem(dlg, IDC_BI_COMBO);
-        if (b->dev == kPad)
-            for (const PadName& p : kPadNames) SendMessageW(combo, CB_ADDSTRING, 0, LPARAM(g_spanish ? p.es : p.en));
         if (b->dev == kMouse)
             for (const MouseName& m : kMouseNames) SendMessageW(combo, CB_ADDSTRING, 0, LPARAM(g_spanish ? m.es : m.en));
         SendMessageW(combo, CB_SETCURSEL, 0, 0);
         ShowWindow(combo, b->dev == kKb ? SW_HIDE : SW_SHOW);
         ShowWindow(GetDlgItem(dlg, IDC_BI_ADD), b->dev == kKb ? SW_HIDE : SW_SHOW);
-        if (b->dev == kPad) {
-            b->xinput = LoadLibraryW(L"xinput1_4.dll");
-            if (!b->xinput) b->xinput = LoadLibraryW(L"xinput9_1_0.dll");
-            if (b->xinput) b->getState = reinterpret_cast<DWORD(WINAPI*)(DWORD, void*)>(reinterpret_cast<void*>(GetProcAddress(b->xinput, "XInputGetState")));
-        }
-        ShowWindow(GetDlgItem(dlg, IDC_BI_CAPTURE), b->dev == kMouse || (b->dev == kPad && !b->getState) ? SW_HIDE : SW_SHOW);
+        ShowWindow(GetDlgItem(dlg, IDC_BI_CAPTURE), b->dev == kKb ? SW_SHOW : SW_HIDE);
         StopCapture(dlg);
-        BindStatus(dlg, b->dev == kPad ? L2(L"\"Press it on the controller\" works with Xbox (XInput) controllers; any other: pick it in the list.",
-                                            L"\"Presionar en el mando\" sirve con mandos Xbox (XInput); con otros, el\u00edgelo en la lista.")
-                                       : L"");
         BindFill(dlg);
         return TRUE;
     }
@@ -903,33 +881,6 @@ INT_PTR CALLBACK BindProc(HWND dlg, UINT msg, WPARAM wp, LPARAM) {
         BindAdd(dlg, name);
         return TRUE;
     }
-    case WM_TIMER:
-        if (wp == kTimerPad && b->capturing && b->getState) {
-            struct { DWORD packet; WORD buttons; BYTE lt, rt; SHORT lx, ly, rx, ry; } st{};
-            for (DWORD i = 0; i < 4; i++) {
-                if (b->getState(i, &st) != 0) continue;
-                WORD fresh = WORD(st.buttons & ~b->padBase[i]);
-                bool lt = st.lt > 100 && b->trigBase[i][0] <= 100, rt = st.rt > 100 && b->trigBase[i][1] <= 100;
-                std::wstring name;
-                if (lt) name = L"LT";
-                else if (rt) name = L"RT";
-                else
-                    for (const PadName& p : kPadNames)
-                        if (p.xinput && (fresh & p.xinput)) { name = p.name; break; }
-                b->padBase[i] = st.buttons;
-                b->trigBase[i][0] = st.lt, b->trigBase[i][1] = st.rt;
-                if (!name.empty()) {
-                    StopCapture(dlg);
-                    BindAdd(dlg, name);
-                    return TRUE;
-                }
-            }
-            if (++b->padTicks > 330) {   // ~10 s
-                StopCapture(dlg);
-                BindStatus(dlg, L2(L"No XInput controller button was pressed. Pick it in the list.", L"No se presion\u00f3 ning\u00fan bot\u00f3n de un mando XInput. El\u00edgelo en la lista."));
-            }
-        }
-        return TRUE;
     case WM_COMMAND:
         switch (LOWORD(wp)) {
         case IDC_BI_LIST:
@@ -944,7 +895,7 @@ INT_PTR CALLBACK BindProc(HWND dlg, UINT msg, WPARAM wp, LPARAM) {
         case IDC_BI_ADD: {
             int i = int(SendDlgItemMessageW(dlg, IDC_BI_COMBO, CB_GETCURSEL, 0, 0));
             if (i < 0) return TRUE;
-            BindAdd(dlg, b->dev == kPad ? kPadNames[i].name : kMouseNames[i].name);
+            BindAdd(dlg, kMouseNames[i].name);
             return TRUE;
         }
         case IDC_BI_CAPTURE:
@@ -955,25 +906,12 @@ INT_PTR CALLBACK BindProc(HWND dlg, UINT msg, WPARAM wp, LPARAM) {
             }
             b->capturing = true;
             SetDlgItemTextW(dlg, IDC_BI_CAPTURE, L2(L"Cancel", L"Cancelar"));
-            if (b->dev == kKb) {
-                b->hook = SetWindowsHookExW(WH_KEYBOARD, KeyHook, nullptr, GetCurrentThreadId());
-                BindStatus(dlg, L2(L"Press the key now (Esc, Tab and Enter count too).", L"Presiona la tecla ahora (Esc, Tab y Enter tambi\u00e9n cuentan)."));
-            } else {
-                struct { DWORD packet; WORD buttons; BYTE lt, rt; SHORT lx, ly, rx, ry; } st{};
-                for (DWORD i = 0; i < 4; i++) {
-                    b->padBase[i] = b->getState(i, &st) == 0 ? st.buttons : 0;
-                    b->trigBase[i][0] = st.lt, b->trigBase[i][1] = st.rt;
-                }
-                b->padTicks = 0;
-                SetTimer(dlg, kTimerPad, 30, nullptr);
-                BindStatus(dlg, L2(L"Press the button on the controller now.", L"Presiona el bot\u00f3n en el mando ahora."));
-            }
+            b->hook = SetWindowsHookExW(WH_KEYBOARD, KeyHook, nullptr, GetCurrentThreadId());
+            BindStatus(dlg, L2(L"Press the key now (Esc, Tab and Enter count too).", L"Presiona la tecla ahora (Esc, Tab y Enter tambi\u00e9n cuentan)."));
             return TRUE;
         case IDOK:
         case IDCANCEL:
             StopCapture(dlg);
-            if (b->xinput) FreeLibrary(b->xinput);
-            b->xinput = nullptr;
             EndDialog(dlg, LOWORD(wp));
             return TRUE;
         }
@@ -1019,7 +957,7 @@ void ClearAction(int a) {
 }
 
 void ResetDevice() {
-    const wchar_t* devName = s.dev == kKb ? L2(L"keyboard", L"teclado") : s.dev == kPad ? L2(L"controller", L"mando") : L2(L"mouse", L"mouse");
+    const wchar_t* devName = s.dev == kKb ? L2(L"keyboard", L"teclado") : L2(L"mouse", L"mouse");
     if (Message(s.dlg, MB_ICONQUESTION | MB_YESNO | MB_DEFBUTTON2,
                 Format(L2(L"Go back to the port's default %ls? Its section of input.ini is removed.", L"\u00bfVolver al %ls por defecto del port? Se quita su secci\u00f3n de input.ini."), devName)) != IDYES)
         return;
@@ -1338,10 +1276,9 @@ INT_PTR CALLBACK InputPageProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_COMMAND:
         switch (LOWORD(wp)) {
         case IDC_IN_KB:
-        case IDC_IN_PAD:
         case IDC_IN_MOUSE:
             if (HIWORD(wp) == BN_CLICKED) {
-                s.dev = LOWORD(wp) - IDC_IN_KB;
+                s.dev = LOWORD(wp) == IDC_IN_KB ? kKb : kMouse;
                 FillInput();
             }
             return TRUE;

@@ -96,7 +96,6 @@
 #define IDC_CTL_TABS            1407
 // - controls (input.ini)
 #define IDC_IN_KB               1410
-#define IDC_IN_PAD              1411
 #define IDC_IN_MOUSE            1412
 #define IDC_IN_LIST             1413
 #define IDC_IN_DETAIL           1414
