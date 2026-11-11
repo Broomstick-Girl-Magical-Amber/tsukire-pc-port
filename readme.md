@@ -8,7 +8,7 @@
 
 An unofficial PC port of *Tsukihime -A piece of blue glass moon-*, the remake of the original novel (I hope Red Garden/Far Side routes comes out soon), from Nintendo Switch, made by statically recompiling the game's own executable. It supports two editions, the Japanese one and the global one. On Windows you build the `.exe` yourself; on Linux the same `.exe` is cross-compiled and played with Proton. There is a launcher for Windows to play.
 
-**AI-assisted project.** This project was heavily AI-assisted using Claude (Anthropic). See [How this was made](#how-this-was-made).
+**This project was heavily AI-assisted using Claude (Anthropic).** See [How this was made](#how-this-was-made).
 
 This project is a fork of [SuperMarioWonderRecomp](https://github.com/BelmanteGu/SuperMarioWonderRecomp) by BelmanteGu (MIT), used here as the recompilation framework (the upstream repository is currently offline; the link is kept as a reference).
 
