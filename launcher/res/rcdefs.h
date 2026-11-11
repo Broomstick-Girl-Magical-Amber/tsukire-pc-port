@@ -13,6 +13,7 @@
 #define WS_SYSMENU          0x00080000L
 #define WS_MINIMIZEBOX      0x00020000L
 #define WS_TABSTOP          0x00010000L
+#define WS_GROUP            0x00020000L
 #define WS_EX_APPWINDOW     0x00040000L
 #define DS_MODALFRAME       0x80L
 #define DS_SETFONT          0x40L
@@ -25,6 +26,7 @@
 #define ES_AUTOVSCROLL      0x0040L
 #define ES_AUTOHSCROLL      0x0080L
 #define ES_READONLY         0x0800L
+#define ES_NUMBER           0x2000L
 #define SS_ENDELLIPSIS      0x00004000L
 #define PBS_MARQUEE         0x00000008L
 #define SS_PATHELLIPSIS     0x00008000L

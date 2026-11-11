@@ -211,6 +211,8 @@ $Markers = @(
     @('both', 'framework\runtime\src\hle_fs.cpp', 'AP_ROMFS_DIRECT', 'apply_romfs_direct.py', $false),
     @('both', 'framework\games\tsukihime_common\tsukihime_common.cmake', 'AP_ROMFS_DIRECT', 'apply_romfs_direct.py', $false),
     @('both', 'framework\games\tsukihime_common\romfs_direct.cpp', 'AP_ROMFS_DIRECT', 'romfs_direct.cpp (copy it to games\tsukihime_common)', $false),
+    @('both', 'framework\runtime\src\platform_win.cpp', 'AP_CONFIG_ENV', 'apply_config_env.py', $false),
+    @('both', 'framework\games\tsukihime_common\tsukihime_common.cmake', 'AP_CONFIG_ENV', 'apply_config_env.py', $false),
     @('both', 'tools\internal\romfs_source.py', 'AP_ROMFS_DIRECT', 'romfs_source.py (copy it to tools\internal)', $false),
     @('both', 'tools\internal\mods_nsp.py', 'AP_ROMFS_DIRECT', 'apply_romfs_direct.py', $false),
     @('both', 'tools\internal\mods_nsp.py', 'AP_MOD_RECIPES', 'apply_mod_recipes.py', $false),

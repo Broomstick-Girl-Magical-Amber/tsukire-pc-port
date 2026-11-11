@@ -16,6 +16,9 @@ void RefreshInstall();
 void PreselectInstall(int ed);   // Install tab with that edition ticked
 void RefreshMods();              // re-reads mods\ and updates\ (only while the tab is shown; otherwise on showing it)
 void RefreshModsButtons();       // only what the game / a compilation running enables
+void RefreshControls();          // re-reads input.ini and title.ini (while the tab is shown)
+HWND CreateOptionsPage(HWND parent);   // the Options sub-tab (config.txt) of Play and saves
+void RefreshOptions();           // re-reads config.txt (while the sub-tab is shown)
 bool ModsAllowPlay(HWND owner);  // false when the mods need a recompilation and the player chose not to play yet
 void NoteRecompLine(const std::wstring& line);   // a recompilation output line (remembers .nsp of the other edition)
 bool LicenseAccepted(HWND owner);   // shows the license window unless it was accepted before (launcher.ini)

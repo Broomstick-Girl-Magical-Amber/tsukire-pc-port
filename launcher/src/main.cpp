@@ -1,5 +1,5 @@
-// main.cpp - tsukihime_launcher.exe: the window, the Play / save data tab, the license, and the tab of part 3.
-// The Mods and updates tab is in mods.cpp.
+// main.cpp - tsukihime_launcher.exe: the window, the Play / save data tab and the license.
+// The Mods and updates tab is in mods.cpp; the Controls and title screen tab in controls.cpp.
 //
 // The launcher goes in the root of the port (next to tools\, framework\, your .xci/.nsp and prod.keys). It needs
 // nothing installed: it runs the port's own scripts with Windows PowerShell and starts the compiled game.
@@ -403,8 +403,10 @@ void DoImport(HWND page) {
 }  // namespace
 
 // ---------------------------------------------------------------------------------------------- Play tab
+HWND g_playMain = nullptr;   // the "Game and saves" sub-tab (IDD_PLAY) inside the Play and saves tab (IDD_PLAYTAB)
+
 void RefreshPlay() {
-    HWND p = g.pages[kPagePlay];
+    HWND p = g_playMain;
     if (!p) return;
     int ed = g.edition;
     SendDlgItemMessageW(p, IDC_PLAY_EDITION, CB_SETCURSEL, ed, 0);   // it can change from the Mods tab
@@ -437,7 +439,6 @@ void RefreshPlay() {
     else if (!extracted && dumps.empty()) state = L2(L"Put your dump back in the port folder to play.", L"Vuelve a poner tu dump en la carpeta del port para jugar.");
     else state = L2(L"Ready to play.", L"Listo para jugar.");
     SetDlgItemTextW(p, IDC_PLAY_STATE, state.c_str());
-    SetDlgItemTextW(p, IDC_PLAY_RUNNING, L"");
     EnableWindow(GetDlgItem(g.main, IDOK), built && !running && !busy);
 
     // save data
@@ -598,27 +599,41 @@ void OnGameExit(DWORD code) {
     }
 }
 
-// ---------------------------------------------------------------------------------------------- tab of part 3
-INT_PTR CALLBACK ControlsProc(HWND dlg, UINT msg, WPARAM wp, LPARAM) {
+// The Play and saves tab: an inner tab control with "Game and saves" (IDD_PLAY) and "Options" (config.txt, in controls.cpp).
+INT_PTR CALLBACK PlayTabProc(HWND dlg, UINT msg, WPARAM, LPARAM lp) {
+    static HWND tabs = nullptr, inner[2] = {};
     switch (msg) {
-    case WM_INITDIALOG:
+    case WM_INITDIALOG: {
+        tabs = GetDlgItem(dlg, IDC_PLAY_TABS);
         EnableThemeDialogTexture(dlg, ETDT_ENABLETAB);
-        ApplyDialogText(dlg, IDD_CONTROLS);
-        SetDlgItemTextW(dlg, IDC_CTL_TEXT,
-            L2(L"Editing the keyboard, mouse and controller (input.ini) and the title screen (title.ini) from here comes in a "
-               L"later version of the launcher. Meanwhile: copy input.ini.example as input.ini and title.ini.example as "
-               L"title.ini into the data folder of the edition and edit them; each file explains its options.",
-               L"Editar el teclado, el mouse y el mando (input.ini) y la pantalla de t\u00edtulo (title.ini) desde aqu\u00ed llega en "
-               L"una versi\u00f3n posterior del launcher. Mientras tanto: copia input.ini.example como input.ini y title.ini.example "
-               L"como title.ini en la carpeta de datos de la edici\u00f3n y ed\u00edtalos; cada archivo explica sus opciones."));
-        return TRUE;
-    case WM_COMMAND:
-        if (LOWORD(wp) == IDC_CTL_OPENDATA) {
-            if (DirExists(DataDir(g.edition))) OpenInShell(dlg, DataDir(g.edition));
-            else Message(dlg, MB_ICONINFORMATION, L2(L"The data folder appears when the edition is compiled.", L"La carpeta de datos aparece al compilar la edici\u00f3n."));
+        const wchar_t* names[2] = {L2(L"Game and saves", L"Juego y partidas"), L2(L"Options", L"Opciones")};
+        for (int i = 0; i < 2; i++) {
+            TCITEMW it{};
+            it.mask = TCIF_TEXT;
+            it.pszText = const_cast<wchar_t*>(names[i]);
+            TabCtrl_InsertItem(tabs, i, &it);
         }
-        if (LOWORD(wp) == IDC_CTL_EXAMPLES) SelectInExplorer(Join(g.root, L"framework\\games\\tsukihime_common\\input.ini.example"));
+        inner[0] = g_playMain = CreateDialogParamW(g.inst, MAKEINTRESOURCEW(IDD_PLAY), dlg, PlayProc, 0);
+        inner[1] = CreateOptionsPage(dlg);
+        RECT r;
+        GetWindowRect(tabs, &r);
+        TabCtrl_AdjustRect(tabs, FALSE, &r);
+        MapWindowPoints(nullptr, dlg, reinterpret_cast<POINT*>(&r), 2);
+        for (HWND p : inner) SetWindowPos(p, HWND_TOP, r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_NOACTIVATE);
+        TabCtrl_SetCurSel(tabs, 0);
+        ShowWindow(inner[0], SW_SHOW);
+        ShowWindow(inner[1], SW_HIDE);
         return TRUE;
+    }
+    case WM_NOTIFY: {
+        auto* nm = reinterpret_cast<NMHDR*>(lp);
+        if (nm->hwndFrom == tabs && nm->code == TCN_SELCHANGE) {
+            int i = TabCtrl_GetCurSel(tabs);
+            for (int k = 0; k < 2; k++) ShowWindow(inner[k], k == i ? SW_SHOW : SW_HIDE);
+            if (i == 0) RefreshPlay();
+        }
+        break;
+    }
     }
     return FALSE;
 }
@@ -633,6 +648,8 @@ void RefreshAll() {
     RefreshPlay();
     RefreshInstall();
     RefreshMods();
+    RefreshControls();
+    RefreshOptions();
 }
 
 namespace {
@@ -663,8 +680,8 @@ INT_PTR CALLBACK MainProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
             it.pszText = const_cast<wchar_t*>(names[i]);
             TabCtrl_InsertItem(g.tab, i, &it);
         }
-        const int ids[4] = {IDD_PLAY, IDD_INSTALL, IDD_MODS, IDD_CONTROLS};
-        DLGPROC procs[4] = {PlayProc, InstallProc, ModsProc, ControlsProc};
+        const int ids[4] = {IDD_PLAYTAB, IDD_INSTALL, IDD_MODS, IDD_CONTROLS};
+        DLGPROC procs[4] = {PlayTabProc, InstallProc, ModsProc, ControlsProc};
         for (int i = 0; i < 4; i++) g.pages[i] = CreateDialogParamW(g.inst, MAKEINTRESOURCEW(ids[i]), dlg, procs[i], 0);
         PlacePages(dlg);
         SetDlgItemTextW(dlg, IDC_FOOTER, Format(L2(L"Port folder: %ls", L"Carpeta del port: %ls"), g.root.c_str()).c_str());

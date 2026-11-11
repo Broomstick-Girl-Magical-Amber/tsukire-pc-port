@@ -13,6 +13,7 @@ set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded")   # /MT (static CRT)
 add_executable(tsukihime_launcher WIN32
     src/main.cpp
     src/mods.cpp
+    src/controls.cpp
     src/fetch.cpp
     src/install.cpp
     src/runner.cpp

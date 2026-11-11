@@ -13,6 +13,11 @@
 #define IDD_FETCH               107
 #define IDD_MODNAME             108
 #define IDD_COPY                109
+#define IDD_CTL_INPUT           110
+#define IDD_CTL_TITLE           111
+#define IDD_CTL_OPTIONS         112
+#define IDD_BIND                113
+#define IDD_PLAYTAB             114
 
 // main window
 #define IDC_TAB                 1000
@@ -40,7 +45,7 @@
 #define IDC_SAVE_RESTORE        1127
 #define IDC_SAVE_OPENBACKUPS    1128
 #define IDC_SAVE_IMPORT         1129
-#define IDC_PLAY_RUNNING        1130
+#define IDC_PLAY_TABS           1130
 
 // Install and recompile
 #define IDC_INS_FILES_GROUP     1200
@@ -84,11 +89,77 @@
 #define IDC_UPD_ADD             1314
 #define IDC_UPD_REMOVE          1315
 
-// Controls and title screen (part 3: for now only the folders)
-#define IDC_CTL_GROUP           1400
-#define IDC_CTL_TEXT            1401
-#define IDC_CTL_OPENDATA        1402
-#define IDC_CTL_EXAMPLES        1403
+// Controls and title screen (input.ini, title.ini, language.txt, config.txt)
+#define IDC_CTL_EDITION_LABEL   1404
+#define IDC_CTL_EDITION         1405
+#define IDC_CTL_NOTE            1406
+#define IDC_CTL_TABS            1407
+// - controls (input.ini)
+#define IDC_IN_KB               1410
+#define IDC_IN_PAD              1411
+#define IDC_IN_MOUSE            1412
+#define IDC_IN_LIST             1413
+#define IDC_IN_DETAIL           1414
+#define IDC_IN_EDIT             1415
+#define IDC_IN_CLEAR            1416
+#define IDC_IN_RESET            1417
+#define IDC_IN_OPEN             1418
+#define IDC_IN_FILE             1419
+#define IDC_IN_COPY             1420
+// - title screen (title.ini)
+#define IDC_TI_GROUP            1430
+#define IDC_TI_VIDEO_L          1431
+#define IDC_TI_VIDEO            1432
+#define IDC_TI_POOL_L           1433
+#define IDC_TI_POOL1            1434
+#define IDC_TI_POOL2            1435
+#define IDC_TI_POOL3            1436
+#define IDC_TI_POOL4            1437
+#define IDC_TI_MUSIC_L          1438
+#define IDC_TI_MUSIC            1439
+#define IDC_TI_HOTKEYS          1440
+#define IDC_TI_CLICK            1441
+#define IDC_TI_UNLOCK           1442
+#define IDC_TI_FADE_L           1443
+#define IDC_TI_FADE             1444
+#define IDC_TI_FADE_U           1445
+#define IDC_TI_DELAY_L          1446
+#define IDC_TI_DELAY            1447
+#define IDC_TI_DELAY_U          1448
+#define IDC_TI_NOTE             1449
+#define IDC_TI_RESET            1450
+#define IDC_TI_OPEN             1451
+#define IDC_TI_FILE             1452
+// - options (config.txt, language.txt)
+#define IDC_OP_GRP_SCREEN       1460
+#define IDC_OP_FULLSCREEN       1461
+#define IDC_OP_RES_L            1462
+#define IDC_OP_RES              1463
+#define IDC_OP_RES_CUSTOM       1464
+#define IDC_OP_FPS_L            1468
+#define IDC_OP_FPS              1469
+#define IDC_OP_FIFO             1470
+#define IDC_OP_GPU_L            1471
+#define IDC_OP_GPU              1472
+#define IDC_OP_GRP_INPUT        1473
+#define IDC_OP_HUD_L            1474
+#define IDC_OP_HUD              1475
+#define IDC_OP_SDL              1476
+#define IDC_OP_GRP_OTHER        1477
+#define IDC_OP_DISCORD          1480
+#define IDC_OP_MUTE             1481
+#define IDC_OP_RESET            1482
+#define IDC_OP_OPEN             1483
+#define IDC_OP_FILE             1484
+#define IDC_OP_WARN             1485
+// - one action's buttons
+#define IDC_BI_TEXT             1490
+#define IDC_BI_LIST             1491
+#define IDC_BI_REMOVE           1492
+#define IDC_BI_CAPTURE          1493
+#define IDC_BI_COMBO            1494
+#define IDC_BI_ADD              1495
+#define IDC_BI_STATUS           1496
 
 // Download of the port (first run without it)
 #define IDC_FETCH_TEXT          1601
