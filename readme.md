@@ -17,7 +17,7 @@ This project is a fork of [SuperMarioWonderRecomp](https://github.com/BelmanteGu
 **Works**
 
 - Both editions are playable. Scenes from the middle of the Arcueid and Ciel routes were played in each edition, including the final scene, and both routes were fast-forwarded from the prologue to their endings with no errors. The game has not been played through in full. All of the "Teach Me, Ciel-sensei" sections were tried.
-- **A Windows launcher (`tsukihime_launcher.exe`) to play**, manage saves and edit controls, tested with Wine (under Wine the recompilation is still done from the console). [Get it from Releases](https://github.com/Broomstick-Girl-Magical-Amber/tsukire-pc-port/releases).
+- **A Windows launcher (`tsukihime_launcher.exe`) to play**, manage saves and edit controls. On Linux (tested with Proton), the recompilation is still done from the console. [Get it from Releases](https://github.com/Broomstick-Girl-Magical-Amber/tsukire-pc-port/releases).
 - One command installs everything and builds the game, on Windows (about **6 minutes**) and on Linux.
 - **The port reads your dump directly.** The `.xci` / `.nsp` stays in the repository root and the game reads its files from it. Nothing is extracted.
 - Community patches in `.nsp` format (tested with translation patches on the Japanese edition, on Windows and Linux). See [Updates and patches](#updates-and-patches).
