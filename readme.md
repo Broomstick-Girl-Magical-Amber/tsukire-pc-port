@@ -6,13 +6,9 @@
    <img src="./media/intro.gif" width="80%" />
 </p>
 
-An unofficial PC port of *Tsukihime -A piece of blue glass moon-*, the remake of the original novel (I hope Red Garden/Far Side routes comes out soon), from Nintendo Switch, made by statically recompiling the game's own executable. It supports two editions, the Japanese one and the global one. On Windows you build the `.exe` yourself; on Linux the same `.exe` is cross-compiled and played with Proton.
-
-This repository contains **no game, no dumps, no keys, no firmware and no files derived from the game** (the only exceptions are the screenshots in `media/` and the executable's icon; see [Credits and licenses](#credits-and-licenses)). You must provide your own legally obtained copy of the game and your own keys (`prod.keys`). There are no instructions here for getting either.
+An unofficial PC port of *Tsukihime -A piece of blue glass moon-*, the remake of the original novel (I hope Red Garden/Far Side routes comes out soon), from Nintendo Switch, made by statically recompiling the game's own executable. It supports two editions, the Japanese one and the global one. On Windows you build the `.exe` yourself; on Linux the same `.exe` is cross-compiled and played with Proton. There is a launcher for Windows to play.
 
 **AI-assisted project.** This project was heavily AI-assisted using Claude (Anthropic). See [How this was made](#how-this-was-made).
-
-I own both copies of the game used for this port: a physical cartridge of the Japanese edition and a digital copy of the global edition. Both were dumped from my own Nintendo Switch with its own keys. No game files or ROMs were downloaded from the internet for this process.
 
 This project is a fork of [SuperMarioWonderRecomp](https://github.com/BelmanteGu/SuperMarioWonderRecomp) by BelmanteGu (MIT), used here as the recompilation framework (the upstream repository is currently offline; the link is kept as a reference).
 
@@ -21,6 +17,7 @@ This project is a fork of [SuperMarioWonderRecomp](https://github.com/BelmanteGu
 **Works**
 
 - Both editions are playable. Scenes from the middle of the Arcueid and Ciel routes were played in each edition, including the final scene, and both routes were fast-forwarded from the prologue to their endings with no errors. The game has not been played through in full. All of the "Teach Me, Ciel-sensei" sections were tried.
+- **A Windows launcher (`tsukihime_launcher.exe`) to play**, manage saves and edit controls, tested with Wine (under Wine the recompilation is still done from the console). [Get it from Releases](https://github.com/Broomstick-Girl-Magical-Amber/tsukire-pc-port/releases).
 - One command installs everything and builds the game, on Windows (about **6 minutes**) and on Linux.
 - **The port reads your dump directly.** The `.xci` / `.nsp` stays in the repository root and the game reads its files from it. Nothing is extracted.
 - Community patches in `.nsp` format (tested with translation patches on the Japanese edition, on Windows and Linux). See [Updates and patches](#updates-and-patches).
@@ -55,15 +52,13 @@ This project is a fork of [SuperMarioWonderRecomp](https://github.com/BelmanteGu
 **Known limitations**
 
 - You need a GPU and driver with **Vulkan 1.3** (including `dynamicRendering` and `synchronization2`). An older driver crashes: **update your GPU drivers**. Without a GPU, software rendering (`llvmpipe`) works on Linux but is slow.
-- Closing the window with the X button ends the process immediately. Save from the in-game menu first, and keep a backup of your saves.
 - Discord Rich Presence shows the wrong route if you jump into the middle of a day of the other route.
 - On Linux the build is the same Windows `.exe`, played with Proton. Plain Wine is not supported.
 
 **To do (also open for the community)**
 
 - Native Linux build.
-- Android port (the framework still contains Android material from the fork; nothing for Tsukihime has been done).
-- Test Fedora and Arch (the `dnf` and `pacman` paths exist in the scripts but were never run).
+- Android port (the framework still contains Android material from the fork, but nothing for the remake has been done).
 
 ## Screenshots
 
@@ -224,7 +219,11 @@ Set them in the console before launching the game (`set NX_LANGUAGE=ja` in `cmd`
 
 ## How this was made
 
+This repository contains **no game code, no dumps, no keys, no firmware and no files derived from the game** (the only exceptions are the screenshots in `media/` and the executable's icon; see [Credits and licenses](#credits-and-licenses)). You must provide your own legally obtained copy of the game and your own keys (`prod.keys`). There are no instructions here for getting either.
+
 Claude, Anthropic's AI assistant, wrote most of the new code. It was the scripts, the diagnostics and the patchers in `tools/patches/`. Most of it was first written in Spanish, my native language, and later translated to English.
+
+I own both copies of the game used for this port: a physical cartridge of the Japanese edition and a digital copy of the global edition. Both were dumped from my own Nintendo Switch with its own keys. No game files or ROMs were downloaded from the internet for this process.
 
 My part was to define the goals and the rules (for example: a build that works from scratch on a clean machine), to test every change, to make the decisions, and to rewrite some of the generated code. Claude was never installed on my PC and never edited the repository automatically: I shared the relevant scripts and ideas in a chat and applied every change by hand.
 
