@@ -1,0 +1,305 @@
+// launcher.rc - dialogs, icon and manifest of tsukihime_launcher.exe. ASCII only: llvm-rc reads it as ASCII on Linux.
+// The English text is the one shown here; the Spanish one is set at run time (src/text.cpp, by control ID).
+#include "rcdefs.h"
+#include "resource.h"
+
+IDI_LAUNCHER ICON "launcher.ico"
+
+// Common Controls 6 (themed controls, SysLink), DPI awareness, no elevation.
+1 24 "launcher.manifest"
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION 1,0,0,0
+PRODUCTVERSION 1,0,0,0
+FILEFLAGSMASK 0x3fL
+FILEFLAGS 0x0L
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_APP
+FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"
+        BEGIN
+            VALUE "FileDescription", "Tsukihime PC port launcher"
+            VALUE "FileVersion", "1.0.0"
+            VALUE "InternalName", "tsukihime_launcher"
+            VALUE "OriginalFilename", "tsukihime_launcher.exe"
+            VALUE "ProductName", "tsukire-pc-port"
+            VALUE "ProductVersion", "1.0.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END
+
+// ------------------------------------------------------------------------------------------------ main window
+IDD_MAIN DIALOGEX 0, 0, 400, 340
+STYLE DS_SHELLFONT | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX
+EXSTYLE WS_EX_APPWINDOW
+CAPTION "Tsukihime PC port - Launcher"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    CONTROL         "", IDC_TAB, "SysTabControl32", WS_TABSTOP, 7, 7, 386, 306
+    LTEXT           "", IDC_FOOTER, 9, 322, 230, 8, SS_PATHELLIPSIS
+    DEFPUSHBUTTON   "Play", IDOK, 251, 318, 68, 15
+    PUSHBUTTON      "Close", IDCANCEL, 325, 318, 68, 15
+END
+
+// ------------------------------------------------------------------------------------------------ Play / save data
+IDD_PLAYTAB DIALOGEX 0, 0, 378, 288
+STYLE DS_SHELLFONT | DS_CONTROL | WS_CHILD
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    CONTROL         "", IDC_PLAY_TABS, "SysTabControl32", WS_TABSTOP, 6, 4, 366, 280
+END
+
+// The "Game and saves" sub-tab of Play and saves (inside IDD_PLAYTAB; the other one is IDD_CTL_OPTIONS)
+IDD_PLAY DIALOGEX 0, 0, 354, 254
+STYLE DS_SHELLFONT | DS_CONTROL | WS_CHILD
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    GROUPBOX        "Game", IDC_PLAY_GROUP, 4, 2, 346, 132
+    LTEXT           "Edition", IDC_PLAY_EDITION_LABEL, 12, 17, 50, 8
+    COMBOBOX        IDC_PLAY_EDITION, 66, 15, 160, 60, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "", IDC_PLAY_EXE, 12, 35, 330, 8, SS_PATHELLIPSIS
+    LTEXT           "", IDC_PLAY_DUMP, 12, 47, 330, 8, SS_PATHELLIPSIS
+    LTEXT           "", IDC_PLAY_STATE, 12, 59, 330, 18
+    AUTOCHECKBOX    "Show the game's log console", IDC_PLAY_CONSOLE, 12, 81, 300, 10
+    AUTOCHECKBOX    "Close this window when the game starts", IDC_PLAY_CLOSE, 12, 94, 300, 10
+    PUSHBUTTON      "Open nx.log", IDC_PLAY_LOG, 12, 111, 84, 14
+    PUSHBUTTON      "Open data folder", IDC_PLAY_DATA, 102, 111, 84, 14
+    PUSHBUTTON      "Install / recompile...", IDC_PLAY_GOINSTALL, 192, 111, 90, 14
+
+    GROUPBOX        "Save data", IDC_SAVE_GROUP, 4, 138, 346, 112
+    LTEXT           "", IDC_SAVE_PATH, 12, 152, 330, 8, SS_PATHELLIPSIS
+    LTEXT           "", IDC_SAVE_INFO, 12, 164, 330, 8
+    LTEXT           "", IDC_SAVE_BACKUPS, 12, 176, 330, 8, SS_PATHELLIPSIS
+    PUSHBUTTON      "Back up now", IDC_SAVE_BACKUP, 12, 208, 84, 14
+    PUSHBUTTON      "Restore...", IDC_SAVE_RESTORE, 102, 208, 84, 14
+    PUSHBUTTON      "Import save...", IDC_SAVE_IMPORT, 192, 208, 84, 14
+    PUSHBUTTON      "Open folder", IDC_SAVE_OPEN, 12, 226, 84, 14
+    PUSHBUTTON      "Backups folder", IDC_SAVE_OPENBACKUPS, 102, 226, 84, 14
+END
+
+// ------------------------------------------------------------------------------------------------ install / recompile
+IDD_INSTALL DIALOGEX 0, 0, 378, 288
+STYLE DS_SHELLFONT | DS_CONTROL | WS_CHILD
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    GROUPBOX        "Your files", IDC_INS_FILES_GROUP, 6, 4, 366, 50
+    LTEXT           "", IDC_INS_DUMPS, 14, 16, 350, 8, SS_ENDELLIPSIS
+    LTEXT           "", IDC_INS_KEYS, 14, 28, 350, 8, SS_ENDELLIPSIS
+    LTEXT           "", IDC_INS_TOOLS, 14, 40, 350, 8, SS_ENDELLIPSIS
+
+    GROUPBOX        "Compile", IDC_INS_RUN_GROUP, 6, 58, 366, 80
+    AUTOCHECKBOX    "Japanese edition", IDC_INS_JP, 14, 70, 150, 10
+    LTEXT           "", IDC_INS_JP_STATE, 168, 71, 196, 8, SS_ENDELLIPSIS
+    AUTOCHECKBOX    "Global edition", IDC_INS_GL, 14, 83, 150, 10
+    LTEXT           "", IDC_INS_GL_STATE, 168, 84, 196, 8, SS_ENDELLIPSIS
+    AUTOCHECKBOX    "Install or check the requirements first (needed the first time)", IDC_INS_REQ, 14, 96, 350, 10
+    AUTOCHECKBOX    "Answer yes to the install questions (it may replace tools that do not match)", IDC_INS_YES, 14, 108, 350, 10
+    PUSHBUTTON      "Install and compile", IDC_INS_START, 14, 120, 110, 14
+    PUSHBUTTON      "Open in a console", IDC_INS_CONSOLE, 130, 120, 90, 14
+    PUSHBUTTON      "Cancel", IDC_INS_CANCEL, 226, 120, 60, 14, WS_DISABLED
+
+    GROUPBOX        "Progress", IDC_INS_PROG_GROUP, 6, 141, 366, 143
+    LTEXT           "", IDC_INS_STEP, 14, 153, 290, 8, SS_ENDELLIPSIS
+    RTEXT           "", IDC_INS_TIME, 306, 153, 58, 8
+    CONTROL         "", IDC_INS_PROGRESS, "msctls_progress32", WS_BORDER, 14, 164, 350, 8
+    EDITTEXT        IDC_INS_LOG, 14, 176, 350, 81, ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | ES_AUTOHSCROLL | WS_VSCROLL | WS_HSCROLL
+    LTEXT           "", IDC_INS_RESULT, 14, 261, 208, 18
+    PUSHBUTTON      "Copy log", IDC_INS_COPY, 226, 264, 60, 14
+    PUSHBUTTON      "Logs folder", IDC_INS_OPENLOGS, 292, 264, 72, 14
+END
+
+// ------------------------------------------------------------------------------------------------ mods and updates
+IDD_MODS DIALOGEX 0, 0, 378, 288
+STYLE DS_SHELLFONT | DS_CONTROL | WS_CHILD
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "Edition", IDC_MODS_EDITION_LABEL, 8, 8, 40, 8
+    COMBOBOX        IDC_MODS_EDITION, 50, 6, 120, 60, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "", IDC_MODS_BANNER, 8, 23, 286, 18
+    PUSHBUTTON      "Recompile...", IDC_MODS_RECOMP, 300, 24, 72, 14
+
+    GROUPBOX        "Mods", IDC_MODS_GROUP, 6, 42, 366, 136
+    CONTROL         "", IDC_MODS_LIST, "SysListView32", LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | LVS_NOSORTHEADER | WS_BORDER | WS_TABSTOP, 12, 53, 354, 82
+    LTEXT           "", IDC_MODS_DETAIL, 12, 138, 354, 18
+    PUSHBUTTON      "Add mod...", IDC_MODS_ADD, 12, 160, 80, 14
+    PUSHBUTTON      "Remove...", IDC_MODS_REMOVE, 96, 160, 60, 14
+    PUSHBUTTON      "Open folder", IDC_MODS_OPEN, 160, 160, 70, 14
+
+    GROUPBOX        "Updates and patches (.nsp in updates)", IDC_UPD_GROUP, 6, 182, 366, 104
+    CONTROL         "", IDC_UPD_LIST, "SysListView32", LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | LVS_NOSORTHEADER | WS_BORDER | WS_TABSTOP, 12, 193, 354, 50
+    LTEXT           "", IDC_UPD_DETAIL, 12, 246, 354, 18
+    PUSHBUTTON      "Add .nsp...", IDC_UPD_ADD, 12, 268, 80, 14
+    PUSHBUTTON      "Remove...", IDC_UPD_REMOVE, 96, 268, 60, 14
+    PUSHBUTTON      "Open folder", IDC_MODS_UPDATES, 160, 268, 70, 14
+END
+
+// ------------------------------------------------------------------------------------------------ controls and title screen
+IDD_CONTROLS DIALOGEX 0, 0, 378, 288
+STYLE DS_SHELLFONT | DS_CONTROL | WS_CHILD
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "", IDC_CTL_NOTE, 8, 4, 364, 18
+    CONTROL         "", IDC_CTL_TABS, "SysTabControl32", WS_TABSTOP, 6, 24, 366, 260
+END
+
+IDD_CTL_INPUT DIALOGEX 0, 0, 354, 230
+STYLE DS_SHELLFONT | DS_CONTROL | WS_CHILD
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    AUTORADIOBUTTON "Keyboard", IDC_IN_KB, 4, 4, 70, 10, WS_GROUP | WS_TABSTOP
+    AUTORADIOBUTTON "Mouse", IDC_IN_MOUSE, 78, 4, 70, 10
+    CONTROL         "", IDC_IN_LIST, "SysListView32", LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | LVS_NOSORTHEADER | WS_BORDER | WS_TABSTOP | WS_GROUP, 4, 18, 346, 150
+    LTEXT           "", IDC_IN_DETAIL, 4, 171, 346, 18
+    PUSHBUTTON      "Change...", IDC_IN_EDIT, 4, 192, 70, 14
+    PUSHBUTTON      "Clear", IDC_IN_CLEAR, 78, 192, 60, 14
+    PUSHBUTTON      "Restore defaults", IDC_IN_RESET, 142, 192, 90, 14
+    LTEXT           "", IDC_IN_FILE, 4, 213, 270, 8, SS_PATHELLIPSIS
+    PUSHBUTTON      "Open input.ini", IDC_IN_OPEN, 280, 210, 70, 14
+END
+
+IDD_CTL_TITLE DIALOGEX 0, 0, 354, 230
+STYLE DS_SHELLFONT | DS_CONTROL | WS_CHILD
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    GROUPBOX        "Video and music of the title screen", IDC_TI_GROUP, 4, 2, 346, 196
+    LTEXT           "Video", IDC_TI_VIDEO_L, 12, 17, 72, 8
+    COMBOBOX        IDC_TI_VIDEO, 88, 15, 200, 100, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Videos to use", IDC_TI_POOL_L, 12, 35, 72, 8
+    AUTOCHECKBOX    "Default", IDC_TI_POOL1, 88, 34, 100, 10
+    AUTOCHECKBOX    "Arcueid route cleared", IDC_TI_POOL2, 192, 34, 150, 10
+    AUTOCHECKBOX    "Start of Ciel's route", IDC_TI_POOL3, 88, 46, 100, 10
+    AUTOCHECKBOX    "Game completed", IDC_TI_POOL4, 192, 46, 150, 10
+    LTEXT           "Music", IDC_TI_MUSIC_L, 12, 65, 72, 8
+    COMBOBOX        IDC_TI_MUSIC, 88, 63, 200, 100, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    AUTOCHECKBOX    "F5 / F6 change the video on the title screen", IDC_TI_HOTKEYS, 12, 84, 330, 10
+    AUTOCHECKBOX    "A click on the logo of the title menu changes the video", IDC_TI_CLICK, 12, 98, 330, 10
+    AUTOCHECKBOX    "Only the videos your save has unlocked", IDC_TI_UNLOCK, 12, 112, 330, 10
+    LTEXT           "Fade", IDC_TI_FADE_L, 12, 131, 72, 8
+    EDITTEXT        IDC_TI_FADE, 88, 129, 40, 12, ES_NUMBER | ES_AUTOHSCROLL | WS_TABSTOP
+    LTEXT           "ms of each half of the fade (0 = no fade)", IDC_TI_FADE_U, 132, 131, 212, 8
+    LTEXT           "Wait", IDC_TI_DELAY_L, 12, 148, 72, 8
+    EDITTEXT        IDC_TI_DELAY, 88, 146, 40, 12, ES_NUMBER | ES_AUTOHSCROLL | WS_TABSTOP
+    LTEXT           "ms after the swap (raise it if the old video still shows)", IDC_TI_DELAY_U, 132, 148, 212, 8
+    LTEXT           "", IDC_TI_NOTE, 12, 166, 330, 26
+    PUSHBUTTON      "Restore defaults", IDC_TI_RESET, 4, 208, 90, 14
+    LTEXT           "", IDC_TI_FILE, 100, 211, 176, 8, SS_PATHELLIPSIS
+    PUSHBUTTON      "Open title.ini", IDC_TI_OPEN, 280, 208, 70, 14
+END
+
+IDD_CTL_OPTIONS DIALOGEX 0, 0, 354, 230
+STYLE DS_SHELLFONT | DS_CONTROL | WS_CHILD
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    GROUPBOX        "Screen", IDC_OP_GRP_SCREEN, 4, 2, 346, 74
+    AUTOCHECKBOX    "Start in fullscreen", IDC_OP_FULLSCREEN, 12, 14, 330, 10
+    LTEXT           "Render resolution", IDC_OP_RES_L, 12, 29, 80, 8
+    COMBOBOX        IDC_OP_RES, 96, 27, 150, 100, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    EDITTEXT        IDC_OP_RES_CUSTOM, 250, 27, 60, 12, ES_AUTOHSCROLL | WS_TABSTOP
+    LTEXT           "FPS limit", IDC_OP_FPS_L, 12, 44, 80, 8
+    COMBOBOX        IDC_OP_FPS, 96, 42, 80, 60, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    AUTOCHECKBOX    "Strict vertical sync", IDC_OP_FIFO, 186, 43, 160, 10
+    LTEXT           "GPU", IDC_OP_GPU_L, 12, 59, 80, 8
+    COMBOBOX        IDC_OP_GPU, 96, 57, 214, 100, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    GROUPBOX        "Controls", IDC_OP_GRP_INPUT, 4, 80, 346, 42
+    LTEXT           "Button icons", IDC_OP_HUD_L, 12, 93, 80, 8
+    COMBOBOX        IDC_OP_HUD, 96, 91, 170, 100, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    AUTOCHECKBOX    "Extra support for PlayStation and Switch controllers", IDC_OP_SDL, 12, 107, 330, 10
+    GROUPBOX        "Other", IDC_OP_GRP_OTHER, 4, 126, 346, 30
+    AUTOCHECKBOX    "Discord Rich Presence", IDC_OP_DISCORD, 12, 139, 150, 10
+    AUTOCHECKBOX    "Mute the sound", IDC_OP_MUTE, 186, 139, 150, 10
+    PUSHBUTTON      "Restore defaults", IDC_OP_RESET, 4, 162, 90, 14
+    PUSHBUTTON      "Open config.txt", IDC_OP_OPEN, 280, 162, 70, 14
+    LTEXT           "", IDC_OP_FILE, 4, 183, 346, 8, SS_PATHELLIPSIS
+    LTEXT           "", IDC_OP_WARN, 4, 195, 346, 18
+END
+
+// ------------------------------------------------------------------------------------------------ license
+IDD_LICENSE DIALOGEX 0, 0, 340, 268
+STYLE DS_SHELLFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Licenses"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    GROUPBOX        "Microsoft license (Windows CRT and SDK)", IDC_LIC_MS_GROUP, 7, 7, 326, 100
+    LTEXT           "", IDC_LIC_MS_TEXT, 15, 20, 310, 50
+    CONTROL         "", IDC_LIC_LINK, "SysLink", WS_TABSTOP, 15, 74, 310, 10
+    AUTOCHECKBOX    "I have read and accept the Microsoft license terms", IDC_LIC_ACCEPT, 15, 90, 310, 10
+    GROUPBOX        "This port (LICENSE and NOTICE.md)", IDC_LIC_PORT_GROUP, 7, 112, 326, 128
+    EDITTEXT        IDC_LIC_PORT_TEXT, 15, 124, 310, 108, ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL
+    DEFPUSHBUTTON   "Accept and continue", IDOK, 191, 246, 80, 15, WS_DISABLED
+    PUSHBUTTON      "Cancel", IDCANCEL, 277, 246, 56, 15
+END
+
+// ------------------------------------------------------------------------------------------------ download the port
+IDD_FETCH DIALOGEX 0, 0, 300, 172
+STYLE DS_SHELLFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Tsukihime launcher - download the port"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "", IDC_FETCH_TEXT, 7, 7, 286, 78
+    CONTROL         "", IDC_FETCH_LINK, "SysLink", WS_TABSTOP, 7, 88, 286, 10
+    LTEXT           "", IDC_FETCH_STATUS, 7, 103, 286, 38
+    CONTROL         "", IDC_FETCH_PROGRESS, "msctls_progress32", PBS_MARQUEE | WS_BORDER, 7, 144, 286, 6
+    DEFPUSHBUTTON   "Download", IDC_FETCH_GO, 160, 154, 80, 14
+    PUSHBUTTON      "Close", IDCANCEL, 246, 154, 47, 14
+END
+
+// ------------------------------------------------------------------------------------------------ restore a backup
+IDD_RESTORE DIALOGEX 0, 0, 260, 170
+STYLE DS_SHELLFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Restore saves"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "", IDC_RESTORE_TEXT, 7, 7, 246, 18
+    LISTBOX         IDC_RESTORE_LIST, 7, 28, 246, 114, LBS_NOTIFY | LBS_NOINTEGRALHEIGHT | WS_VSCROLL | WS_TABSTOP | WS_BORDER
+    DEFPUSHBUTTON   "Restore", IDOK, 141, 149, 54, 15
+    PUSHBUTTON      "Cancel", IDCANCEL, 199, 149, 54, 15
+END
+
+// ------------------------------------------------------------------------------------------------ name of a mod being added
+IDD_MODNAME DIALOGEX 0, 0, 290, 124
+STYLE DS_SHELLFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Add mod"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "", IDC_MODNAME_TEXT, 7, 7, 276, 66
+    EDITTEXT        IDC_MODNAME_EDIT, 7, 76, 276, 12, ES_AUTOHSCROLL | WS_TABSTOP
+    LTEXT           "", IDC_MODNAME_ERR, 7, 91, 276, 8
+    DEFPUSHBUTTON   "Add", IDOK, 175, 104, 54, 14
+    PUSHBUTTON      "Cancel", IDCANCEL, 233, 104, 50, 14
+END
+
+// ------------------------------------------------------------------------------------------------ copy with progress
+IDD_COPY DIALOGEX 0, 0, 250, 66
+STYLE DS_SHELLFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION
+CAPTION "Copying"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "", IDC_COPY_TEXT, 7, 7, 236, 16, SS_PATHELLIPSIS
+    CONTROL         "", IDC_COPY_PROGRESS, "msctls_progress32", WS_BORDER, 7, 26, 236, 8
+    LTEXT           "", IDC_COPY_SIZE, 7, 38, 160, 8
+    PUSHBUTTON      "Cancel", IDCANCEL, 189, 46, 54, 14
+END
+
+// ------------------------------------------------------------------------------------------------ the buttons of one action
+IDD_BIND DIALOGEX 0, 0, 250, 172
+STYLE DS_SHELLFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Buttons"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "", IDC_BI_TEXT, 7, 7, 236, 8
+    LISTBOX         IDC_BI_LIST, 7, 18, 170, 80, LBS_NOTIFY | LBS_NOINTEGRALHEIGHT | WS_VSCROLL | WS_BORDER | WS_TABSTOP
+    PUSHBUTTON      "Remove", IDC_BI_REMOVE, 182, 18, 61, 14
+    PUSHBUTTON      "Press a key...", IDC_BI_CAPTURE, 7, 103, 110, 14
+    COMBOBOX        IDC_BI_COMBO, 7, 121, 130, 140, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    PUSHBUTTON      "Add", IDC_BI_ADD, 141, 120, 50, 14
+    LTEXT           "", IDC_BI_STATUS, 7, 138, 236, 10
+    DEFPUSHBUTTON   "OK", IDOK, 135, 152, 52, 14
+    PUSHBUTTON      "Cancel", IDCANCEL, 191, 152, 52, 14
+END
