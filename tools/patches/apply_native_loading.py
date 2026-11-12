@@ -2,7 +2,7 @@
 
 hle_carga.cpp (new file, copied separately to games/tsukihime_common; picked up by the GLOB of tsukihime_common.cmake)
 replaces nn::image::JpegDecoder::Decode, nn::image::PngDecoder::Decode and nn::util::Initialize*Context /
-StreamingDecompressZlib/Gzip of the recompiled sdk, which slowed the scenes down (claude/tsukihime-efectos.md). This
+StreamingDecompressZlib/Gzip of the recompiled sdk, which slowed the scenes down. This
 patcher:
   - tsukihime_common.cmake: find_package(JPEG), find_package(PNG) and find_package(ZLIB) (vcpkg: libjpeg-turbo, libpng,
     zlib), links them and copies the DLLs that exist (jpeg62, libpng16, z, zlib1) next to the exe from ${NX_OPUS_ROOT}/bin

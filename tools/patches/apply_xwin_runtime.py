@@ -12,7 +12,7 @@ their own (numpy bundles msvcp140).
   System32) and a copy for spirv-val; MANIFEST without the PC name.
 - This patch, recomp_tsukihime.ps1 step 9 (xwin flow): copies <pack>\redist\*.dll next to the exe after the build (only
   what changed); without them in the pack and without msvcp140.dll in System32, a warning with what to do.
-Not tested on Windows by Claude: parser, ASCII, apply/remove, the copy with stubs in pwsh 7 on Linux.
+Not tested on Windows: parser, ASCII, apply/remove, the copy with stubs in pwsh 7 on Linux.
 
 Run: cd <root>\framework; private\venv\Scripts\python ..\tools\patches\apply_xwin_runtime.py [--remove]
 Needs AP_TOOLCHAIN_XWIN (apply_toolchain_xwin.py).

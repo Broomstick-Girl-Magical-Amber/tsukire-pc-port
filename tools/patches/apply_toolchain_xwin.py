@@ -27,7 +27,7 @@ apply_install_parallel.py never happened; it looked for an .exe installer). This
 4. tools\linux\clangcl-xwin.cmake: also on a Windows host (the tools end in .exe there). The rest (/winsysroot, MSVC
    version from the CRT, llvm-rc flags) was already host-independent; llvm-mt of the official LLVM 23 MSI has libxml2
    (checked), so the manifest step works without the Windows SDK tools.
-Not tested on Windows by Claude (no Windows here): parser, ASCII, apply/remove in any order, and the PowerShell parts
+Not tested on Windows (no Windows here): parser, ASCII, apply/remove in any order, and the PowerShell parts
 with stubs in pwsh 7 on Linux.
 
 Run: cd <root>\framework; private\venv\Scripts\python ..\tools\patches\apply_toolchain_xwin.py [--remove]

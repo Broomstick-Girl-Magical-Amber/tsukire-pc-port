@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Tsukihime for Android . Template: tools/android/build_apk.ps1 fills @PACKAGE@,
+     @LABEL@ and @VERSION@. One app for both editions, with nothing of the game inside:
+     - the home screen (android/java: io.github.tsukire.launcher.Home, portrait) picks the port folder and the dump with
+       Android's file picker and copies the game's library (built on the player's PC from their own dump) from that folder
+       to the app's files folder;
+     - the game (landscape) is the NativeActivity, whose library is libtsuki_boot.so (android/boot/boot.c): it loads the
+       game's library from the app's files folder and hands over to it. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="@PACKAGE@"
+    android:versionCode="1"
+    android:versionName="@VERSION@">
+
+    <uses-sdk android:minSdkVersion="30" android:targetSdkVersion="35" />
+    <!-- The port folder and the dump are read with plain paths, anywhere in the shared storage. -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
+    <!-- Vulkan 1.3: dynamic rendering + synchronization2 (the runtime's NX_VK_REQUIRE_13). -->
+    <uses-feature android:name="android.hardware.vulkan.version" android:version="0x403000" android:required="true" />
+    <uses-feature android:name="android.hardware.gamepad" android:required="false" />
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+
+    <application
+        android:label="@LABEL@"
+        android:icon="@mipmap/icon"
+        android:hasCode="true"
+        android:extractNativeLibs="true"
+        android:isGame="true"
+        android:appCategory="game"
+        android:largeHeap="true"
+        android:theme="@style/Fullscreen">
+        <activity
+            android:name="io.github.tsukire.launcher.Home"
+            android:exported="true"
+            android:theme="@android:style/Theme.Material.NoActionBar"
+            android:screenOrientation="portrait">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <!-- The game. Exported: test runs can start it directly (adb shell am start -n @PACKAGE@/android.app.NativeActivity);
+             it uses the folder last chosen on the home screen. -->
+        <activity
+            android:name="android.app.NativeActivity"
+            android:exported="true"
+            android:screenOrientation="sensorLandscape"
+            android:resizeableActivity="false"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|navigation|uiMode|density">
+            <meta-data android:name="android.app.lib_name" android:value="tsuki_boot" />
+        </activity>
+    </application>
+</manifest>

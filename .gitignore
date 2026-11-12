@@ -49,6 +49,20 @@
 !/tools/linux/*.cmake
 !/tools/linux/*.ps1
 !/tools/linux/*.py
+# AP_ANDROID_BUILD (apply_android_build.py): the Android port. tools\android: its scripts; <root>\android: the
+# launcher (Java), the manifest template and its resources. What they build (<root>\_android: APKs with the game's
+# code, the data for the phone) and the libraries (_prepare\android-deps) stay out like everything else in the root.
+!/tools/android/
+/tools/android/*
+!/tools/android/*.ps1
+!/tools/android/*.sh
+!/android/
+/android/*
+!/android/AndroidManifest.xml.in
+!/android/README.md
+!/android/java/
+!/android/res/
+!/android/boot/
 # personal (paths of one PC): never in the repo
 /tools/dev.local.ps1
 

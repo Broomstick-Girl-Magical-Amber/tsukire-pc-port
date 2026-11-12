@@ -1,0 +1,6 @@
+{
+  "comment": "The Android pack tools/android/build_game.ps1 downloads when <root>/_prepare/android-pack is missing (made with tools/dev/build_android_pack.ps1). Empty url: nothing published yet.",
+  "version": "",
+  "url": "",
+  "sha256": ""
+}

@@ -18,7 +18,7 @@ Vulkan SDK, then the xwin splat. This patch (tools/linux/install_requirements_li
   valid (same pin, same .hash).
 - The downloaded archives are deleted once installed (LLVM: 2 GB). Space estimate of the tools 25 GB -> 10 GB.
 - No progress bars in the logs of the parallel processes (curl -sS; xwin progress lines filtered).
-Not tested on Linux by Claude end to end (no 8-core VM here): parser, ASCII, apply/remove; the stream + exclusion
+Not tested on Linux end to end (no 8-core VM here): parser, ASCII, apply/remove; the stream + exclusion
 pipeline with the real LLVM 23.1.3 tarball (SHA-256 OK, 1.9 GB kept, clang-cl/lld-link/llvm-*/lib/clang present) and the
 chains with stubs.
 

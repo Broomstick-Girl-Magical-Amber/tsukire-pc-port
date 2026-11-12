@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- App icon: a crescent moon and a star on night blue (own drawing, as the Windows launcher's; no art of the game). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path android:fillColor="#141C33" android:pathData="M0,0h108v108h-108z" />
+    <!-- crescent: a disc minus an offset disc -->
+    <path android:fillColor="#E8ECF8"
+        android:pathData="M58,22 A32,32 0 1,0 86,70 A26,26 0 1,1 58,22 Z" />
+    <!-- star -->
+    <path android:fillColor="#9CC4FF"
+        android:pathData="M78,28 L80.4,34.6 L87,37 L80.4,39.4 L78,46 L75.6,39.4 L69,37 L75.6,34.6 Z" />
+</vector>
