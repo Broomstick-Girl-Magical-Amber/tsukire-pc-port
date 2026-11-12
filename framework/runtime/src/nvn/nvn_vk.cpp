@@ -242,7 +242,14 @@ bool init() {
         vk_unusable("the Vulkan loader (vulkan-1.dll) could not be loaded", false, 0,
                     L"vulkan-1.dll (the Vulkan loader) could not be loaded: no Vulkan driver is installed.");
     }
-    for (size_t k = 0; k < g_entry_count; k++) *g_entries[k].pfn = gipa(nullptr, g_entries[k].name);
+    // AP_VK_GIPA (apply_android_vk_gipa.py): with a null instance the loader only knows the global commands; asking for
+    // the rest logs an error per name on Android. The second load (after vkCreateInstance) sets all the others.
+    for (size_t k = 0; k < g_entry_count; k++) {
+        const char* const nm = g_entries[k].name;
+        if (!std::strcmp(nm, "vkEnumerateInstanceVersion") || !std::strcmp(nm, "vkEnumerateInstanceExtensionProperties") ||
+            !std::strcmp(nm, "vkEnumerateInstanceLayerProperties") || !std::strcmp(nm, "vkCreateInstance"))
+            *g_entries[k].pfn = gipa(nullptr, nm);
+    }
     p_enum_instance_ext = reinterpret_cast<PFN_vkEnumerateInstanceExtensionProperties>(
         gipa(nullptr, "vkEnumerateInstanceExtensionProperties"));
     p_create_instance = reinterpret_cast<PFN_vkCreateInstance>(gipa(nullptr, "vkCreateInstance"));

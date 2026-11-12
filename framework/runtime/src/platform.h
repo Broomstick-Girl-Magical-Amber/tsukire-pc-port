@@ -143,6 +143,14 @@ extern PadHook pad_hook;
 // fixed one (XInput pad 0 + keys); read_pad still adds input_script after it. Null (the default): as always.
 extern PadHook pad_source;
 
+#if defined(__ANDROID__)  // AP_ANDROID_HUD (apply_android_hud.py)
+// The kind of device the last real input came from, for a game's own HUD (Tsukihime: the button icons): 0 finger,
+// 1 Xbox (or a generic controller), 2 PlayStation, 3 Switch. Called on the game thread from read_pad; the first call
+// says 0 unless a controller already spoke. Null (the default): nothing.
+using InputNote = void (*)(int kind);
+extern InputNote input_note;  // platform_android_input.cpp
+#endif
+
 // Audio: s16 stereo 48 kHz. `done` is called (on any thread) when a submitted buffer has been played.
 using AudioDone = void (*)(void* ctx);
 bool audio_open(AudioDone done);

@@ -64,6 +64,76 @@ struct Touch {
 };
 std::vector<Touch> g_touches;
 float g_w = 1, g_h = 1;
+
+// AP_ANDROID_HUD (apply_android_hud.py): the kind of device that gave the last real input, for the game's HUD icons
+// (plat::input_note, platform.h): 0 finger, 1 Xbox (or generic), 2 PlayStation, 3 Switch. on_input only writes it down;
+// read_pad delivers it on the game thread.
+JavaVM* g_vm = nullptr;                           // set by on_input
+int g_hud_kind = -1;                              // the last kind not delivered yet (-1: none)
+std::vector<std::pair<int32_t, int>> g_hud_pads;  // device id -> kind (InputDevice is asked once per id)
+
+bool name_has(const std::string& lower, const char* word) { return lower.find(word) != std::string::npos; }
+
+int pad_kind_of(int vendor, std::string name) {
+    for (char& c : name)
+        if (c >= 'A' && c <= 'Z') c = char(c + 32);
+    if (vendor == 0x045E || name_has(name, "xbox")) return 1;  // before PlayStation: "Xbox Wireless Controller"
+    if (vendor == 0x054C || name_has(name, "dualsense") || name_has(name, "dualshock") || name_has(name, "playstation") ||
+        name == "wireless controller")  // the DualShock 4 name when the vendor id is not known
+        return 2;
+    if (vendor == 0x057E || name_has(name, "pro controller") || name_has(name, "joy-con") || name_has(name, "nintendo"))
+        return 3;
+    return 1;
+}
+
+int pad_kind(int32_t id) {
+    for (const auto& d : g_hud_pads)
+        if (d.first == id) return d.second;
+    int vendor = 0, product = 0;
+    std::string name;
+    if (g_vm) {
+        JNIEnv* env = nullptr;
+        bool attached = false;
+        if (g_vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_OK) {
+            if (g_vm->AttachCurrentThread(&env, nullptr) == JNI_OK) attached = true;
+            else env = nullptr;
+        }
+        if (env) {
+            if (jclass cls = env->FindClass("android/view/InputDevice")) {
+                jmethodID get = env->GetStaticMethodID(cls, "getDevice", "(I)Landroid/view/InputDevice;");
+                jmethodID vid = env->GetMethodID(cls, "getVendorId", "()I");
+                jmethodID pid = env->GetMethodID(cls, "getProductId", "()I");
+                jmethodID nam = env->GetMethodID(cls, "getName", "()Ljava/lang/String;");
+                if (get && vid && pid && nam) {
+                    if (jobject dev = env->CallStaticObjectMethod(cls, get, jint(id))) {
+                        vendor = int(env->CallIntMethod(dev, vid));
+                        product = int(env->CallIntMethod(dev, pid));
+                        if (jstring js = static_cast<jstring>(env->CallObjectMethod(dev, nam))) {
+                            if (const char* c = env->GetStringUTFChars(js, nullptr)) {
+                                name = c;
+                                env->ReleaseStringUTFChars(js, c);
+                            }
+                            env->DeleteLocalRef(js);
+                        }
+                        env->DeleteLocalRef(dev);
+                    }
+                }
+                env->DeleteLocalRef(cls);
+            }
+            if (env->ExceptionCheck()) env->ExceptionClear();
+            if (attached) g_vm->DetachCurrentThread();
+        }
+    }
+    const int kind = pad_kind_of(vendor, name);
+    nx::log("hud: controller id %d \"%s\" (VID:PID %04x:%04x): %s icons", int(id), name.c_str(), unsigned(vendor),
+            unsigned(product), kind == 2 ? "PlayStation" : kind == 3 ? "Switch" : "Xbox");
+    g_hud_pads.emplace_back(id, kind);
+    return kind;
+}
+
+void hud_note_pad(AInputEvent* e) {
+    if (input_note) g_hud_kind = pad_kind(AInputEvent_getDeviceId(e));
+}
 bool g_gamepad = false;  // the last input came from a controller: the drawn touch controls hide
 
 // AP_ANDROID_INPUT (apply_android_input.py): pointer mode (Tsukihime). The first finger is the game's own touch
@@ -158,8 +228,9 @@ uint64_t touch_button(float x, float y) {
 
 }  // namespace
 
-int32_t on_input(android_app*, AInputEvent* e) {
+int32_t on_input(android_app* app, AInputEvent* e) {
     std::lock_guard lk(g_in);
+    if (app && app->activity) g_vm = app->activity->vm;  // AP_ANDROID_HUD
     int32_t type = AInputEvent_getType(e);
     int32_t src = AInputEvent_getSource(e);
     if (type == AINPUT_EVENT_TYPE_KEY) {
@@ -167,6 +238,10 @@ int32_t on_input(android_app*, AInputEvent* e) {
         if (pointer_mode() && AKeyEvent_getKeyCode(e) == AKEYCODE_BACK) b = kB;  // AP_ANDROID_INPUT: Back = B (Tsukihime)
         if (!b) return 0;
         g_gamepad = true;
+        if (AKeyEvent_getAction(e) == AKEY_EVENT_ACTION_DOWN && AInputEvent_getDeviceId(e) >= 0 &&
+            ((src & AINPUT_SOURCE_GAMEPAD) == AINPUT_SOURCE_GAMEPAD ||
+             (src & AINPUT_SOURCE_JOYSTICK) == AINPUT_SOURCE_JOYSTICK || (src & AINPUT_SOURCE_DPAD) == AINPUT_SOURCE_DPAD))
+            hud_note_pad(e);  // AP_ANDROID_HUD: only a controller (the system Back gesture comes from the virtual keyboard)
         if (AKeyEvent_getAction(e) == AKEY_EVENT_ACTION_DOWN)
             g_pad_buttons.buttons |= b;
         else if (AKeyEvent_getAction(e) == AKEY_EVENT_ACTION_UP)
@@ -197,6 +272,15 @@ int32_t on_input(android_app*, AInputEvent* e) {
         if (AMotionEvent_getAxisValue(e, AMOTION_EVENT_AXIS_RTRIGGER, 0) > 0.4f ||
             AMotionEvent_getAxisValue(e, AMOTION_EVENT_AXIS_GAS, 0) > 0.4f)
             g_pad_buttons.buttons |= kZR;
+        if (input_note) {  // AP_ANDROID_HUD: a stick, the hat or a trigger past half is real input (drift does not count)
+            const int32_t axes[] = {AMOTION_EVENT_AXIS_X,        AMOTION_EVENT_AXIS_Y,      AMOTION_EVENT_AXIS_Z,
+                                    AMOTION_EVENT_AXIS_RZ,       AMOTION_EVENT_AXIS_HAT_X,  AMOTION_EVENT_AXIS_HAT_Y,
+                                    AMOTION_EVENT_AXIS_LTRIGGER, AMOTION_EVENT_AXIS_RTRIGGER, AMOTION_EVENT_AXIS_BRAKE,
+                                    AMOTION_EVENT_AXIS_GAS};
+            bool real = false;
+            for (int32_t a : axes) real = real || std::fabs(AMotionEvent_getAxisValue(e, a, 0)) > 0.5f;
+            if (real) hud_note_pad(e);
+        }
         return 1;
     }
     if ((src & AINPUT_SOURCE_TOUCHSCREEN) != AINPUT_SOURCE_TOUCHSCREEN) return 0;
@@ -302,7 +386,32 @@ bool headless() {  // NX_HEADLESS (platform.h)
     return on;
 }
 
+InputNote input_note = nullptr;  // AP_ANDROID_HUD (platform.h): null until the game sets it
+
+namespace {
+// AP_ANDROID_HUD: hands the kind of the last real input to the game's hook, on the game thread. A finger is seen
+// through the counter of presses of pointer mode; the first call says "finger" unless a controller already spoke.
+void hud_note_deliver() {
+    if (!input_note) return;
+    int kind;
+    {
+        std::lock_guard lk(g_in);
+        static bool first = true;
+        static uint32_t seen = g_ptr.downs;
+        if (g_ptr.downs != seen) seen = g_ptr.downs, g_hud_kind = 0;
+        if (first) {
+            first = false;
+            if (g_hud_kind < 0) g_hud_kind = 0;
+        }
+        kind = g_hud_kind;
+        g_hud_kind = -1;
+    }
+    if (kind >= 0) input_note(kind);
+}
+}  // namespace
+
 void read_pad(PadState& p) {
+    hud_note_deliver();  // AP_ANDROID_HUD
     std::lock_guard lk(g_in);
     p.buttons |= g_pad_buttons.buttons;
     if (g_pad_buttons.lx || g_pad_buttons.ly) {

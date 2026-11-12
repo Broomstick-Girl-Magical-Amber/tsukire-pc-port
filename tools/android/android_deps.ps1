@@ -12,11 +12,16 @@
 # cloned (git) at the commit install_requirements.ps1 uses into the tools folder (Windows %LOCALAPPDATA%\tsuki-tools\vcpkg,
 # Linux ~/.local/tsuki-tools/vcpkg). FFmpeg for Android takes a while (vcpkg downloads its own MSYS2 on Windows).
 # Nothing of the game is involved; these are the same open source libraries as on Windows.
+#
+# zlib: the libz.a and zlib.h that end up in android-deps are zlib-ng (its zlib-compatible build, same API and ABI:
+# NEON and ARMv8 CRC32 code, a faster inflate for the game's gzip streams and for libpng), built here with the NDK
+# from the pinned tag below (git). -StockZlib keeps the plain zlib of vcpkg instead.
 param(
     [string]$Root,
     [string]$Vcpkg,
     [string]$Sdk,
-    [string]$Ndk
+    [string]$Ndk,
+    [switch]$StockZlib
 )
 Set-StrictMode -Version 2
 $ErrorActionPreference = 'Stop'
@@ -25,6 +30,9 @@ $ErrorActionPreference = 'Stop'
 $VcpkgCommit = 'bf19794383e8fb95eba5aa553235bc8ec2271688'   # the same as install_requirements.ps1
 $Ports = @('ffmpeg[core,avcodec,avformat,swresample,swscale]', 'opus', 'libjpeg-turbo', 'libpng', 'zlib')
 $Triplet = 'arm64-android'
+$ZngRepo = 'https://github.com/zlib-ng/zlib-ng'
+$ZngTag = '2.3.3'
+$ZngCommit = '12731092979c6d07f42da27da673a9f6c7b13586'   # what the tag must point to
 
 try {
     $Root = FindRoot $Root
@@ -79,7 +87,41 @@ try {
             if (Test-Path -LiteralPath $cp) { Copy-Item -LiteralPath $cp -Destination (Join-Path (Join-Path $tmp 'licenses') "$($d.Name).txt") }
         }
     }
-    [IO.File]::WriteAllText((Join-Path $tmp 'SOURCE.txt'), "vcpkg $vc, triplet $Triplet, NDK $ndkDir`r`nports: $($Ports -join ' ')`r`n")
+    $zlibNote = 'zlib: the one of vcpkg (-StockZlib)'
+    if (-not $StockZlib) {
+        Step "zlib-ng $ZngTag (zlib-compatible build with the NDK; replaces libz.a and zlib.h)"
+        $git = Get-Command "git$Exe" -ErrorAction SilentlyContinue
+        if (-not $git) { Fail 'git is needed to fetch zlib-ng: install it, or pass -StockZlib to keep the zlib of vcpkg' }
+        $cn = FindCmakeNinja $sdkDir $Root
+        $work = Under $Root '_prepare\android-zlib-ng'
+        if (Test-Path -LiteralPath $work) { Remove-Item -LiteralPath $work -Recurse -Force }
+        New-Item -ItemType Directory -Path $work -Force | Out-Null
+        $src = Join-Path $work 'src'; $bld = Join-Path $work 'build'; $pre = Join-Path $work 'prefix'
+        RunNative $git.Source @('clone', '--quiet', '--depth', '1', '--branch', $ZngTag, $ZngRepo, $src) 'git clone (zlib-ng)'
+        $head = (AdbText $git.Source @('-C', $src, 'rev-parse', 'HEAD')).Trim()
+        if ($head -ne $ZngCommit) { Fail "zlib-ng $ZngTag is at commit $head, not the pinned $ZngCommit (the tag moved?): not used. -StockZlib skips zlib-ng" }
+        $toolchain = (Under $ndkDir 'build\cmake\android.toolchain.cmake') -replace '\\', '/'
+        $cfg = @('-S', ($src -replace '\\', '/'), '-B', ($bld -replace '\\', '/'), '-G', 'Ninja', '-DCMAKE_BUILD_TYPE=Release',
+                 "-DCMAKE_TOOLCHAIN_FILE=$toolchain", '-DANDROID_ABI=arm64-v8a', '-DANDROID_PLATFORM=android-30',
+                 "-DCMAKE_MAKE_PROGRAM=$($cn.Ninja -replace '\\', '/')", '-DZLIB_COMPAT=ON', '-DBUILD_SHARED_LIBS=OFF',
+                 '-DBUILD_TESTING=OFF', '-DCMAKE_POSITION_INDEPENDENT_CODE=ON', '-DCMAKE_INSTALL_LIBDIR=lib',
+                 "-DCMAKE_INSTALL_PREFIX=$($pre -replace '\\', '/')")
+        RunNative $cn.Cmake $cfg 'cmake (zlib-ng, configure)'
+        RunNative $cn.Cmake @('--build', $bld) 'cmake --build (zlib-ng)'
+        RunNative $cn.Cmake @('--install', $bld) 'cmake --install (zlib-ng)'
+        foreach ($f in @('lib\libz.a', 'include\zlib.h', 'include\zconf.h', 'include\zlib_name_mangling.h')) {
+            if (-not (Test-Path -LiteralPath (Under $pre $f))) { Fail "the zlib-ng build did not leave $(Under $pre $f)" }
+            Copy-Item -LiteralPath (Under $pre $f) -Destination (Under $tmp $f) -Force
+        }
+        $lic = Join-Path $tmp 'licenses'
+        New-Item -ItemType Directory -Path $lic -Force | Out-Null
+        if (Test-Path -LiteralPath (Join-Path $lic 'zlib.txt')) { Remove-Item -LiteralPath (Join-Path $lic 'zlib.txt') -Force }   # that zlib is not linked any more
+        Copy-Item -LiteralPath (Join-Path $src 'LICENSE.md') -Destination (Join-Path $lic 'zlib-ng.txt') -Force
+        Remove-Item -LiteralPath $work -Recurse -Force
+        $zlibNote = "zlib: zlib-ng $ZngTag ($ZngCommit), ZLIB_COMPAT, built with the NDK (libz.a, zlib.h, zconf.h, zlib_name_mangling.h)"
+        Info $zlibNote
+    }
+    [IO.File]::WriteAllText((Join-Path $tmp 'SOURCE.txt'), "vcpkg $vc, triplet $Triplet, NDK $ndkDir`r`nports: $($Ports -join ' ')`r`n$zlibNote`r`n")
     if (Test-Path -LiteralPath $dst) { Remove-Item -LiteralPath $dst -Recurse -Force }
     Move-Item -LiteralPath $tmp -Destination $dst
     $mb = [math]::Round((@(Get-ChildItem -LiteralPath $dst -Recurse -File | Measure-Object -Property Length -Sum)[0].Sum) / 1MB, 1)

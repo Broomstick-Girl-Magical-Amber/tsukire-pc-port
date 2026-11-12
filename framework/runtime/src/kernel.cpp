@@ -702,7 +702,67 @@ bool svc_profile_on() {
     static const bool on = std::getenv("NX_SVC_PROFILE") != nullptr;
     return on;
 }
+// AP_FRAME_PROFILE (apply_frame_profile.py): NX_SVC_PROFILE=2 names the game code that made a slow kernel call instead
+// of the sdk's svc stub: the first return address inside the main module, from the link register and then the frame
+// records above the stack pointer (the sdk keeps them; the game's own code may use x29 for something else, so the
+// walk stops at anything that is not a frame record just above). No game code in the chain: the stub's caller.
+uint64_t svc_profile_site(const CPU& c, uint64_t pc) {
+    static const bool sites = [] {
+        const char* e = std::getenv("NX_SVC_PROFILE");
+        return e && std::atoi(e) >= 2;
+    }();
+    if (!sites) return pc;
+    auto in_main = [](uint64_t a) {
+        const LoadedModule* m = module_at(a);
+        return m && std::strcmp(m->info->name, "main") == 0;
+    };
+    const uint64_t lr = c.x[30], sp = c.x[31];
+    if (in_main(lr)) return lr;
+    uint64_t fp = c.x[29];
+    for (int k = 0; k < 8 && (fp & 7) == 0 && fp >= sp && fp - sp < 0x40000; k++) {
+        const uint64_t ret = ld<uint64_t>(fp + 8), next = ld<uint64_t>(fp);
+        if (in_main(ret)) return ret;
+        if (!module_at(ret) || next <= fp) break;
+        fp = next;
+    }
+    return lr;
+}
 }  // namespace
+
+// AP_FRAME_PROFILE: CPU time of every guest thread per frame since the last call (nvn_queue.cpp, every 600 presents,
+// on the thread that presents). Linux and Android: the CPU clock of a thread by its host thread id.
+void frame_profile_threads(uint64_t frames) {
+#if defined(__linux__)
+    struct Row {
+        uint64_t id, cpu, entry;
+        bool self;
+    };
+    static std::map<uint64_t, uint64_t> before;  // thread id -> CPU ns at the last call
+    std::vector<Row> rows;
+    {
+        std::lock_guard al(g_all_lock);
+        for (auto& w : g_all) {
+            auto t = w.lock();
+            if (!t || !t->started || t->exited || t->host_tid <= 0) continue;
+            timespec ts{};
+            if (clock_gettime(clockid_t((~int(t->host_tid) << 3) | 6), &ts) != 0) continue;  // that thread's CPU clock
+            const uint64_t cpu = uint64_t(ts.tv_sec) * 1'000'000'000ull + uint64_t(ts.tv_nsec);
+            auto it = before.find(t->id);
+            if (it != before.end() && cpu >= it->second) rows.push_back({t->id, cpu - it->second, t->entry, t.get() == t_self});
+            before[t->id] = cpu;
+        }
+    }
+    std::sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) { return a.cpu > b.cpu; });
+    for (size_t i = 0; i < rows.size() && i < 12; i++) {
+        const double ms = double(rows[i].cpu) / 1e6 / double(frames);
+        if (ms < 0.05 && !rows[i].self) continue;
+        log("frame profile: thread %llx (%sentry %s): %.2f ms of CPU per frame", (unsigned long long)rows[i].id,
+            rows[i].self ? "presents; " : "", describe(rows[i].entry).c_str(), ms);
+    }
+#else
+    (void)frames;
+#endif
+}
 
 void svc_profile_mark(int role) { t_svc_role = role; }
 
@@ -731,6 +791,7 @@ void svc(CPU& c, uint32_t imm, uint64_t pc) {
     svc_impl(c, imm, pc);
     uint64_t dt = plat::monotonic_ns() - t0;
     if (dt >= 30000) {
+        pc = svc_profile_site(c, pc);  // AP_FRAME_PROFILE (NX_SVC_PROFILE=2: the game's call site)
         std::lock_guard lk(g_svc_lock);
         auto& e = g_svc_prof[{t_svc_role, imm, pc}];
         e.first += dt, e.second++;
