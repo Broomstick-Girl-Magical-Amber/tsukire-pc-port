@@ -647,6 +647,7 @@ void ShowPage(int page) {
 void RefreshAll() {
     RefreshPlay();
     RefreshInstall();
+    RefreshAndroid();   // AP_LAUNCHER_ANDROID
     RefreshMods();
     RefreshControls();
     RefreshOptions();
@@ -680,8 +681,9 @@ INT_PTR CALLBACK MainProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
             it.pszText = const_cast<wchar_t*>(names[i]);
             TabCtrl_InsertItem(g.tab, i, &it);
         }
-        const int ids[4] = {IDD_PLAYTAB, IDD_INSTALL, IDD_MODS, IDD_CONTROLS};
-        DLGPROC procs[4] = {PlayTabProc, InstallProc, ModsProc, ControlsProc};
+        // AP_LAUNCHER_ANDROID: Install and recompile holds the Windows and Android sub-tabs (android.cpp)
+        const int ids[4] = {IDD_PLAYTAB, IDD_INSTALLTAB, IDD_MODS, IDD_CONTROLS};
+        DLGPROC procs[4] = {PlayTabProc, InstallTabProc, ModsProc, ControlsProc};
         for (int i = 0; i < 4; i++) g.pages[i] = CreateDialogParamW(g.inst, MAKEINTRESOURCEW(ids[i]), dlg, procs[i], 0);
         PlacePages(dlg);
         SetDlgItemTextW(dlg, IDC_FOOTER, Format(L2(L"Port folder: %ls", L"Carpeta del port: %ls"), g.root.c_str()).c_str());

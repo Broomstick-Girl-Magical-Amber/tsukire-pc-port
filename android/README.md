@@ -17,24 +17,27 @@ What is here:
 - `res/`: the theme of the game screen. The app icon is the one of the exe and the launcher
   (`framework/games/tsukihime_common/tsukihime.ico`), put in the APK by `build_apk.ps1`.
 
-How to build today (Windows; on Linux the `.sh` next to each script takes the same options):
+For players (Windows; on Linux the `.sh` next to each script takes the same options), no Android Studio, no NDK:
 
 1. Recompile the edition as usual (`tools\recomp_tsukihime.ps1 -Edition global`, or the launcher).
-2. Android Studio with, in the SDK Manager: an NDK (r27 or newer), Build-Tools, Platform-Tools, an SDK Platform of
-   API 30 or newer.
-3. `tools\android\android_deps.ps1` once: FFmpeg, opus, libjpeg-turbo, libpng and zlib for arm64-android (vcpkg).
-4. `tools\android\build_apk.ps1 -Edition global [-Install]`: `_android\tsukihime.apk` and
-   `_android\global\libtsukihime_global.so`.
-5. `tools\android\phone_data.ps1 -Edition global [-Mods] [-Saves] [-InternalStorage | -ExternalStorage]`: the port folder
-   for the phone in `_android\global\phone` (the game's library, analysis, romfs_source.bin, spirv, fonts, hud...; no
-   dump). Copy its contents to a folder of the phone and put the `.xci`/`.nsp` in it (or choose the dump in the app).
-6. In the app: grant the access, choose the folder, Play.
+2. `tools\android\android_port.ps1 -Edition global [-Mods] [-InternalStorage | -ExternalStorage] [-InstallApp] [-GetAdb]`:
+   builds the game's library (`build_game.ps1`: the recompiled code compiled with the LLVM clang of the PC install and
+   linked with the prebuilt runtime of the "Android pack", `_prepare\android-pack` or downloaded as pinned in
+   `tools\internal\android_pack.json`), puts the folder for the phone together in `_android\global\phone`
+   (`phone_data.ps1`: the game's library, analysis, romfs_source.bin, spirv, fonts, hud...; no dump) and, with
+   `-InternalStorage`/`-ExternalStorage`, sends it to the phone by USB with adb (only what changed, with its progress;
+   `-GetAdb` downloads adb if the PC has none) and with `-InstallApp` installs or updates the app.
+   The launcher does the same: "Install and recompile" tab, "Android" sub-tab (after recompiling in "Windows").
+3. Without sending: copy the contents of `_android\global\phone` to a folder of the phone and put the `.xci`/`.nsp` in it
+   (or choose the dump in the app).
+4. In the app: grant the access, choose the folder, Play. The game needs a GPU with Vulkan 1.3: on a phone that declares
+   less, the app warns before Play, and after a stop at Vulkan it says why.
 
-Without Android Studio or the NDK (end users; being tested): `tools\android\build_game.ps1 -Edition global` replaces
-steps 2-4. It compiles the recompiled code with the LLVM clang of the PC install and links it with the prebuilt runtime
-of the "Android pack" (`_prepare\android-pack`; from `-Pack <zip>` or downloaded as pinned in
-`tools\internal\android_pack.json`). The maintainer makes that pack with `tools\dev\build_android_pack.ps1` after a
-normal NDK build (`build_apk.ps1 -Edition`), and publishes it with the APK.
+For the maintainer (the APK and the Android pack): Android Studio with an NDK (r27 or newer), Build-Tools, Platform-Tools
+and an SDK Platform of API 30 or newer; `tools\android\android_deps.ps1` once (FFmpeg, opus, libjpeg-turbo, libpng and
+zlib for arm64-android, vcpkg); `tools\android\build_apk.ps1 -Edition global` (`_android\tsukihime.apk` and the NDK
+build of the game's library); then `tools\dev\build_android_pack.ps1 -Version N` makes the pack. Both go to the release,
+with their URLs and SHA-256 in `tools\internal\android_pack.json`.
 
 On the phone the folder has the same layout as the port on the PC: `data/<tsuki|tsuki_global>` is the data root (saves in
 `user/`, `config.txt`, `language.txt`, `title.ini`, `nx.log`), the dump sits in the folder itself and mods in

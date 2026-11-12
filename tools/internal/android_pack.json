@@ -1,6 +1,9 @@
 {
-  "comment": "The Android pack tools/android/build_game.ps1 downloads when <root>/_prepare/android-pack is missing (made with tools/dev/build_android_pack.ps1). Empty url: nothing published yet.",
+  "comment": "What tools/android downloads from the GitHub release when it is not on this PC. The Android pack (made with tools/dev/build_android_pack.ps1): build_game.ps1, when <root>/_prepare/android-pack is missing. The app (tools/android/build_apk.ps1, _android/tsukihime.apk): android_port.ps1 -InstallApp, when _android/tsukihime.apk is missing; apk_version is its versionName (build_apk.ps1 -Version). Empty url: nothing published yet.",
   "version": "",
   "url": "",
-  "sha256": ""
+  "sha256": "",
+  "apk_version": "",
+  "apk_url": "",
+  "apk_sha256": ""
 }

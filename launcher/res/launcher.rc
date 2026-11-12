@@ -85,34 +85,76 @@ BEGIN
 END
 
 // ------------------------------------------------------------------------------------------------ install / recompile
-IDD_INSTALL DIALOGEX 0, 0, 378, 288
+IDD_INSTALL DIALOGEX 0, 0, 354, 254
 STYLE DS_SHELLFONT | DS_CONTROL | WS_CHILD
 FONT 8, "MS Shell Dlg", 400, 0, 0x1
 BEGIN
-    GROUPBOX        "Your files", IDC_INS_FILES_GROUP, 6, 4, 366, 50
-    LTEXT           "", IDC_INS_DUMPS, 14, 16, 350, 8, SS_ENDELLIPSIS
-    LTEXT           "", IDC_INS_KEYS, 14, 28, 350, 8, SS_ENDELLIPSIS
-    LTEXT           "", IDC_INS_TOOLS, 14, 40, 350, 8, SS_ENDELLIPSIS
+    // AP_LAUNCHER_ANDROID (apply_launcher_android.py): now the "Windows" sub-tab of Install and recompile (354 x 254)
+    GROUPBOX        "Your files", IDC_INS_FILES_GROUP, 4, 2, 346, 44
+    LTEXT           "", IDC_INS_DUMPS, 12, 12, 330, 8, SS_ENDELLIPSIS
+    LTEXT           "", IDC_INS_KEYS, 12, 23, 330, 8, SS_ENDELLIPSIS
+    LTEXT           "", IDC_INS_TOOLS, 12, 34, 330, 8, SS_ENDELLIPSIS
 
-    GROUPBOX        "Compile", IDC_INS_RUN_GROUP, 6, 58, 366, 80
-    AUTOCHECKBOX    "Japanese edition", IDC_INS_JP, 14, 70, 150, 10
-    LTEXT           "", IDC_INS_JP_STATE, 168, 71, 196, 8, SS_ENDELLIPSIS
-    AUTOCHECKBOX    "Global edition", IDC_INS_GL, 14, 83, 150, 10
-    LTEXT           "", IDC_INS_GL_STATE, 168, 84, 196, 8, SS_ENDELLIPSIS
-    AUTOCHECKBOX    "Install or check the requirements first (needed the first time)", IDC_INS_REQ, 14, 96, 350, 10
-    AUTOCHECKBOX    "Answer yes to the install questions (it may replace tools that do not match)", IDC_INS_YES, 14, 108, 350, 10
-    PUSHBUTTON      "Install and compile", IDC_INS_START, 14, 120, 110, 14
-    PUSHBUTTON      "Open in a console", IDC_INS_CONSOLE, 130, 120, 90, 14
-    PUSHBUTTON      "Cancel", IDC_INS_CANCEL, 226, 120, 60, 14, WS_DISABLED
+    GROUPBOX        "Compile", IDC_INS_RUN_GROUP, 4, 48, 346, 78
+    AUTOCHECKBOX    "Japanese edition", IDC_INS_JP, 12, 59, 144, 10
+    LTEXT           "", IDC_INS_JP_STATE, 160, 60, 182, 8, SS_ENDELLIPSIS
+    AUTOCHECKBOX    "Global edition", IDC_INS_GL, 12, 71, 144, 10
+    LTEXT           "", IDC_INS_GL_STATE, 160, 72, 182, 8, SS_ENDELLIPSIS
+    AUTOCHECKBOX    "Install or check the requirements first (needed the first time)", IDC_INS_REQ, 12, 83, 330, 10
+    AUTOCHECKBOX    "Answer yes to the install questions (it may replace tools that do not match)", IDC_INS_YES, 12, 95, 330, 10
+    PUSHBUTTON      "Install and compile", IDC_INS_START, 12, 108, 110, 14
+    PUSHBUTTON      "Open in a console", IDC_INS_CONSOLE, 128, 108, 90, 14
+    PUSHBUTTON      "Cancel", IDC_INS_CANCEL, 224, 108, 60, 14, WS_DISABLED
 
-    GROUPBOX        "Progress", IDC_INS_PROG_GROUP, 6, 141, 366, 143
-    LTEXT           "", IDC_INS_STEP, 14, 153, 290, 8, SS_ENDELLIPSIS
-    RTEXT           "", IDC_INS_TIME, 306, 153, 58, 8
-    CONTROL         "", IDC_INS_PROGRESS, "msctls_progress32", WS_BORDER, 14, 164, 350, 8
-    EDITTEXT        IDC_INS_LOG, 14, 176, 350, 81, ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | ES_AUTOHSCROLL | WS_VSCROLL | WS_HSCROLL
-    LTEXT           "", IDC_INS_RESULT, 14, 261, 208, 18
-    PUSHBUTTON      "Copy log", IDC_INS_COPY, 226, 264, 60, 14
-    PUSHBUTTON      "Logs folder", IDC_INS_OPENLOGS, 292, 264, 72, 14
+    GROUPBOX        "Progress", IDC_INS_PROG_GROUP, 4, 129, 346, 122
+    LTEXT           "", IDC_INS_STEP, 12, 140, 270, 8, SS_ENDELLIPSIS
+    RTEXT           "", IDC_INS_TIME, 286, 140, 56, 8
+    CONTROL         "", IDC_INS_PROGRESS, "msctls_progress32", WS_BORDER, 12, 151, 330, 8
+    EDITTEXT        IDC_INS_LOG, 12, 162, 330, 60, ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | ES_AUTOHSCROLL | WS_VSCROLL | WS_HSCROLL
+    LTEXT           "", IDC_INS_RESULT, 12, 226, 196, 18
+    PUSHBUTTON      "Copy log", IDC_INS_COPY, 214, 229, 60, 14
+    PUSHBUTTON      "Logs folder", IDC_INS_OPENLOGS, 278, 229, 64, 14
+END
+
+// AP_LAUNCHER_ANDROID: the Install and recompile tab holds two sub-tabs, Windows (IDD_INSTALL) and Android (IDD_ANDROID)
+IDD_INSTALLTAB DIALOGEX 0, 0, 378, 288
+STYLE DS_SHELLFONT | DS_CONTROL | WS_CHILD
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    CONTROL         "", IDC_INSTALL_TABS, "SysTabControl32", WS_TABSTOP, 6, 4, 366, 280
+END
+
+// The Android sub-tab (src/android.cpp)
+IDD_ANDROID DIALOGEX 0, 0, 354, 254
+STYLE DS_SHELLFONT | DS_CONTROL | WS_CHILD
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    GROUPBOX        "Edition (recompiled in the Windows sub-tab)", IDC_AND_ED_GROUP, 4, 2, 346, 58
+    AUTOCHECKBOX    "Japanese edition", IDC_AND_JP, 12, 13, 144, 10
+    LTEXT           "", IDC_AND_JP_STATE, 160, 14, 182, 8, SS_ENDELLIPSIS
+    AUTOCHECKBOX    "Global edition", IDC_AND_GL, 12, 25, 144, 10
+    LTEXT           "", IDC_AND_GL_STATE, 160, 26, 182, 8, SS_ENDELLIPSIS
+    LTEXT           "", IDC_AND_INFO, 12, 38, 330, 18
+
+    GROUPBOX        "Phone", IDC_AND_PHONE_GROUP, 4, 62, 346, 66
+    LTEXT           "Send", IDC_AND_SEND_LABEL, 12, 75, 40, 8
+    COMBOBOX        IDC_AND_SEND, 54, 73, 200, 60, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    AUTOCHECKBOX    "Active mod layers", IDC_AND_MODS, 12, 89, 144, 10
+    AUTOCHECKBOX    "Saves of this PC (they replace the phone's)", IDC_AND_SAVES, 160, 89, 182, 10
+    AUTOCHECKBOX    "The dump too (about 30 GB)", IDC_AND_DUMP, 12, 101, 144, 10
+    PUSHBUTTON      "Prepare for Android", IDC_AND_START, 12, 112, 100, 14
+    PUSHBUTTON      "Open in a console", IDC_AND_CONSOLE, 116, 112, 84, 14
+    PUSHBUTTON      "Cancel", IDC_AND_CANCEL, 204, 112, 50, 14, WS_DISABLED
+    PUSHBUTTON      "Phone folder", IDC_AND_OPEN, 258, 112, 84, 14
+
+    GROUPBOX        "Progress", IDC_AND_PROG_GROUP, 4, 131, 346, 120
+    LTEXT           "", IDC_AND_STEP, 12, 142, 270, 8, SS_ENDELLIPSIS
+    RTEXT           "", IDC_AND_TIME, 286, 142, 56, 8
+    CONTROL         "", IDC_AND_PROGRESS, "msctls_progress32", WS_BORDER, 12, 153, 330, 8
+    EDITTEXT        IDC_AND_LOG, 12, 164, 330, 58, ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | ES_AUTOHSCROLL | WS_VSCROLL | WS_HSCROLL
+    LTEXT           "", IDC_AND_RESULT, 12, 226, 196, 18
+    PUSHBUTTON      "Copy log", IDC_AND_COPY, 214, 229, 60, 14
+    PUSHBUTTON      "Logs folder", IDC_AND_OPENLOGS, 278, 229, 64, 14
 END
 
 // ------------------------------------------------------------------------------------------------ mods and updates

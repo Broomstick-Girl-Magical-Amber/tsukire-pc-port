@@ -1,4 +1,5 @@
-# phone_data.ps1 - Puts together the port folder for the phone (phase 1 of the Android port): only what the game reads besides the dump, with the same layout as the port on the PC, so
+# phone_data.ps1 - Puts together the port folder for the phone (phase 1 of the Android port,
+# claude/tsukihime-android.md): only what the game reads besides the dump, with the same layout as the port on the PC, so
 # the game finds everything by itself. Copy that folder to the phone (USB by hand, or adb with -InternalStorage or
 # -ExternalStorage), put the .xci/.nsp in it (or choose it in the app with "Dump") and choose the folder in the app.
 #
@@ -7,11 +8,12 @@
 #   .\tools\android\phone_data.ps1 -Edition global -InternalStorage    # and copy it to the phone's internal storage (adb)
 #   .\tools\android\phone_data.ps1 -Edition global -ExternalStorage    # or to its SD card (adb)
 #   .\tools\android\phone_data.ps1 -Edition global -InternalStorage -Dump   # the dump too (~23 GB: a while over USB)
+#   .\tools\android\phone_data.ps1 -Edition global -InternalStorage -GetAdb # downloads adb first if this PC has none
 #   Linux: bash tools/android/phone_data.sh -Edition global
 #
 # Result: <root>\_android\<edition>\phone\ with
 #   data\<tsuki|tsuki_global>\analysis\main.bin, sdk.bin, main_source.txt   (the game's modules: from your dump)
-#   data\<...>\android\lib<game>.so   the game's library (build_apk.ps1 -Edition); the app installs it from here
+#   data\<...>\android\lib<game>.so   the game's library (build_game.ps1); the app installs it from here
 #   data\<...>\romfs_source.bin   the table of the RomFS (with the key of its NCA: the game never reads prod.keys)
 #   data\<...>\spirv\             the translated shaders
 #   data\<...>\fonts\             the shared font (Noto Sans JP, OFL)
@@ -24,8 +26,11 @@
 # Without -InternalStorage / -ExternalStorage nothing is sent to the phone (copy the folder by hand).
 # -InternalStorage: adb push to /storage/emulated/0/<PhoneFolder> (the phone's own storage; default folder Tsukihime).
 # -ExternalStorage: adb push to /storage/<SD card>/<PhoneFolder> (the SD card; -Volume <id, e.g. 1A2B-3C4D> if there
-# are several). The phone must be connected with USB debugging. The files are replaced, the rest of that folder (your
-# saves on the phone, the dump) is not touched unless -Saves/-Dump.
+# are several). The phone must be connected with USB debugging. Only what is missing or changed is sent, with its
+# progress ("adb: 34% ..."); the rest of that folder (your saves on the phone, the dump) is not touched unless
+# -Saves/-Dump. With -Mods, the mod layers on the phone that are no longer active on this PC are removed from it.
+# adb: -Adb, the PATH, an Android SDK, or the one -GetAdb downloads (Android SDK Platform-Tools of Google, ~7 MB, into
+# the tools folder of the port); Android Studio is not needed.
 param(
     [Parameter(Mandatory = $true)][ValidateSet('japan', 'global')][string]$Edition,
     [switch]$Mods,
@@ -36,7 +41,9 @@ param(
     [switch]$Dump,
     [string]$PhoneFolder = 'Tsukihime',
     [string]$Root,
-    [string]$Sdk
+    [string]$Sdk,
+    [string]$Adb,
+    [switch]$GetAdb
 )
 Set-StrictMode -Version 2
 $ErrorActionPreference = 'Stop'
@@ -88,10 +95,10 @@ try {
     foreach ($f in @('analysis\main.bin', 'analysis\sdk.bin', 'analysis\main_source.txt', 'romfs_source.bin', 'language.txt', 'title.ini')) {
         if (Test-Path -LiteralPath (Under $data $f)) { $copied += SyncFile (Under $data $f) (Under $outData $f) }
     }
-    # the game's library (tools\android\build_apk.ps1 -Edition): the app installs it from data\<...>\android\
+    # the game's library (tools\android\build_game.ps1): the app installs it from data\<...>\android\
     $gameLib = Under $Root "_android\$Edition\lib$($ed.Game).so"
     if (Test-Path -LiteralPath $gameLib) { $copied += SyncFile $gameLib (Under $outData "android\lib$($ed.Game).so") }
-    else { Warn "no $gameLib (tools\android\build_apk.ps1 -Edition $Edition): the folder goes without the game's library" }
+    else { Warn "no $gameLib (tools\android\build_game.ps1 -Edition $Edition): the folder goes without the game's library" }
     foreach ($d in @('spirv', 'fonts', 'hud')) {
         if (Test-Path -LiteralPath (Under $data $d) -PathType Container) { $copied += SyncDir (Under $data $d) (Under $outData $d) }
         elseif ($d -eq 'hud') { Warn 'no hud\ (HUD icons by device): the game shows the Switch ones' }
@@ -139,9 +146,8 @@ try {
     $Push = $InternalStorage -or $ExternalStorage
     $target = $null
     if ($Push) {
-        $sdkDir = FindSdk $Sdk
-        $adb = Under $sdkDir "platform-tools\adb$Exe"
-        if (-not (Test-Path -LiteralPath $adb)) { Fail "no adb in $(Under $sdkDir 'platform-tools') (SDK Manager > Android SDK Platform-Tools)" }
+        $adb = NeedAdb $Adb $Sdk ([bool]$GetAdb)
+        Info "adb: $adb"
         AdbDevice $adb
         if ($InternalStorage) { $target = "/storage/emulated/0/$PhoneFolder" }
         else {
@@ -157,10 +163,17 @@ try {
         }
         Step "copy to the phone: $target (adb)"
         RunNative $adb @('shell', 'mkdir', '-p', $target) 'adb shell mkdir'
-        # adb push of a folder copies it inside the target: push each top folder to its parent
-        foreach ($top in @(Get-ChildItem -LiteralPath $out -Directory)) {
-            RunNative $adb @('push', $top.FullName, "$target/") "adb push $($top.Name)"
+        if ($Mods) {   # layers on the phone that are no longer active here
+            $remoteMods = "$target/$($ed.Mods.Replace('\', '/'))"
+            $have = @((AdbText $adb @('shell', "ls -1 $(ShQ $remoteMods) 2>/dev/null")) -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+            foreach ($h in $have) {
+                if (-not (Test-Path -LiteralPath (Join-Path $stMods $h) -PathType Container)) {
+                    [void](AdbText $adb @('shell', "rm -rf $(ShQ "$remoteMods/$h")"))
+                    Info "layer $h removed from the phone (not active on this PC)"
+                }
+            }
         }
+        AdbPushTree $adb $out $target
         if ($Dump) {
             $dumps = @(Get-ChildItem -LiteralPath $Root -File | Where-Object { $_.Extension -match '^\.(xci|nsp)$' })
             $hint = $null
@@ -176,7 +189,7 @@ try {
             if ("$size".Trim() -eq "$($pick[0].Length)") { Info "$($pick[0].Name) is already on the phone (same size)" }
             else {
                 Info "copying $($pick[0].Name) ($([math]::Round($pick[0].Length / 1GB, 1)) GB): this takes a while"
-                RunNative $adb @('push', $pick[0].FullName, "$target/") 'adb push (dump)'
+                AdbPushBig $adb $pick[0].FullName "$target/$($pick[0].Name)" $pick[0].Length 0 $pick[0].Length
             }
         }
         Info "on the phone: $target"

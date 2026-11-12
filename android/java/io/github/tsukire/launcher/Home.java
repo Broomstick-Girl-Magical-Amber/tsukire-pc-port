@@ -1,4 +1,4 @@
-// Home screen of the Android port: the player picks the port folder on the phone
+// Home screen of the Android port (claude/tsukihime-android.md, phase 1): the player picks the port folder on the phone
 // (the same layout as the port on the PC: <folder>/data/<edition>, the .xci/.nsp in <folder>, mods in
 // <folder>/mods/<edition>) and, if it is elsewhere, the dump, both with Android's own file picker (the Storage Access
 // Framework); the launcher turns the choice into a plain path, checks the data and finds the dump, and Play starts the
@@ -9,13 +9,19 @@
 // The choice goes to <files>/data_root.txt, which android_main reads (platform_android.cpp). A dump outside the folder goes to NX_ROMFS_DUMP in <data root>/config.txt
 // (romfs_direct.cpp). Needs "all files access" (MANAGE_EXTERNAL_STORAGE): the game reads the folder and the dump with
 // plain paths, so only folders of the phone's storage or an SD card work (not Drive or other apps).
+// Vulkan: the renderer needs 1.3; a phone that declares less gets a warning before Play (the player may still try), and
+// when the game stopped at Vulkan (nvn_vk.cpp: "nvn/vk: ..." at the end of nx.log) the next start says why.
 // Portrait (the manifest); the game itself is landscape. The interface is built in code (no layouts); texts in
 // Spanish or English by the phone's language.
 package io.github.tsukire.launcher;
 
 import android.app.Activity;
+import android.app.AlertDialog;
+import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.FeatureInfo;
+import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.net.Uri;
@@ -52,10 +58,13 @@ public class Home extends Activity {
     static final int REQ_FOLDER = 1, REQ_DUMP = 2;
     static final String DUMP_LINE = "NX_ROMFS_DUMP=";
     static final String DUMP_NOTE = "# NX_ROMFS_DUMP: written by the Android launcher (the dump is not in the port folder)";
+    // The renderer needs Vulkan 1.3 (dynamic rendering, synchronization2): nvn_vk.cpp stops the game without it.
+    static final int VULKAN_13 = (1 << 22) | (3 << 12);
 
     // The edition to play (japan | global): the one whose data is in the port folder; the player's choice if both are.
     String edition = "global";
     boolean installing;
+    boolean vulkanConfirmed;   // the player chose "Try anyway" once in this session
     boolean es;
 
     TextView title, status;
@@ -206,6 +215,50 @@ public class Home extends Activity {
         }
     }
 
+    // ---- Vulkan -------------------------------------------------------------------------------------------------------
+
+    // The Vulkan version the phone declares (android.hardware.vulkan.version; 0 = no Vulkan).
+    int vulkanVersion() {
+        try {
+            for (FeatureInfo fi : getPackageManager().getSystemAvailableFeatures())
+                if (PackageManager.FEATURE_VULKAN_HARDWARE_VERSION.equals(fi.name)) return fi.version;
+        } catch (Exception e) {
+            // unknown: treated as "no Vulkan declared"
+        }
+        return 0;
+    }
+
+    static String versionText(int v) { return (v >>> 22) + "." + ((v >>> 12) & 0x3ff); }
+
+    // Why the game stopped at Vulkan last time (the end of nx.log), or null. nx.log is written again on every start,
+    // so a line there is from the last run.
+    static String vulkanFailure(File nx) {
+        try (RandomAccessFile r = new RandomAccessFile(nx, "r")) {
+            long len = r.length(), from = Math.max(0, len - 64 * 1024);
+            byte[] b = new byte[(int) (len - from)];
+            r.seek(from);
+            r.readFully(b);
+            String text = new String(b, StandardCharsets.UTF_8), found = null;
+            for (String line : text.split("\n")) {
+                int i = line.indexOf("nvn/vk: ninguna GPU con Vulkan 1.3");
+                if (i >= 0) {
+                    String d = line.substring(i);
+                    int a = d.indexOf("): "), z = d.indexOf(". Actualizar");
+                    found = a >= 0 && z > a ? d.substring(a + 3, z) : d;
+                }
+                i = line.indexOf("nvn/vk: Vulkan cannot be used: ");
+                if (i >= 0) {
+                    String d = line.substring(i + "nvn/vk: Vulkan cannot be used: ".length());
+                    int z = d.indexOf(". Install");
+                    found = z > 0 ? d.substring(0, z) : d;
+                }
+            }
+            return found;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     // ---- state ------------------------------------------------------------------------------------------------------
 
     String check(boolean ok, String what) { return (ok ? "  ok      " : t("  falta   ", "  missing ")) + what + "\n"; }
@@ -248,6 +301,24 @@ public class Home extends Activity {
             } catch (Exception e) {
                 // unreadable: nothing to show
             }
+        }
+        boolean vulkanProblem = false;
+        String failure = vulkanFailure(new File(root, "nx.log"));
+        int vk = vulkanVersion();
+        if (failure != null) {
+            vulkanProblem = true;
+            s.append(t("La \u00faltima vez el juego se cerr\u00f3 porque la GPU no sirve:\n  ", "Last time the game stopped because the GPU cannot be used:\n  "))
+             .append(failure).append("\n")
+             .append(t("El port necesita Vulkan 1.3. Si el tel\u00e9fono no lo tiene, solo una actualizaci\u00f3n del sistema "
+                     + "con un driver de GPU m\u00e1s nuevo lo arregla.\n\n",
+                       "The port needs Vulkan 1.3. If the phone does not have it, only a system update with a newer GPU "
+                     + "driver can fix it.\n\n"));
+        } else if (vk < VULKAN_13) {
+            vulkanProblem = true;
+            s.append(vk == 0 ? t("Este tel\u00e9fono no declara Vulkan", "This phone declares no Vulkan")
+                             : t("Este tel\u00e9fono declara Vulkan ", "This phone declares Vulkan ") + versionText(vk))
+             .append(t(" y el juego necesita Vulkan 1.3: lo m\u00e1s probable es que se cierre al iniciar.\n\n",
+                       " and the game needs Vulkan 1.3: it will most likely stop when it starts.\n\n"));
         }
         s.append(t("Carpeta: ", "Folder: ")).append(f).append("\n\n");
         boolean main = new File(root, "analysis/main.bin").isFile(), sdk = new File(root, "analysis/sdk.bin").isFile();
@@ -293,7 +364,7 @@ public class Home extends Activity {
         boolean ready = data && dump != null;
         if (!data) s.append(t("\nFaltan datos: vuelve a copiar la carpeta desde el PC (tools/android/phone_data.ps1).",
                               "\nData missing: copy the folder from the PC again (tools/android/phone_data.ps1)."));
-        say(s.toString(), !ready);
+        say(s.toString(), !ready || vulkanProblem);
         play.setEnabled(ready && !installing);
         return ready ? dump : null;
     }
@@ -309,6 +380,10 @@ public class Home extends Activity {
         final File dump = refresh();
         final String f = folder();
         if (dump == null || f == null || installing) return;
+        if (!vulkanConfirmed && vulkanVersion() < VULKAN_13) {
+            askVulkan();
+            return;
+        }
         final File root = dataRoot(f), src = libSource(f), dst = libInstalled();
         final String stamp = src.isFile() ? libStamp(src) : null;
         boolean fresh = dst.isFile() && (stamp == null || stamp.equals(prefs().getString("lib_" + edition, "")));
@@ -349,6 +424,29 @@ public class Home extends Activity {
                 }
             } });
         } }).start();
+    }
+
+    // The phone declares no Vulkan 1.3: say so before starting (the declared version can lag behind an updated driver,
+    // so the player may still try).
+    void askVulkan() {
+        int vk = vulkanVersion();
+        String has = vk == 0 ? t("no declara Vulkan", "declares no Vulkan") : t("declara Vulkan ", "declares Vulkan ") + versionText(vk);
+        new AlertDialog.Builder(this)
+            .setTitle(t("Vulkan 1.3 requerido", "Vulkan 1.3 required"))
+            .setMessage(t("El juego necesita una GPU con Vulkan 1.3 y este tel\u00e9fono " + has + ".\n\n"
+                        + "Lo m\u00e1s probable es que el juego se cierre al iniciar. Solo una actualizaci\u00f3n del "
+                        + "sistema con un driver de GPU m\u00e1s nuevo lo arregla.",
+                          "The game needs a GPU with Vulkan 1.3 and this phone " + has + ".\n\n"
+                        + "The game will most likely stop when it starts. Only a system update with a newer GPU driver "
+                        + "can fix it."))
+            .setNegativeButton(t("Volver", "Back"), null)
+            .setPositiveButton(t("Intentar igual", "Try anyway"), new DialogInterface.OnClickListener() {
+                public void onClick(DialogInterface d, int which) {
+                    vulkanConfirmed = true;
+                    start();
+                }
+            })
+            .show();
     }
 
     void launch(File root, File dump, File lib) {

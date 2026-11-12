@@ -54,6 +54,23 @@ const Item kSpanish[] = {
     {IDD_INSTALL, IDC_INS_COPY, L"Copiar el log"},
     {IDD_INSTALL, IDC_INS_OPENLOGS, L"Carpeta de logs"},
 
+    // AP_LAUNCHER_ANDROID (apply_launcher_android.py): the Android sub-tab
+    {IDD_ANDROID, IDC_AND_ED_GROUP, L"Edici\u00f3n (recompilada en la subpesta\u00f1a Windows)"},
+    {IDD_ANDROID, IDC_AND_JP, L"Edici\u00f3n japonesa"},
+    {IDD_ANDROID, IDC_AND_GL, L"Edici\u00f3n global"},
+    {IDD_ANDROID, IDC_AND_PHONE_GROUP, L"Tel\u00e9fono"},
+    {IDD_ANDROID, IDC_AND_SEND_LABEL, L"Mandar"},
+    {IDD_ANDROID, IDC_AND_MODS, L"Capas de mods activas"},
+    {IDD_ANDROID, IDC_AND_SAVES, L"Partidas de este PC (reemplazan las del tel\u00e9fono)"},
+    {IDD_ANDROID, IDC_AND_DUMP, L"Tambi\u00e9n el dump (unos 30 GB)"},
+    {IDD_ANDROID, IDC_AND_START, L"Preparar para Android"},
+    {IDD_ANDROID, IDC_AND_CONSOLE, L"Abrir en una consola"},
+    {IDD_ANDROID, IDC_AND_CANCEL, L"Cancelar"},
+    {IDD_ANDROID, IDC_AND_OPEN, L"Carpeta del tel\u00e9fono"},
+    {IDD_ANDROID, IDC_AND_PROG_GROUP, L"Progreso"},
+    {IDD_ANDROID, IDC_AND_COPY, L"Copiar el log"},
+    {IDD_ANDROID, IDC_AND_OPENLOGS, L"Carpeta de logs"},
+
     {IDD_MODS, IDC_MODS_EDITION_LABEL, L"Edici\u00f3n"},
     {IDD_MODS, IDC_MODS_RECOMP, L"Recompilar..."},
     {IDD_MODS, IDC_MODS_ADD, L"Agregar mod..."},

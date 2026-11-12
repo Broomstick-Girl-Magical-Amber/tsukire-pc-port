@@ -1,8 +1,9 @@
-# android_common.ps1 - Shared part of the Android scripts (build_apk.ps1, android_deps.ps1, phone_data.ps1): the port
-# root, the editions, and where the Android SDK, NDK, build-tools, android.jar, the JDK, CMake/Ninja and the Vulkan
-# headers are. Loaded with a dot (. $PSScriptRoot\android_common.ps1); it does not run on its own.
-# Windows PowerShell 5.1 and PowerShell 7 (Linux). Nothing is installed here: what is missing is reported with where
-# to get it (Android Studio installs the SDK; its SDK Manager adds the NDK, "NDK (Side by side)").
+# android_common.ps1 - Shared part of the Android scripts (build_apk.ps1, android_deps.ps1, phone_data.ps1,
+# build_game.ps1, android_port.ps1): the port root, the editions, where the Android SDK, NDK, build-tools, android.jar,
+# the JDK, CMake/Ninja and the Vulkan headers are, and adb (found, or downloaded with -GetAdb) with a push that reports
+# its progress. Loaded with a dot (. $PSScriptRoot\android_common.ps1); it does not run on its own.
+# Windows PowerShell 5.1 and PowerShell 7 (Linux). Apart from adb with -GetAdb nothing is installed here: what is
+# missing is reported with where to get it (Android Studio installs the SDK; its SDK Manager adds the NDK).
 
 $OnWindows = [Environment]::OSVersion.Platform -eq 'Win32NT'
 $Sep = [IO.Path]::DirectorySeparatorChar
@@ -288,4 +289,147 @@ function RunNative([string]$exe, [string[]]$argv, [string]$what) {
     $ErrorActionPreference = 'Continue'   # PS 5.1: a native writing to stderr is not an error by itself
     try { & $exe @argv | Out-Host; $code = $LASTEXITCODE } finally { $ErrorActionPreference = $old }
     if ($code) { Fail "$what failed (exit code $code)" }
+}
+
+# ------------------------------------------------------------------------------------------------ adb (phase 2.3)
+# adb without Android Studio: -Adb, ADB, the PATH, the platform-tools of an Android SDK, or the ones -GetAdb leaves in
+# the tools folder of the port (%LOCALAPPDATA%\tsuki-tools\platform-tools; Linux ~/.local/tsuki-tools/platform-tools).
+function ToolsDir {
+    if ($OnWindows) { return (Join-Path $env:LOCALAPPDATA 'tsuki-tools') }
+    return (Join-Path $HOME '.local/tsuki-tools')
+}
+function FindAdb([string]$given, [string]$sdk) {
+    $cands = @($given, $env:ADB)
+    $c = Get-Command "adb$Exe" -ErrorAction SilentlyContinue
+    if ($c) { $cands += $c.Source }
+    foreach ($s in @(SdkCandidates $sdk)) { $cands += (Under $s "platform-tools\adb$Exe") }
+    $cands += (Under (ToolsDir) "platform-tools\adb$Exe")
+    foreach ($x in $cands) { if ($x -and (Test-Path -LiteralPath $x -PathType Leaf)) { return [IO.Path]::GetFullPath($x) } }
+    return $null
+}
+# Google's Android SDK Platform-Tools (adb), latest version, into the tools folder (about 7 MB; their license:
+# https://developer.android.com/license). Only with -GetAdb: the player asked for it.
+function GetAdb {
+    $os = if ($OnWindows) { 'windows' } elseif ((Test-Path variable:IsMacOS) -and $IsMacOS) { 'darwin' } else { 'linux' }
+    $url = "https://dl.google.com/android/repository/platform-tools-latest-$os.zip"
+    $dir = ToolsDir
+    New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    $zip = Join-Path $dir 'platform-tools.zip.partial'
+    Info "downloading adb (Android SDK Platform-Tools): $url"
+    $oldPp = $ProgressPreference; $ProgressPreference = 'SilentlyContinue'
+    try { Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing }
+    catch { Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue; Fail "could not download adb ($url): $($_.Exception.Message)" }
+    finally { $ProgressPreference = $oldPp }
+    Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
+    $tmp = Join-Path $dir 'platform-tools.tmp'
+    if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Recurse -Force }
+    [IO.Compression.ZipFile]::ExtractToDirectory($zip, $tmp)
+    Remove-Item -LiteralPath $zip -Force
+    $inner = Join-Path $tmp 'platform-tools'
+    if (-not (Test-Path -LiteralPath (Join-Path $inner "adb$Exe"))) { Remove-Item -LiteralPath $tmp -Recurse -Force; Fail "the download has no platform-tools/adb$Exe" }
+    $final = Join-Path $dir 'platform-tools'
+    if (Test-Path -LiteralPath $final) { Remove-Item -LiteralPath $final -Recurse -Force }
+    Move-Item -LiteralPath $inner -Destination $final
+    Remove-Item -LiteralPath $tmp -Recurse -Force
+    if (-not $OnWindows) { & chmod +x (Join-Path $final 'adb') }
+    return (Join-Path $final "adb$Exe")
+}
+# adb for sending to the phone: found, or downloaded with -GetAdb, or a clear error.
+function NeedAdb([string]$given, [string]$sdk, [bool]$download) {
+    $a = FindAdb $given $sdk
+    if ($a) { return $a }
+    if ($download) { return (GetAdb) }
+    Fail ('adb not found (it sends the folder to the phone by USB). Run again with -GetAdb to download it (Android ' +
+          'SDK Platform-Tools of Google, about 7 MB, into ' + (Under (ToolsDir) 'platform-tools') + '), or copy the folder by hand')
+}
+
+# A path of the phone inside single quotes for "adb shell" (the phone's sh).
+function ShQ([string]$p) { return "'" + $p.Replace("'", "'\''") + "'" }
+
+# The files under a folder of the phone: relative path (with /) -> @(size, mtime in Unix seconds). Empty if the folder
+# does not exist yet.
+function AdbRemoteFiles([string]$adb, [string]$target) {
+    $map = @{}
+    $text = AdbText $adb @('shell', "cd $(ShQ $target) 2>/dev/null && find . -type f -exec stat -c '%s %Y %n' {} +")
+    foreach ($line in ($text -split "`n")) {
+        $m = [regex]::Match($line.TrimEnd("`r"), '^(\d+) (\d+) \./(.+)$')
+        if ($m.Success) { $map[$m.Groups[3].Value] = @([int64]$m.Groups[1].Value, [int64]$m.Groups[2].Value) }
+    }
+    return $map
+}
+
+function MB([int64]$n) { return ('{0:N1}' -f ($n / 1MB)) }
+
+# Sends a folder of this PC to a folder of the phone with progress ("   adb: 34% (28.0 of 81.1 MB)"), only the files
+# that are missing there or differ in size or date (adb push keeps the date), in batches by folder. Nothing on the
+# phone is deleted here. Big files go alone and their progress is read from the phone while they are sent.
+function AdbPushTree([string]$adb, [string]$local, [string]$target) {
+    $base = (Get-Item -LiteralPath $local).FullName.TrimEnd('\', '/')
+    $remote = AdbRemoteFiles $adb $target
+    $epoch = [DateTime]::new(1970, 1, 1, 0, 0, 0, [DateTimeKind]::Utc)
+    $todo = @()
+    $same = 0
+    foreach ($f in @(Get-ChildItem -LiteralPath $base -Recurse -File -Force | Sort-Object FullName)) {
+        $rel = $f.FullName.Substring($base.Length + 1).Replace('\', '/')
+        $mt = [int64][Math]::Floor(($f.LastWriteTimeUtc - $epoch).TotalSeconds)
+        $r = $remote[$rel]
+        if ($r -and $r[0] -eq $f.Length -and [Math]::Abs($r[1] - $mt) -le 2) { $same++; continue }   # FAT/exFAT: 2 s
+        $todo += , @($rel, $f.FullName, [int64]$f.Length)
+    }
+    $total = [int64]0
+    foreach ($t in $todo) { $total += $t[2] }
+    if (-not $todo.Count) { Info "adb: nothing to send ($same files already on the phone)"; return }
+    Info "adb: $($todo.Count) files to send ($(MB $total) MB; $same already on the phone)"
+    # the folders first, in one call
+    $dirs = @($todo | ForEach-Object { $d = Split-Path -Parent ($_[0] -replace '/', '\'); if ($d) { "$target/$($d.Replace('\', '/'))" } else { $target } } | Sort-Object -Unique)
+    $mk = 'mkdir -p ' + (($dirs | ForEach-Object { ShQ $_ }) -join ' ')
+    [void](AdbText $adb @('shell', $mk))
+    $sent = [int64]0
+    $i = 0
+    while ($i -lt $todo.Count) {
+        $first = $todo[$i]
+        $dir = Split-Path -Parent ($first[0] -replace '/', '\')
+        $dest = if ($dir) { "$target/$($dir.Replace('\', '/'))/" } else { "$target/" }
+        if ($first[2] -ge 128MB) {   # alone, with its progress read from the phone
+            AdbPushBig $adb $first[1] "$dest$(Split-Path -Leaf $first[1])" $first[2] $sent $total
+            $sent += $first[2]; $i++
+        } else {   # a batch of small files of the same folder: up to 64 files or 32 MB
+            $batch = @(); $bytes = [int64]0
+            while ($i -lt $todo.Count -and $batch.Count -lt 64 -and $bytes -lt 32MB -and $todo[$i][2] -lt 128MB) {
+                $d2 = Split-Path -Parent ($todo[$i][0] -replace '/', '\')
+                if ($d2 -ne $dir) { break }
+                $batch += $todo[$i][1]; $bytes += $todo[$i][2]; $i++
+            }
+            $out = AdbText $adb (@('push') + $batch + @($dest))
+            if ($LASTEXITCODE) { Fail "adb push to $dest failed: $($out.Trim())" }
+            $sent += $bytes
+        }
+        $pct = if ($total) { [int](100 * $sent / $total) } else { 100 }
+        Info "adb: $pct% ($(MB $sent) of $(MB $total) MB)"
+    }
+}
+
+# One big file (the game's library is 46 MB; a dump is GBs): adb push in the background, the size on the phone read
+# every few seconds for the progress.
+function AdbPushBig([string]$adb, [string]$file, [string]$dest, [int64]$size, [int64]$before, [int64]$total) {
+    Info "adb: sending $(Split-Path -Leaf $file) ($(MB $size) MB)"
+    $errFile = [IO.Path]::GetTempFileName()
+    $outFile = [IO.Path]::GetTempFileName()
+    $p = Start-Process -FilePath $adb -ArgumentList @('push', "`"$file`"", "`"$dest`"") -NoNewWindow -PassThru `
+        -RedirectStandardError $errFile -RedirectStandardOutput $outFile
+    $last = -1
+    while (-not $p.WaitForExit(3000)) {
+        $now = AdbText $adb @('shell', "stat -c %s $(ShQ $dest) 2>/dev/null")
+        $n = [int64]0
+        if ([int64]::TryParse($now.Trim(), [ref]$n) -and $n -ne $last) {
+            $last = $n
+            $pct = if ($total) { [int](100 * ($before + [Math]::Min($n, $size)) / $total) } else { 0 }
+            Info "adb: $pct% ($(MB ($before + [Math]::Min($n, $size))) of $(MB $total) MB)"
+        }
+    }
+    $p.WaitForExit()
+    $code = $p.ExitCode
+    $err = (Get-Content -LiteralPath $errFile -Raw -ErrorAction SilentlyContinue)
+    Remove-Item -LiteralPath $errFile, $outFile -Force -ErrorAction SilentlyContinue
+    if ($code) { Fail "adb push of $(Split-Path -Leaf $file) failed (exit code $code): $("$err".Trim())" }
 }

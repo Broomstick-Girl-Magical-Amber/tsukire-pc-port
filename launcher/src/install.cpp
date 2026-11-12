@@ -293,6 +293,11 @@ void OnDone(DWORD code, bool cancelled) {
 }
 
 void Start() {
+    if (RunnerBusy()) {   // AP_LAUNCHER_ANDROID: the Android sub-tab may be running
+        Message(s.dlg, MB_ICONINFORMATION, L2(L"Wait for the task that is running (Android sub-tab) to end.",
+                                              L"Espera a que termine la tarea en curso (subpesta\u00f1a Android)."));
+        return;
+    }
     bool jp = IsDlgButtonChecked(s.dlg, IDC_INS_JP) == BST_CHECKED, gl = IsDlgButtonChecked(s.dlg, IDC_INS_GL) == BST_CHECKED;
     if (!jp && !gl) {
         Message(s.dlg, MB_ICONINFORMATION, L2(L"Tick the edition(s) to compile.", L"Marca la(s) edici\u00f3n(es) que quieres compilar."));
@@ -378,6 +383,7 @@ void ShowLinuxCommands() {
 }  // namespace
 
 void PreselectInstall(int ed) {
+    ShowInstallSub(0);   // AP_LAUNCHER_ANDROID: the Windows sub-tab
     if (!s.dlg || RunnerBusy()) return;
     CheckDlgButton(s.dlg, IDC_INS_JP, ed == 0 ? BST_CHECKED : BST_UNCHECKED);
     CheckDlgButton(s.dlg, IDC_INS_GL, ed == 1 ? BST_CHECKED : BST_UNCHECKED);
