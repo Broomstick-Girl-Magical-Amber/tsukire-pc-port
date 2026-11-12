@@ -1,5 +1,5 @@
 # build_game.ps1 - The game's library for Android (lib<game>.so) built on this PC WITHOUT Android Studio or the NDK
-# (phase 2 of the Android port): the code recompiled from your dump
+# (phase 2 of the Android port, claude/tsukihime-android-fase2.md): the code recompiled from your dump
 # (data\<edition>\gen: tools\recomp_tsukihime.ps1 first) is compiled for arm64 with the LLVM clang the PC install already
 # has, and linked with the prebuilt runtime and libraries of the "Android pack".
 #
@@ -38,8 +38,7 @@ function Unzip([string]$zip, [string]$dst) {
     if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Recurse -Force }
     [IO.Compression.ZipFile]::ExtractToDirectory($zip, $tmp)
     if (-not (Test-Path -LiteralPath (Join-Path $tmp 'pack.json'))) { Remove-Item -LiteralPath $tmp -Recurse -Force; Fail "$zip is not an Android pack (no pack.json)" }
-    if (Test-Path -LiteralPath $dst) { Remove-Item -LiteralPath $dst -Recurse -Force }
-    Move-Item -LiteralPath $tmp -Destination $dst
+    ReplaceDir $tmp $dst   # android_common.ps1: retries / copies when Windows still holds the new files
 }
 
 try {
@@ -149,7 +148,9 @@ try {
             $objs += $o
         }
     }
-    [void]$n.Append("build lib$game.so: link $($objs -join ' ')$nl")
+    # the pack's libraries are inputs too: a new pack (another runtime) links again even when no object changed
+    $packInputs = @($runtime, (Join-Path $packDir 'pack.json')) + @('avformat', 'avcodec', 'swscale', 'swresample', 'avutil', 'opus', 'jpeg', 'png16', 'z' | ForEach-Object { Under $packDir "deps\lib\lib$_.a" })
+    [void]$n.Append("build lib$game.so: link $($objs -join ' ') | $(($packInputs | ForEach-Object { NinjaPath $_ }) -join ' ')$nl")
     [void]$n.Append("default lib$game.so$nl")
     $ninjaFile = Join-Path $build 'build.ninja'
     $text = $n.ToString()

@@ -1,4 +1,5 @@
-# build_android_pack.ps1 - MAINTAINER: makes the "Android pack" (phase 2 of the Android port: what an end user needs to build the game's library for Android WITHOUT Android
+# build_android_pack.ps1 - MAINTAINER: makes the "Android pack" (phase 2 of the Android port,
+# claude/tsukihime-android-fase2.md): what an end user needs to build the game's library for Android WITHOUT Android
 # Studio, the NDK or vcpkg, only with the LLVM clang of the PC install. Nothing of the game goes into it:
 #   runtime\<game>\libruntime.a   the runtime + games\tsukihime_common built for arm64-android (the objects of the
 #                                 NDK build of tools\android\build_apk.ps1 -Edition, without the recompiled code)
@@ -56,7 +57,10 @@ try {
     if (-not $eds.Count) { Fail 'no edition built with the NDK yet: tools\android\build_apk.ps1 -Edition <japan|global>' }
 
     $tmp = "$pack.tmp"
-    if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Recurse -Force }
+    if (Test-Path -LiteralPath $tmp) {   # a staging folder left by a run that failed
+        try { Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction Stop }
+        catch { Fail "cannot remove $tmp (left by an earlier run; in use?): close what has it open, or delete it by hand, and run this again" }
+    }
     New-Item -ItemType Directory -Path $tmp -Force | Out-Null
 
     foreach ($e in $eds) {
@@ -116,8 +120,7 @@ try {
     }
     [IO.File]::WriteAllText((Join-Path $tmp 'pack.json'), ($json | ConvertTo-Json), (New-Object Text.UTF8Encoding($false)))
 
-    if (Test-Path -LiteralPath $pack) { Remove-Item -LiteralPath $pack -Recurse -Force }
-    Move-Item -LiteralPath $tmp -Destination $pack
+    ReplaceDir $tmp $pack   # retries / copies when Windows still holds the new files (antivirus scan)
     Info "pack folder: $pack (editions: $($eds -join ', '))"
 
     Step 'zip'

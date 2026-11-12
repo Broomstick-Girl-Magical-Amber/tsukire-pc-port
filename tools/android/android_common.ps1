@@ -328,8 +328,7 @@ function GetAdb {
     $inner = Join-Path $tmp 'platform-tools'
     if (-not (Test-Path -LiteralPath (Join-Path $inner "adb$Exe"))) { Remove-Item -LiteralPath $tmp -Recurse -Force; Fail "the download has no platform-tools/adb$Exe" }
     $final = Join-Path $dir 'platform-tools'
-    if (Test-Path -LiteralPath $final) { Remove-Item -LiteralPath $final -Recurse -Force }
-    Move-Item -LiteralPath $inner -Destination $final
+    ReplaceDir $inner $final
     Remove-Item -LiteralPath $tmp -Recurse -Force
     if (-not $OnWindows) { & chmod +x (Join-Path $final 'adb') }
     return (Join-Path $final "adb$Exe")
@@ -432,4 +431,23 @@ function AdbPushBig([string]$adb, [string]$file, [string]$dest, [int64]$size, [i
     $err = (Get-Content -LiteralPath $errFile -Raw -ErrorAction SilentlyContinue)
     Remove-Item -LiteralPath $errFile, $outFile -Force -ErrorAction SilentlyContinue
     if ($code) { Fail "adb push of $(Split-Path -Leaf $file) failed (exit code $code): $("$err".Trim())" }
+}
+
+# Puts the folder $src in place of $dst (a finished staging folder over the old one). On Windows a folder that was just
+# written can be held for a moment (Windows Defender scanning the new files, the Explorer showing the folder, the
+# search indexer): "Access denied" on the move. So: a few tries, and if it is still held, a copy (the staging folder
+# is then removed if it can be). Fails with a clear message if the old folder itself cannot be removed.
+function ReplaceDir([string]$src, [string]$dst) {
+    for ($i = 1; $i -le 10 -and (Test-Path -LiteralPath $dst); $i++) {
+        try { Remove-Item -LiteralPath $dst -Recurse -Force -ErrorAction Stop } catch { if ($i -eq 10) { break }; Start-Sleep -Seconds 1 }
+    }
+    if (Test-Path -LiteralPath $dst) { Fail "cannot remove the old $dst (in use?): close the Explorer windows or programs that have it open and run this again" }
+    for ($i = 1; $i -le 10; $i++) {
+        try { Move-Item -LiteralPath $src -Destination $dst -ErrorAction Stop; return }
+        catch { if ($i -lt 10) { Start-Sleep -Seconds 1 } }
+    }
+    Info "$src is still in use (antivirus?): copying it instead of moving it"
+    if (Test-Path -LiteralPath $dst) { Remove-Item -LiteralPath $dst -Recurse -Force }
+    Copy-Item -LiteralPath $src -Destination $dst -Recurse -Force
+    try { Remove-Item -LiteralPath $src -Recurse -Force -ErrorAction Stop } catch { Warn "could not remove $src (in use): delete it by hand later" }
 }
