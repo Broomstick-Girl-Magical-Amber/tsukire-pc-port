@@ -126,6 +126,15 @@ void read_pointer(PointerState& p);  // platform_win.cpp
 #endif
 #if defined(__ANDROID__)  // AP_ANDROID_INPUT (apply_android_input.py): the first finger as a left-button mouse
 void read_pointer(PointerState& p);  // platform_android_input.cpp (pointer mode, Tsukihime)
+// Two-finger gestures of pointer mode (platform_android_input.cpp): counters that only grow (the reader keeps the last
+// values it saw), whether two fingers are being held still now, and how many fingers are down.
+struct TouchGestures {
+    uint32_t taps = 0;           // two-finger taps
+    uint32_t swipes[4] = {};     // two-finger swipes: up, down, left, right
+    bool hold = false;           // two fingers held still (NX_TWO_HOLD_MS, 400 ms) and still down
+    int32_t fingers = 0;
+};
+void read_gestures(TouchGestures& g);
 #endif
 // A game's own pad input on top of read_pad (hle_hid.cpp calls it for player 1); null (the default): none.
 using PadHook = void (*)(PadState& p);

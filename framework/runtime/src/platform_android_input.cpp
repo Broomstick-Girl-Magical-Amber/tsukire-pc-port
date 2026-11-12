@@ -80,6 +80,51 @@ bool pointer_mode() {
     return on;
 }
 
+// Two-finger gestures (pointer mode): every finger down, and the two-finger stroke in progress. Distances are
+// fractions of the screen's short side; times in ns (the events' clock, CLOCK_MONOTONIC).
+struct Finger {
+    int32_t id;
+    float x, y;
+};
+std::vector<Finger> g_fingers;
+struct Multi {
+    bool on = false;      // two fingers went down and not all are up yet
+    bool hold = false;    // held still long enough: a hold (no tap or swipe at the end)
+    bool moved = false;   // went further than a tap
+    int64_t t0 = 0;
+    float cx0 = 0, cy0 = 0, cx = 0, cy = 0;  // centre of the first two fingers: at the start, now
+} g_multi;
+TouchGestures g_gest;
+int64_t monotonic_now() {
+    timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return int64_t(ts.tv_sec) * 1000000000 + ts.tv_nsec;
+}
+int64_t env_ms(const char* name, int64_t fallback) {
+    const char* e = std::getenv(name);
+    return (e && *e ? std::max<int64_t>(50, std::atoll(e)) : fallback) * 1000000;
+}
+void multi_update(int64_t t) {  // after each touch event, with g_fingers up to date
+    const float side = std::max(1.f, std::min(g_w, g_h));
+    if (g_fingers.size() >= 2) {
+        const float cx = (g_fingers[0].x + g_fingers[1].x) * 0.5f / side, cy = (g_fingers[0].y + g_fingers[1].y) * 0.5f / side;
+        if (!g_multi.on) g_multi = Multi{}, g_multi.on = true, g_multi.t0 = t, g_multi.cx0 = cx, g_multi.cy0 = cy;
+        g_multi.cx = cx, g_multi.cy = cy;
+        if (std::hypot(cx - g_multi.cx0, cy - g_multi.cy0) > 0.06f) g_multi.moved = true;
+    }
+    if (g_multi.on && g_fingers.empty()) {  // the stroke ends: a tap, a swipe, or nothing (a hold, a slow drag)
+        static const int64_t tap_ns = env_ms("NX_TWO_TAP_MS", 350);
+        const float dx = g_multi.cx - g_multi.cx0, dy = g_multi.cy - g_multi.cy0;
+        if (!g_multi.hold && !g_multi.moved && t - g_multi.t0 <= tap_ns) {
+            g_gest.taps++;
+        } else if (!g_multi.hold && std::hypot(dx, dy) >= 0.12f) {
+            const int dir = std::fabs(dy) >= std::fabs(dx) ? (dy < 0 ? 0 : 1) : (dx < 0 ? 2 : 3);
+            g_gest.swipes[dir]++;
+        }
+        g_multi = Multi{};
+    }
+}
+
 uint64_t key_to_button(int32_t k) {
     switch (k) {
         case AKEYCODE_BUTTON_A: return kB;  // bottom face button = Nintendo B
@@ -119,6 +164,7 @@ int32_t on_input(android_app*, AInputEvent* e) {
     int32_t src = AInputEvent_getSource(e);
     if (type == AINPUT_EVENT_TYPE_KEY) {
         uint64_t b = key_to_button(AKeyEvent_getKeyCode(e));
+        if (pointer_mode() && AKeyEvent_getKeyCode(e) == AKEYCODE_BACK) b = kB;  // AP_ANDROID_INPUT: Back = B (Tsukihime)
         if (!b) return 0;
         g_gamepad = true;
         if (AKeyEvent_getAction(e) == AKEY_EVENT_ACTION_DOWN)
@@ -172,6 +218,18 @@ int32_t on_input(android_app*, AInputEvent* e) {
             for (size_t k = 0; k < AMotionEvent_getPointerCount(e); k++)
                 if (AMotionEvent_getPointerId(e, k) == g_ptr.id) g_ptr.x = AMotionEvent_getX(e, k), g_ptr.y = AMotionEvent_getY(e, k);
         }
+        // every finger, for the two-finger gestures
+        if (pkind == AMOTION_EVENT_ACTION_UP || pkind == AMOTION_EVENT_ACTION_CANCEL) {
+            g_fingers.clear();
+            if (pkind == AMOTION_EVENT_ACTION_CANCEL) g_multi = Multi{};  // the system took the touch: no gesture
+        } else {
+            g_fingers.clear();
+            for (size_t k = 0; k < AMotionEvent_getPointerCount(e); k++) {
+                if (pkind == AMOTION_EVENT_ACTION_POINTER_UP && k == pidx) continue;
+                g_fingers.push_back({AMotionEvent_getPointerId(e, k), AMotionEvent_getX(e, k), AMotionEvent_getY(e, k)});
+            }
+        }
+        multi_update(int64_t(AMotionEvent_getEventTime(e)));
         return 1;
     }
     if (!touch_enabled()) return 0;  // NX_TOUCH_SHOW=0
@@ -226,6 +284,17 @@ void read_pointer(PointerState& p) {
     p.downs[0] = g_ptr.downs;
     p.downs[1] = p.downs[2] = 0;
     p.wheel = 0;
+}
+
+// AP_ANDROID_INPUT: the two-finger gestures (above). A hold starts once two fingers have stayed still for
+// NX_TWO_HOLD_MS (checked here too: a still finger sends no events).
+void read_gestures(TouchGestures& g) {
+    std::lock_guard lk(g_in);
+    static const int64_t hold_ns = env_ms("NX_TWO_HOLD_MS", 400);
+    if (g_multi.on && !g_multi.moved && g_fingers.size() >= 2 && monotonic_now() - g_multi.t0 >= hold_ns) g_multi.hold = true;
+    g = g_gest;
+    g.hold = g_multi.on && g_multi.hold && g_fingers.size() >= 2;
+    g.fingers = int32_t(g_fingers.size());
 }
 
 bool headless() {  // NX_HEADLESS (platform.h)
