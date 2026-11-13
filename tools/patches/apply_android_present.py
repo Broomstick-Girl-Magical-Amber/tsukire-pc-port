@@ -19,11 +19,6 @@ The log line "NX_ORIGIN_LOWER_LEFT: the present pass does not flip the window te
 is left as is; with this patch the next line says what the pass does ("present pass: flip ...").
 Windows and Linux/Proton use the blit unless NX_PRESENT_PASS=1; then the flip applies there too (it was upside down).
 
-To update from version 1 (edge pixel stretched): --remove with the version 1 file first, then apply this one.
-Idempotent (marker AP_ANDROID_PRESENT), all or nothing, keeps CRLF and BOM, --remove leaves the files byte for byte as
-they were. Independent of the other AP_ANDROID_* patchers. Also edits ../tools/recomp_tsukihime.ps1 ($Markers rows,
-anchored after the row of apply_gpu_hang.py for nvn_frames.cpp, which no other patcher uses).
-Apply: cd <root>\\framework; private\\venv\\Scripts\\python ..\\tools\\patches\\apply_android_present.py
 """
 from _patch import run
 

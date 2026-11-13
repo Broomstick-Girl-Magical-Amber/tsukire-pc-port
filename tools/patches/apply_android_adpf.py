@@ -24,12 +24,6 @@ that just ended), it is made again without them.
 
 - runtime/src/perf_hint.cpp: the options, the session with the extra threads.
 - runtime/src/kernel.cpp: nx::busy_guest_tids (the host thread ids of the busy guest threads; Linux and Android).
-
-Idempotent (marker AP_ANDROID_ADPF), all or nothing, keeps CRLF and BOM, --remove leaves the files byte for byte as
-they were. Version 4 (2026-11-13): a worker joins at 0.5 ms and leaves under 0.25 ms. Version 3: both on by default. Version 2 logged the options and each check. Remove the version
-applied before with its own file (--remove) first. Independent of apply_frame_profile.py (other anchors). Also edits ../tools/recomp_tsukihime.ps1 ($Markers
-rows, anchored after the nvn_present.cpp row of apply_android_present.py, which no other patcher uses).
-Apply: cd <root>\\framework; private\\venv\\Scripts\\python ..\\tools\\patches\\apply_android_adpf.py
 """
 from _patch import run
 

@@ -1,13 +1,5 @@
 """apply_android_double_tap.py - Android: a double tap presses A, confirm (AP_ANDROID_DOUBLE_TAP).
 
-Asked by Alberto (2026-11-13): in the Android game (not the launcher, not Windows), a double tap = confirm. The first
-tap goes to the game as always, at once (no wait: a single tap is not delayed). If a second tap goes down within
-NX_DOUBLE_TAP_MS (300 ms) of the end of the first one and near it (5 % of the screen height), the game does not get
-that second touch: when the finger is lifted, A (confirm) is pressed for 120 ms instead. So in a menu the first tap
-chooses and the second confirms; reading, a double tap advances twice, as before. The second finger only counts if
-it is a tap: if it moves it is a drag and if it stays NX_LONG_PRESS_MS it is the long press (Y, or the title logo),
-both as before. A third quick tap is a normal tap again (it starts a new pair).
-NX_DOUBLE_TAP_MS=0 (config.txt) turns it off; NX_TOUCH_GESTURES=0 turns it off with the other gestures.
 
 Only games/tsukihime_common/hle_hid_tsuki.cpp, Android path (AP_ANDROID_INPUT): the touch state machine of
 next_touch_sample and touch_pad (the press). Windows and controllers do not change. Also edits

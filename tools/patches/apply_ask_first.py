@@ -10,11 +10,6 @@ AskFirst runs right after step 0 (and the input check) and asks both there:
 The questions of steps 1 and 2 stay as they were for runs that start later (-From 1 or 2 skips nothing: AskFirst runs
 only when step 0 runs, which is always outside the vcpkg worker).
 
-Touches ../tools/install_requirements.ps1, ../tools/linux/install_requirements_linux.ps1 and
-../tools/linux/install_requirements_linux.sh (comment). Idempotent (marker AP_ASK_FIRST), all or nothing, keeps CRLF
-and BOM, --remove leaves the files byte for byte as they were.
-Apply: cd <root>/framework; python ../tools/patches/apply_ask_first.py  (the venv python: private\\venv\\Scripts\\python
-on Windows, private/venv/bin/python on Linux)
 """
 from _patch import run
 
