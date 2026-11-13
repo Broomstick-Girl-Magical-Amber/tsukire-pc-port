@@ -1,25 +1,4 @@
 """apply_launcher_android.py - Install and recompile gets two sub-tabs: Windows and Android (AP_LAUNCHER_ANDROID, version 3).
-
-Phase 2.3 of the Android port (claude/tsukihime-android-fase2.md). Version 3 (2026-11-11, asked by Alberto): the
-"Install and recompile" tab holds an inner tab control (like "Play and saves") with the sub-tabs "Windows" (the
-install and recompile page as it was, made smaller to fit) and "Android" (launcher/src/android.cpp, new file: copy it
-before applying). If version 1 (a checkbox in the install tab) or version 2 (a top-level Android tab) is applied,
-remove it first with ITS OWN file (python <that version>\\apply_launcher_android.py --remove), then apply this one.
-
-The Android sub-tab:
-- Edition(s) to prepare (they must be recompiled in the Windows sub-tab: Android uses that same recompile), with the
-  state of each (to recompile / ready / library built on <date>), the Android pack and the app (here, to be
-  downloaded, or not published yet).
-- Phone: where to send ("Do not send (copy the folder by hand)", "By USB to the phone's internal storage", "By USB to
-  the phone's SD card"), the active mod layers (on by default), and only when sending: the saves of this PC and the
-  dump (each asks before). Buttons: "Prepare for Android", "Open in a console", "Cancel", "Phone folder".
-- It runs tools\\android\\android_port.ps1 -Edition <edition> [-Mods] [-InternalStorage|-ExternalStorage [-Saves]
-  [-Dump] -InstallApp -GetAdb] once per edition, with progress: "== android: <part>", Ninja's "[n/N]" and "adb: N%".
-  The first send asks once (USB debugging; adb downloaded if missing): launcher.ini adb_ok=1; also android_send,
-  android_mods, install_sub (the sub-tab last shown). Under Wine / Proton it shows the Linux commands.
-- Only one task at a time: each sub-tab refuses to start while the other one runs. PreselectInstall (the buttons of
-  the other tabs that send you to recompile) shows the Windows sub-tab.
-
 Touches ../launcher/CMakeLists.txt (the new source), ../launcher/res/resource.h (IDD_ANDROID 115, IDD_INSTALLTAB 116,
 controls 1800-1824), ../launcher/res/launcher.rc (IDD_INSTALL redone at 354 x 254, the same controls; IDD_INSTALLTAB;
 IDD_ANDROID), ../launcher/src/text.cpp (Spanish), ../launcher/src/pages.h (declarations), ../launcher/src/main.cpp

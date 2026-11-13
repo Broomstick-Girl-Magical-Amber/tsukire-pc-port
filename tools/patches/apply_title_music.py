@@ -11,12 +11,6 @@ patcher only wires it into the runtime:
   - games/tsukihime_common/tsukihime_common.cmake: the define NX_TITLE_MUSIC;
   - two rows in $Markers of ../tools/recomp_tsukihime.ps1 (hle_fs.cpp and title_bg.cpp with AP_TITLE_MUSIC).
 
-With title.ini music = follow (default) the music goes with the video that is shown; game leaves it alone; 1..4 fixes it.
-
-Idempotent (marker AP_TITLE_MUSIC), all or nothing, keeps CRLF and BOM, refuses if an anchor is not found; --remove
-leaves the files byte for byte as they were. Without title_bg.cpp (the new version) in tsukihime_common linking fails
-(missing tsuki_title::remap_stream): copy it before building. After: cmake build\\tsukihime (reconfigure) and
-cmake --build build\\tsukihime; the same with build\\tsukihime_global.
 """
 from _patch import run
 

@@ -5,12 +5,6 @@ Why: after apply_recomp_hooks.py the title screen stall was 689 ms, and most of 
 file name against every 32-byte entry of a table. The hook does that loop natively
 (games/tsukihime_common/hle_hooks_nombres_tsuki.cpp, new file of the repo; NX_TSUKI_NAMES = 0 or check at run time).
 
-What it does:
-- tools/internal/regen_tsuki.ps1: adds main:tsuki_name_table:0x56720,0xa88,0xd10143ff to NX_RECOMP_HOOKS (inside
-  the module loop, only if it is not there yet; the restore of apply_recomp_hooks.py puts the variable back after).
-  The recompiler checks size and first word, so the copy for the global edition skips it.
-- tools/recomp_tsukihime.ps1: rows in $Markers.
-
 Needs apply_recomp_hooks.py (checked). Idempotent (marker AP_HOOK_NAME_TABLE), all or nothing, keeps CRLF and BOM,
 --remove leaves the files byte for byte; it can be removed before or after apply_recomp_hooks.py.
 After (from <root>): .\\tools\\recomp_tsukihime.ps1 -Edition japan -From 6 -Replace

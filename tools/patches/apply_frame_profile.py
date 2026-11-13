@@ -5,20 +5,6 @@ NX_SVC_PROFILE=1 (kernel.cpp) tells in which kernel calls a frame thread blocks,
 - every call is reported at the sdk's own svc stub (sdk+1627xx), never at the game code that waits;
 - sleeps and waits that do not go through a kernel call (HLE) are not seen at all.
 
-With NX_SVC_PROFILE=2 (config.txt on Android, the environment on PC), every 600 presents nx.log gets:
-  frame profile: per frame 18.61 ms = game work 16.20 (on a CPU 9.10, not running 7.10) + waiting for the replay 0.02 + pacing sleep 2.39; all threads of the process 21.40 ms of CPU
-  frame profile: game work per frame: <8 ms 12, 8-12 80, 12-16 201, 16-20 190, 20-33 110, more 7
-  frame profile: thread 56 (presents; entry main+1234): 9.10 ms of CPU per frame
-  frame profile: thread 50 (entry sdk+...): 3.20 ms of CPU per frame          (Linux and Android only; 0.05 ms or more)
-- game work: from the end of a present to the start of the next one (what the game does between two frames);
-  "on a CPU" is that thread's CPU time, "not running" the rest (blocked, asleep or waiting for a core);
-- waiting for the replay: inside the present, until one of the two queued presents is done (back-pressure);
-- pacing sleep: the 60 Hz limiter (pace_present);
-and the lines of the kernel-call profile name the first return address inside the game's main module (walking the
-frame records above the stack pointer; the sdk keeps them, and the walk stops at anything that is not one), or the
-sdk function that made the call when there is none.
-NX_SVC_PROFILE=1 logs exactly what it did before. Unset: nothing is measured.
-
 - runtime/src/kernel.cpp: svc_profile_site (the call site, level 2 only) and frame_profile_threads (CPU time of each
   guest thread per frame, through the per-thread CPU clock of its host thread id).
 - runtime/src/nvn/nvn_queue.cpp: frame_profile(stage), called at three points of QueuePresentTexture.

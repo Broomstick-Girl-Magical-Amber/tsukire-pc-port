@@ -11,10 +11,6 @@ What it adds to games/tsukihime_common/title_bg.cpp (nothing else changes; not i
     loop) nx.log gets "music-diag: game loop ... packet A -> B";
   - when the port's substitute track wraps: "music-diag: port loop ... packet A -> B";
   - every 500 packets (10 s) while substituting: the game's index and the port's index.
-
-Idempotent (marker AP_TITLE_MUSIC_DIAG), all or nothing, keeps CRLF and BOM; --remove leaves the file byte for byte.
-After: cmake --build build\\tsukihime (or recomp_tsukihime.ps1 -Edition japan -From 9).
-
 Usage (in <root>\\framework):
   private\\venv\\Scripts\\python ..\\tools\\patches\\apply_title_music_diag.py [--remove]
 """
