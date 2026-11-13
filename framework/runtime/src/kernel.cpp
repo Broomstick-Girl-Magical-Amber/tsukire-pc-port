@@ -798,4 +798,36 @@ void svc(CPU& c, uint32_t imm, uint64_t pc) {
     }
 }
 
+// AP_ANDROID_ADPF (apply_android_adpf.py): the host thread ids of the guest threads that used at least min_ms of CPU
+// per frame since the last call, with that CPU time in ms per frame (the busiest first, at most max), for the ADPF
+// session (perf_hint.cpp). Linux and Android: each thread's own CPU clock by its host thread id; elsewhere none.
+std::vector<std::pair<int32_t, double>> busy_guest_tids(uint64_t frames, double min_ms, size_t max) {
+    std::vector<std::pair<int32_t, double>> out;
+#if defined(__linux__)
+    static std::map<uint64_t, uint64_t> before;  // guest thread id -> CPU ns at the last call
+    std::vector<std::pair<uint64_t, int32_t>> rows;  // (CPU ns since the last call, host tid)
+    {
+        std::lock_guard al(g_all_lock);
+        for (auto& w : g_all) {
+            auto t = w.lock();
+            if (!t || !t->started || t->exited || t->host_tid <= 0) continue;
+            timespec ts{};
+            if (clock_gettime(clockid_t((~int(t->host_tid) << 3) | 6), &ts) != 0) continue;  // that thread's CPU clock
+            const uint64_t cpu = uint64_t(ts.tv_sec) * 1'000'000'000ull + uint64_t(ts.tv_nsec);
+            auto it = before.find(t->id);
+            if (it != before.end() && cpu >= it->second) rows.push_back({cpu - it->second, int32_t(t->host_tid)});
+            before[t->id] = cpu;
+        }
+    }
+    std::sort(rows.rbegin(), rows.rend());
+    for (auto& r : rows) {
+        const double ms = double(r.first) / 1e6 / double(frames ? frames : 1);
+        if (out.size() < max && ms >= min_ms) out.push_back({r.second, ms});
+    }
+#else
+    (void)frames, (void)min_ms, (void)max;
+#endif
+    return out;
+}
+
 }  // namespace nx
