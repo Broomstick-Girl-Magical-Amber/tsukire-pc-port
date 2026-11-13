@@ -408,26 +408,117 @@ bool parse(const std::vector<uint8_t>& raw, Source& s) {
     return r.ok && std::memcmp(end, "END1", 4) == 0;
 }
 
-bool is_the_dump(const fs::path& p, const Source& s) {
+// AP_ANY_CONTAINER (apply_any_container.py): an .xci and an .nsp of the same game hold the same program NCA, each at
+// its own offset. The offset of the table (the dump it was made from) is tried first; otherwise the file table of the
+// container (NSP: root PFS0; XCI: every partition of the root HFS0, secure first) gives the entry with the same size
+// and the same first 0x100 bytes.
+constexpr uint64_t kNoNca = ~uint64_t(0);
+
+uint32_t rd32(const uint8_t* p) {
+    uint32_t v;
+    std::memcpy(&v, p, 4);
+    return v;
+}
+
+uint64_t rd64(const uint8_t* p) {
+    uint64_t v;
+    std::memcpy(&v, p, 8);
+    return v;
+}
+
+bool nca_at(FILE* f, uint64_t size, uint64_t off, const Source& s) {
+    if (off > size || s.nca_size > size - off || s.nca_size < 0x100) return false;
+    uint8_t buf[0x100];
+    return nx::plat::read_at(f, int64_t(off), buf, sizeof buf) == sizeof buf && std::memcmp(buf, s.sig, sizeof buf) == 0;
+}
+
+struct PartEntry {
+    std::string name;
+    uint64_t off = 0, size = 0;  // offset in the whole file
+};
+
+// The entries of the PFS0 / HFS0 at `at` (esize 0x18 / 0x40) appended to out; false if there is none there.
+bool partition_entries(FILE* f, uint64_t size, uint64_t at, const char* magic, size_t esize, std::vector<PartEntry>& out) {
+    uint8_t h[0x10];
+    if (at > size || size - at < 0x10 || nx::plat::read_at(f, int64_t(at), h, sizeof h) != sizeof h ||
+        std::memcmp(h, magic, 4) != 0)
+        return false;
+    const uint32_t count = rd32(h + 4), strsize = rd32(h + 8);
+    if (count == 0 || count > 4096 || strsize > (1u << 20)) return false;
+    const uint64_t tab = uint64_t(count) * esize + strsize;
+    if (size - at - 0x10 < tab) return false;
+    std::vector<uint8_t> t(static_cast<size_t>(tab));
+    if (nx::plat::read_at(f, int64_t(at + 0x10), t.data(), tab) != tab) return false;
+    const uint8_t* strs = t.data() + size_t(count) * esize;
+    const uint64_t data = at + 0x10 + tab;
+    for (uint32_t i = 0; i < count; i++) {
+        const uint8_t* e = t.data() + size_t(i) * esize;
+        PartEntry pe;
+        const uint32_t no = rd32(e + 16);
+        if (no < strsize) {
+            const void* z = std::memchr(strs + no, 0, strsize - no);
+            pe.name.assign(reinterpret_cast<const char*>(strs + no),
+                           z ? size_t(static_cast<const uint8_t*>(z) - (strs + no)) : size_t(strsize - no));
+        }
+        pe.off = data + rd64(e);
+        pe.size = rd64(e + 8);
+        out.push_back(std::move(pe));
+    }
+    return true;
+}
+
+uint64_t find_nca(FILE* f, uint64_t size, const Source& s) {
+    if (nca_at(f, size, s.nca_off, s)) return s.nca_off;  // the dump the table was made from (or one laid out the same)
+    std::vector<PartEntry> files;
+    if (!partition_entries(f, size, 0, "PFS0", 0x18, files)) {
+        for (uint64_t base : {uint64_t(0), uint64_t(0x1000)}) {  // XCI; 0x1000: with the key area in front
+            uint8_t hd[0x40];
+            if (nx::plat::read_at(f, int64_t(base + 0x100), hd, sizeof hd) != sizeof hd || std::memcmp(hd, "HEAD", 4) != 0)
+                continue;
+            std::vector<PartEntry> parts;
+            if (partition_entries(f, size, base + rd64(hd + 0x30), "HFS0", 0x40, parts)) {
+                std::stable_partition(parts.begin(), parts.end(), [](const PartEntry& e) { return e.name == "secure"; });
+                for (const auto& p : parts) partition_entries(f, size, p.off, "HFS0", 0x40, files);
+            }
+            break;
+        }
+    }
+    for (const auto& e : files)
+        if (e.size == s.nca_size && nca_at(f, size, e.off, s)) return e.off;
+    return kNoNca;
+}
+
+// The program NCA of the table in p (an .xci or an .nsp of the same game): its offset in *nca_off.
+bool is_the_dump(const fs::path& p, const Source& s, uint64_t* nca_off) {
     std::error_code ec;
     if (!fs::is_regular_file(p, ec)) return false;
     uint64_t size = fs::file_size(p, ec);
-    if (ec || size < s.nca_off + s.nca_size) return false;
+    if (ec) return false;
     FILE* f = nx::plat::fopen_utf8(utf8(p), "rb");
     if (!f) return false;
-    uint8_t buf[0x100];
-    bool ok = nx::plat::read_at(f, int64_t(s.nca_off), buf, sizeof buf) == sizeof buf &&
-              std::memcmp(buf, s.sig, sizeof buf) == 0;
+    const uint64_t at = find_nca(f, size, s);
     std::fclose(f);
-    return ok;
+    if (at == kNoNca) return false;
+    *nca_off = at;
+    return true;
+}
+
+// AP_ANY_CONTAINER: the dump found, with the NCA where it is in that file (the reads use s.nca_off).
+std::string use_dump(Source& s, const fs::path& p, uint64_t at) {
+    if (at != s.nca_off)
+        nx::log("romfs: %s is another container of the same game: its program NCA is at 0x%llx (0x%llx in %s)",
+                utf8(p).c_str(), (unsigned long long)at, (unsigned long long)s.nca_off, s.hint.c_str());
+    s.nca_off = at;
+    return utf8(p);
 }
 
 fs::path data_root() { return fs::u8path(nx::plat::data_root()); }
 
-std::string find_dump(const Source& s) {
+std::string find_dump(Source& s) {  // AP_ANY_CONTAINER: sets s.nca_off for the dump found
+    uint64_t at = 0;
     if (const char* e = std::getenv("NX_ROMFS_DUMP"); e && *e) {
         fs::path p = fs::u8path(e);
-        if (is_the_dump(p, s)) return utf8(p);
+        if (is_the_dump(p, s, &at)) return use_dump(s, p, at);
         nx::log("romfs: NX_ROMFS_DUMP=%s is not the dump of romfs_source.bin", e);
         return {};
     }
@@ -440,7 +531,7 @@ std::string find_dump(const Source& s) {
         if ((ext == ".xci" || ext == ".nsp") && (cands.empty() || it->path() != cands.front())) cands.push_back(it->path());
     }
     for (const auto& p : cands)
-        if (is_the_dump(p, s)) return utf8(p);
+        if (is_the_dump(p, s, &at)) return use_dump(s, p, at);  // AP_ANY_CONTAINER
     return {};
 }
 
@@ -455,7 +546,7 @@ std::string find_dump(const Source& s) {
     std::wstring hint(s.hint.begin(), s.hint.end());  // file names of the root are ASCII in practice; only for the box
     std::wstring msg = L"The game reads its files straight from your dump (" + hint + L"),\n"
                        L"and it is not in the root of the port (the folder with framework, tools and data).\n\n"
-                       L"Put the .xci/.nsp back there (the same file the game was recompiled from; renaming it is fine)\n"
+                       L"Put the .xci or the .nsp of that same game back there (either one, with any name)\n"  // AP_ANY_CONTAINER
                        L"and start the game again.";
     ::MessageBoxW(nullptr, msg.c_str(), L"Game data not found", 0x10 | 0x10000 | 0x40000);
 #endif

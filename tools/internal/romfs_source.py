@@ -197,15 +197,58 @@ def read_source_head(path):
     return nca_off, nca_size, sig, hint
 
 
+def _entries(f, size, at, magic, esize):
+    """AP_ANY_CONTAINER: [(name, offset in the file, size)] of the PFS0 / HFS0 at `at`; None if there is none."""
+    if at + 0x10 > size:
+        return None
+    f.seek(at)
+    h = f.read(0x10)
+    if len(h) != 0x10 or h[:4] != magic:
+        return None
+    count, strsize = u32(h, 4), u32(h, 8)
+    if count == 0 or count > 4096 or strsize > (1 << 20) or at + 0x10 + count * esize + strsize > size:
+        return None
+    tab = f.read(count * esize + strsize)
+    strs, data, out = tab[count * esize:], at + 0x10 + count * esize + strsize, []
+    for i in range(count):
+        e = tab[i * esize:(i + 1) * esize]
+        no = u32(e, 16)
+        name = strs[no:strs.find(b"\0", no) if strs.find(b"\0", no) >= 0 else len(strs)].decode("utf-8", "replace")
+        out.append((name, data + u64(e, 0), u64(e, 8)))
+    return out
+
+
 def matches(path, nca_off, nca_size, sig):
+    """AP_ANY_CONTAINER: offset of the program NCA of the table in path (an .xci or an .nsp of the same game), or None.
+    The recorded offset first (the dump it was made from), then the file table of the container, as romfs_direct.cpp."""
     try:
-        if os.path.getsize(path) < nca_off + nca_size:
-            return False
+        size = os.path.getsize(path)
         with open(path, "rb") as f:
-            f.seek(nca_off)
-            return f.read(0x100) == sig
+            def at(o):
+                if o + nca_size > size or nca_size < 0x100:
+                    return False
+                f.seek(o)
+                return f.read(0x100) == sig
+            if at(nca_off):
+                return nca_off
+            files = _entries(f, size, 0, b"PFS0", 0x18)
+            if files is None:
+                files = []
+                for base in (0, 0x1000):  # XCI; 0x1000: with the key area in front
+                    f.seek(base + 0x100)
+                    hd = f.read(0x40)
+                    if len(hd) != 0x40 or hd[:4] != b"HEAD":
+                        continue
+                    parts = _entries(f, size, base + u64(hd, 0x30), b"HFS0", 0x40) or []
+                    for _, o, _ in sorted(parts, key=lambda p: p[0] != "secure"):
+                        files += _entries(f, size, o, b"HFS0", 0x40) or []
+                    break
+            for _, o, n in files:
+                if n == nca_size and at(o):
+                    return o
     except OSError:
-        return False
+        pass
+    return None
 
 
 def cmd_locate(a):
@@ -218,7 +261,11 @@ def cmd_locate(a):
         if n.lower().endswith((".xci", ".nsp")) and os.path.isfile(p) and p not in cands:
             cands.append(p)
     for p in cands:
-        if matches(p, nca_off, nca_size, sig):
+        found = matches(p, nca_off, nca_size, sig)  # AP_ANY_CONTAINER: an .xci or an .nsp of the same game
+        if found is not None:
+            if found != nca_off:
+                print(f"   {os.path.basename(p)}: another container of the same game (program NCA at {found:#x}, "
+                      f"{nca_off:#x} in {hint}): fine, the game finds it")
             print(f"DUMP={os.path.abspath(p)}")
             return
     print(f"NOTFOUND none of the .xci/.nsp of {a.root} is the dump of this table (it was {hint})")

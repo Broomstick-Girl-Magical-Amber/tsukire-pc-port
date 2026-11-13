@@ -163,16 +163,80 @@ public class Home extends Activity {
         }
     }
 
+    // AP_ANY_CONTAINER (apply_any_container.py): an .xci or an .nsp of the same game (the same program NCA, each at its
+    // own offset): the offset of the table first, then the file table of the container, as romfs_direct.cpp.
     static boolean isTheDump(File p, Source s) {
-        if (s == null || !p.isFile() || p.length() < s.ncaOff + s.ncaSize) return false;
+        if (s == null || !p.isFile()) return false;
         try (RandomAccessFile r = new RandomAccessFile(p, "r")) {
-            byte[] buf = new byte[0x100];
-            r.seek(s.ncaOff);
-            r.readFully(buf);
-            return Arrays.equals(buf, s.sig);
+            long size = r.length();
+            if (ncaAt(r, size, s.ncaOff, s)) return true;
+            List<long[]> files = entries(r, size, 0, "PFS0", 0x18, null);
+            if (files == null) {
+                files = new ArrayList<>();
+                for (long base : new long[] {0, 0x1000}) {  // XCI; 0x1000: with the key area in front
+                    byte[] hd = new byte[0x40];
+                    if (base + 0x140 > size) continue;
+                    r.seek(base + 0x100);
+                    r.readFully(hd);
+                    if (!new String(hd, 0, 4, StandardCharsets.US_ASCII).equals("HEAD")) continue;
+                    List<String> names = new ArrayList<>();
+                    List<long[]> parts = entries(r, size, base + le(hd, 0x30, 8), "HFS0", 0x40, names);
+                    if (parts != null)
+                        for (int pass = 0; pass < 2; pass++)  // secure first
+                            for (int i = 0; i < parts.size(); i++)
+                                if (names.get(i).equals("secure") == (pass == 0)) {
+                                    List<long[]> sub = entries(r, size, parts.get(i)[0], "HFS0", 0x40, null);
+                                    if (sub != null) files.addAll(sub);
+                                }
+                    break;
+                }
+            }
+            for (long[] e : files)
+                if (e[1] == s.ncaSize && ncaAt(r, size, e[0], s)) return true;
+            return false;
         } catch (Exception e) {
             return false;
         }
+    }
+
+    static long le(byte[] b, int o, int n) {
+        long v = 0;
+        for (int i = n - 1; i >= 0; i--) v = (v << 8) | (b[o + i] & 0xff);
+        return v;
+    }
+
+    static boolean ncaAt(RandomAccessFile r, long size, long off, Source s) throws Exception {
+        if (off < 0 || s.ncaSize < 0x100 || off > size || s.ncaSize > size - off) return false;
+        byte[] buf = new byte[0x100];
+        r.seek(off);
+        r.readFully(buf);
+        return Arrays.equals(buf, s.sig);
+    }
+
+    // {offset in the file, size} of every entry of the PFS0 / HFS0 at `at` (names in `names` if given); null if none.
+    static List<long[]> entries(RandomAccessFile r, long size, long at, String magic, int esize, List<String> names) throws Exception {
+        if (at < 0 || at + 0x10 > size) return null;
+        byte[] h = new byte[0x10];
+        r.seek(at);
+        r.readFully(h);
+        if (!new String(h, 0, 4, StandardCharsets.US_ASCII).equals(magic)) return null;
+        long count = le(h, 4, 4), strsize = le(h, 8, 4);
+        if (count == 0 || count > 4096 || strsize > (1 << 20) || at + 0x10 + count * esize + strsize > size) return null;
+        byte[] t = new byte[(int) (count * esize + strsize)];
+        r.readFully(t);
+        long data = at + 0x10 + t.length;
+        int strs = (int) (count * esize);
+        List<long[]> out = new ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            int e = i * esize;
+            out.add(new long[] {data + le(t, e, 8), le(t, e + 8, 8)});
+            if (names != null) {
+                int a = strs + (int) le(t, e + 16, 4), z = a;
+                while (z >= 0 && z < t.length && t[z] != 0) z++;
+                names.add(a >= strs && a < t.length ? new String(t, a, z - a, StandardCharsets.UTF_8) : "");
+            }
+        }
+        return out;
     }
 
     static boolean isDumpName(String n) {
@@ -583,7 +647,7 @@ public class Home extends Activity {
         Source src = f == null ? null : readSource(new File(dataRoot(f), "romfs_source.bin"));
         if (!isDumpName(path) || !isTheDump(new File(path), src)) {
             refresh();
-            say(t("Ese archivo no es el dump con el que se recompil\u00f3 el juego", "That file is not the dump the game was recompiled from")
+            say(t("Ese archivo no es un dump (.xci o .nsp) del juego con el que se recompil\u00f3", "That file is not a dump (.xci or .nsp) of the game it was recompiled from")  // AP_ANY_CONTAINER
                 + (src != null ? " (" + src.hint + ")" : "") + ":\n" + path, true);
             return;
         }
