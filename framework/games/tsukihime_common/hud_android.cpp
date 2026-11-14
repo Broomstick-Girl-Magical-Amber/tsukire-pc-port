@@ -9,7 +9,8 @@
 //   PlayStation   -> PlayStation
 //   Switch        -> Switch
 // NX_HUD_GLYPHS=switch|xbox|ps|keyboard|off (config.txt) still wins over all of this (hud_glyphs.cpp).
-// A physical keyboard is not read on Android yet (pending).
+// A physical keyboard does not come through here (AP_ANDROID_KEYBOARD): input_tsuki.cpp (keyboard_pad) calls
+// hud::note_input(kKeyboard) itself when a key of [teclado] goes down, as on PC.
 #if defined(__ANDROID__) && defined(NX_HUD_GLYPHS)
 
 #include <cctype>

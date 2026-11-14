@@ -37,6 +37,7 @@ HleFn hle_lookup(const char*) { return nullptr; }
 HleRegistrar::HleRegistrar(const char*, HleFn) {}
 std::string describe(uint64_t) { return {}; }
 namespace tsuki { std::string describe_buttons(uint64_t, uint64_t) { return {}; } }
+namespace tsuki { void keyboard_pad(plat::PadState&) {} }  // AP_ANDROID_KEYBOARD: the keyboard is not tested here
 namespace plat {
 PadHook pad_hook = nullptr;
 uint64_t g_now = 1000000000ull;

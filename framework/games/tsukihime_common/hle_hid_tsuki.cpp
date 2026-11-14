@@ -196,6 +196,9 @@ void tsuki_pad_hook(plat::PadState& p) {
 #if defined(__ANDROID__)
     touch_pad(p);  // AP_ANDROID_INPUT: the touch gestures
 #endif
+#if defined(__ANDROID__)
+    tsuki::keyboard_pad(p);  // AP_ANDROID_KEYBOARD: the physical keyboard (input.ini)
+#endif
     if (trace_on()) trace_pad(p);
 }
 

@@ -555,4 +555,45 @@ const bool g_pad_source_set = [] {
 }  // namespace
 #endif
 
+// ---- AP_ANDROID_KEYBOARD (apply_android_keyboard.py): the physical keyboard on Android -----------------------------
+// platform_android_input.cpp keeps the keys of a USB or Bluetooth keyboard by Windows virtual-key code, so [teclado]
+// (and the defaults) work as on Windows, keyboard_tiles.bin included. A held key presses its button; a key that goes
+// down presses it for at least 50 ms (a tap shorter than a frame still reaches the game) and, if it is assigned,
+// switches the HUD to the keyboard icons. NX_KEYBOARD=0 (config.txt): the keyboard as before (arrows = d-pad only).
+#if defined(__ANDROID__)
+void keyboard_pad(plat::PadState& p) {
+    constexpr uint64_t kMinPress = 50000000;  // ns
+    static std::mutex m;
+    std::lock_guard lk(m);
+    const Config& c = config();
+    plat::KeyState k;
+    plat::read_keys(k);
+    static uint8_t seen[256];    // downs of the last read
+    static uint64_t until[256];  // a new press holds its button until then
+    const uint64_t now = plat::monotonic_ns();
+    bool fresh[256] = {};
+    for (int vk = 0; vk < 256; vk++)
+        if (k.downs[vk] != seen[vk]) fresh[vk] = true, until[vk] = now + kMinPress;
+    std::memcpy(seen, k.downs, sizeof seen);
+    bool note = false;
+    for (const KeyBind& b : c.keys) {
+        const int vk = b.vk & 0xFF;
+        if (k.held[vk] || now < until[vk]) press(p, b.t);
+        note = note || fresh[vk];
+    }
+#ifdef NX_HUD_GLYPHS
+    if (note) hud::note_input(hud::Device::kKeyboard);
+#else
+    (void)note;
+#endif
+}
+
+namespace {
+const bool g_keys_wanted_set = [] {
+    plat::keys_wanted = true;  // AP_ANDROID_KEYBOARD: the platform hands the keyboard over (platform.h)
+    return true;
+}();
+}  // namespace
+#endif
+
 }  // namespace nx::tsuki

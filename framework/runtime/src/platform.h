@@ -158,6 +158,19 @@ bool audio_submit(const void* data, size_t bytes, void* ctx);  // false: no devi
 uint32_t audio_queued();
 void audio_pause(bool paused);  // app in the background
 
+#if defined(__ANDROID__)  // AP_ANDROID_KEYBOARD (apply_android_keyboard.py)
+// A physical keyboard (USB or Bluetooth) for a game that reads it itself (Tsukihime: input.ini), by Windows virtual-key
+// code (VK_*: 'A'-'Z', '0'-'9', 0x20 Space, 0x0D Enter...). held: down now; downs: presses so far (it wraps; a press
+// shorter than a frame still changes it). 0x10/0x11/0x12 (Shift/Ctrl/Alt) are either side. Only while the game sets
+// keys_wanted (and NX_KEYBOARD is not 0); otherwise a keyboard works as before (arrows = d-pad, the rest to the system).
+struct KeyState {
+    uint8_t held[256];
+    uint8_t downs[256];
+};
+void read_keys(KeyState& k);    // platform_android_input.cpp; any thread
+extern bool keys_wanted;        // false by default
+#endif
+
 // Vulkan: the loader's vkGetInstanceProcAddr and the surface extension of this platform.
 void* vulkan_get_instance_proc_addr();
 const char* vulkan_surface_extension();

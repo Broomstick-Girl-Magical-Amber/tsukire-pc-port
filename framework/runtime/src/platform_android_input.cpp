@@ -226,6 +226,142 @@ uint64_t touch_button(float x, float y) {
     return right ? kA : kB;
 }
 
+// AP_ANDROID_KEYBOARD (apply_android_keyboard.py): a physical keyboard for a game that reads it itself (keys_wanted,
+// platform.h). A keyboard: id >= 0 (the virtual keyboard, id -1, is the system Back gesture), not virtual, alphabetic,
+// without a gamepad source (InputDevice through JNI, once per id). A joystick source does not rule it out: a keyboard
+// may be two devices with the same name and VID:PID, the second one ("... System Control": keyboard + dpad + joystick)
+// sending keys when many are down at once. Its keys become Windows virtual-key codes; controller buttons and Back keep
+// their path; keys without a code (Meta, volume, media, signs) go to the system.
+constexpr int kKeyCodes = 512;
+uint8_t g_key_held[kKeyCodes];   // by AKEYCODE, whatever interface the down and the up come from
+uint8_t g_key_downs[kKeyCodes];  // presses so far (wraps)
+std::vector<std::pair<int32_t, bool>> g_kbd_devices;  // device id -> a keyboard
+
+uint8_t vk_of(int32_t k) {  // AKEYCODE -> Windows virtual-key code (0: none)
+    if (k >= AKEYCODE_A && k <= AKEYCODE_Z) return uint8_t('A' + (k - AKEYCODE_A));
+    if (k >= AKEYCODE_0 && k <= AKEYCODE_9) return uint8_t('0' + (k - AKEYCODE_0));
+    if (k >= AKEYCODE_F1 && k <= AKEYCODE_F12) return uint8_t(0x70 + (k - AKEYCODE_F1));
+    if (k >= AKEYCODE_NUMPAD_0 && k <= AKEYCODE_NUMPAD_9) return uint8_t(0x60 + (k - AKEYCODE_NUMPAD_0));
+    switch (k) {
+        case AKEYCODE_SPACE: return 0x20;
+        case AKEYCODE_ENTER: case AKEYCODE_NUMPAD_ENTER: return 0x0D;
+        case AKEYCODE_ESCAPE: return 0x1B;
+        case AKEYCODE_TAB: return 0x09;
+        case AKEYCODE_DEL: return 0x08;  // Backspace
+        case AKEYCODE_FORWARD_DEL: return 0x2E;
+        case AKEYCODE_SHIFT_LEFT: return 0xA0;
+        case AKEYCODE_SHIFT_RIGHT: return 0xA1;
+        case AKEYCODE_CTRL_LEFT: return 0xA2;
+        case AKEYCODE_CTRL_RIGHT: return 0xA3;
+        case AKEYCODE_ALT_LEFT: return 0xA4;
+        case AKEYCODE_ALT_RIGHT: return 0xA5;
+        case AKEYCODE_DPAD_LEFT: return 0x25;
+        case AKEYCODE_DPAD_UP: return 0x26;
+        case AKEYCODE_DPAD_RIGHT: return 0x27;
+        case AKEYCODE_DPAD_DOWN: return 0x28;
+        case AKEYCODE_PAGE_UP: return 0x21;
+        case AKEYCODE_PAGE_DOWN: return 0x22;
+        case AKEYCODE_MOVE_END: return 0x23;
+        case AKEYCODE_MOVE_HOME: return 0x24;
+        case AKEYCODE_INSERT: return 0x2D;
+        case AKEYCODE_COMMA: return 0xBC;
+        case AKEYCODE_PERIOD: return 0xBE;
+        default: return 0;
+    }
+}
+
+bool keyboard_off() {  // NX_KEYBOARD=0 (config.txt)
+    static const bool off = [] {
+        const char* e = std::getenv("NX_KEYBOARD");
+        return e && e[0] == '0';
+    }();
+    return off;
+}
+
+bool is_keyboard(int32_t id) {
+    if (id < 0) return false;
+    for (const auto& d : g_kbd_devices)
+        if (d.first == id) return d.second;
+    bool found = false, is_virtual = true;
+    int vendor = 0, product = 0, type = 0, sources = 0;
+    std::string name;
+    if (g_vm) {
+        JNIEnv* env = nullptr;
+        bool attached = false;
+        if (g_vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_OK) {
+            if (g_vm->AttachCurrentThread(&env, nullptr) == JNI_OK) attached = true;
+            else env = nullptr;
+        }
+        if (env) {
+            if (jclass cls = env->FindClass("android/view/InputDevice")) {
+                // no JNI call with an exception pending (CheckJNI would abort): a failed lookup stops the next ones
+                auto method = [&](const char* n, const char* sig) -> jmethodID {
+                    return env->ExceptionCheck() ? nullptr : env->GetMethodID(cls, n, sig);
+                };
+                jmethodID get = env->GetStaticMethodID(cls, "getDevice", "(I)Landroid/view/InputDevice;");
+                jmethodID kt = method("getKeyboardType", "()I");
+                jmethodID src = method("getSources", "()I");
+                jmethodID vir = method("isVirtual", "()Z");
+                jmethodID vid = method("getVendorId", "()I");
+                jmethodID pid = method("getProductId", "()I");
+                jmethodID nam = method("getName", "()Ljava/lang/String;");
+                if (env->ExceptionCheck()) {
+                    env->ExceptionClear();
+                } else if (get && kt && src && vir && vid && pid && nam) {
+                    if (jobject dev = env->CallStaticObjectMethod(cls, get, jint(id))) {
+                        found = true;
+                        type = int(env->CallIntMethod(dev, kt));
+                        sources = int(env->CallIntMethod(dev, src));
+                        is_virtual = env->CallBooleanMethod(dev, vir) != JNI_FALSE;
+                        vendor = int(env->CallIntMethod(dev, vid));
+                        product = int(env->CallIntMethod(dev, pid));
+                        if (jstring js = static_cast<jstring>(env->CallObjectMethod(dev, nam))) {
+                            if (const char* c = env->GetStringUTFChars(js, nullptr)) {
+                                name = c;
+                                env->ReleaseStringUTFChars(js, c);
+                            }
+                            env->DeleteLocalRef(js);
+                        }
+                        env->DeleteLocalRef(dev);
+                    }
+                }
+                env->DeleteLocalRef(cls);
+            }
+            if (env->ExceptionCheck()) env->ExceptionClear();
+            if (attached) g_vm->DetachCurrentThread();
+        }
+    }
+    constexpr int kAlphabetic = 2;  // InputDevice.KEYBOARD_TYPE_ALPHABETIC
+    const bool kbd = found && !is_virtual && type == kAlphabetic &&
+                     (sources & AINPUT_SOURCE_GAMEPAD) != AINPUT_SOURCE_GAMEPAD;
+    while (!name.empty() && name.back() == ' ') name.pop_back();
+    if (kbd)
+        nx::log("keyboard: device id %d \"%s\" (VID:PID %04x:%04x): a keyboard, its keys go to the game", int(id),
+                name.c_str(), unsigned(vendor), unsigned(product));
+    g_kbd_devices.emplace_back(id, kbd);
+    return kbd;
+}
+
+bool controller_key(int32_t k) {  // keys that keep their old path even from a keyboard
+    return (k >= AKEYCODE_BUTTON_A && k <= AKEYCODE_BUTTON_MODE) || (k >= AKEYCODE_BUTTON_1 && k <= AKEYCODE_BUTTON_16) ||
+           k == AKEYCODE_BACK;
+}
+
+// What on_input returns for a key of a physical keyboard (1 taken, 0 to the system); -1: not one, the old path.
+int32_t keyboard_event(AInputEvent* e) {
+    if (!keys_wanted || keyboard_off()) return -1;
+    const int32_t code = AKeyEvent_getKeyCode(e);
+    if (controller_key(code) || !is_keyboard(AInputEvent_getDeviceId(e))) return -1;
+    if (code < 0 || code >= kKeyCodes || !vk_of(code)) return 0;
+    const int32_t action = AKeyEvent_getAction(e);
+    if (action == AKEY_EVENT_ACTION_DOWN) {
+        if (!g_key_held[code]) g_key_held[code] = 1, g_key_downs[code]++;  // a repeat is not a new press
+    } else if (action == AKEY_EVENT_ACTION_UP) {  // also the cancel the system sends when the app loses focus
+        g_key_held[code] = 0;
+    }
+    return 1;
+}
+
 }  // namespace
 
 int32_t on_input(android_app* app, AInputEvent* e) {
@@ -234,6 +370,7 @@ int32_t on_input(android_app* app, AInputEvent* e) {
     int32_t type = AInputEvent_getType(e);
     int32_t src = AInputEvent_getSource(e);
     if (type == AINPUT_EVENT_TYPE_KEY) {
+        if (const int32_t r = keyboard_event(e); r >= 0) return r;  // AP_ANDROID_KEYBOARD: a physical keyboard
         uint64_t b = key_to_button(AKeyEvent_getKeyCode(e));
         if (pointer_mode() && AKeyEvent_getKeyCode(e) == AKEYCODE_BACK) b = kB;  // AP_ANDROID_INPUT: Back = B (Tsukihime)
         if (!b) return 0;
@@ -463,6 +600,18 @@ size_t touch_overlay(OverlayShape* out, size_t max) {
         out[k++] = {touch_mirrored() ? 0.85f : 0.15f, 0.72f, 0.12f, std::min(1.0f, 0.08f * shade)};  // where the stick goes
     }
     return k;
+}
+
+bool keys_wanted = false;  // AP_ANDROID_KEYBOARD (platform.h): set by the game (Tsukihime: input_tsuki.cpp)
+
+// AP_ANDROID_KEYBOARD: the physical keyboard by Windows virtual-key code (platform.h).
+void read_keys(KeyState& k) {
+    std::lock_guard lk(g_in);
+    std::memset(&k, 0, sizeof k);
+    for (int32_t c = 0; c < kKeyCodes; c++)
+        if (const uint8_t vk = vk_of(c)) k.held[vk] |= g_key_held[c], k.downs[vk] = uint8_t(k.downs[vk] + g_key_downs[c]);
+    static const uint8_t kSides[3][3] = {{0x10, 0xA0, 0xA1}, {0x11, 0xA2, 0xA3}, {0x12, 0xA4, 0xA5}};  // Shift Ctrl Alt
+    for (const auto& s : kSides) k.held[s[0]] = k.held[s[1]] | k.held[s[2]], k.downs[s[0]] = uint8_t(k.downs[s[1]] + k.downs[s[2]]);
 }
 
 }  // namespace nx::plat
