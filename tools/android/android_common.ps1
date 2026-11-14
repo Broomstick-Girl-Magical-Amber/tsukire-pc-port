@@ -359,10 +359,35 @@ function AdbRemoteFiles([string]$adb, [string]$target) {
 
 function MB([int64]$n) { return ('{0:N1}' -f ($n / 1MB)) }
 
+# Free bytes of the phone's volume that holds $path (adb shell df -k: the last 5 words are 1K-blocks, used, available,
+# use%, mount point), or -1 if it cannot be read.
+function AdbFreeBytes([string]$adb, [string]$path) {
+    $o = AdbText $adb @('shell', 'df', '-k', $path)
+    $lines = @($o -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    if ($lines.Count -lt 2) { return [int64]-1 }
+    $tok = @(($lines[1..($lines.Count - 1)] -join ' ') -split '\s+')
+    if ($tok.Count -lt 5) { return [int64]-1 }
+    $kb = [int64]0
+    if (-not [int64]::TryParse($tok[$tok.Count - 3], [ref]$kb)) { return [int64]-1 }
+    return ($kb * 1024)
+}
+
+# Stops before anything is sent if the phone's volume cannot take $need more bytes (plus a margin for the system).
+function AdbRequireSpace([string]$adb, [string]$path, [int64]$need) {
+    if ($need -le 0) { return }
+    $free = AdbFreeBytes $adb $path
+    if ($free -lt 0) { Warn 'adb: the free space of the phone cannot be read: not checked'; return }
+    $margin = [int64]256MB
+    Info "adb: free space on the phone: $(MB $free) MB; still to send: $(MB $need) MB"
+    if ($free -lt ($need + $margin)) {
+        Fail "not enough free space on the phone: $(MB $need) MB to send (+ $(MB $margin) MB of margin) and only $(MB $free) MB free. Free at least $(MB ($need + $margin - $free)) MB more and run it again"
+    }
+}
+
 # Sends a folder of this PC to a folder of the phone with progress ("   adb: 34% (28.0 of 81.1 MB)"), only the files
 # that are missing there or differ in size or date (adb push keeps the date), in batches by folder. Nothing on the
 # phone is deleted here. Big files go alone and their progress is read from the phone while they are sent.
-function AdbPushTree([string]$adb, [string]$local, [string]$target) {
+function AdbPushTree([string]$adb, [string]$local, [string]$target, [int64]$extraBytes = 0) {   # extraBytes: more the caller will send after (the dump), for the space check
     $base = (Get-Item -LiteralPath $local).FullName.TrimEnd('\', '/')
     $remote = AdbRemoteFiles $adb $target
     $epoch = [DateTime]::new(1970, 1, 1, 0, 0, 0, [DateTimeKind]::Utc)
@@ -377,8 +402,13 @@ function AdbPushTree([string]$adb, [string]$local, [string]$target) {
     }
     $total = [int64]0
     foreach ($t in $todo) { $total += $t[2] }
-    if (-not $todo.Count) { Info "adb: nothing to send ($same files already on the phone)"; return }
+    if (-not $todo.Count) {
+        Info "adb: nothing to send ($same files already on the phone)"
+        AdbRequireSpace $adb $target $extraBytes
+        return
+    }
     Info "adb: $($todo.Count) files to send ($(MB $total) MB; $same already on the phone)"
+    AdbRequireSpace $adb $target ($total + $extraBytes)   # before the first byte
     # the folders first, in one call
     $dirs = @($todo | ForEach-Object { $d = Split-Path -Parent ($_[0] -replace '/', '\'); if ($d) { "$target/$($d.Replace('\', '/'))" } else { $target } } | Sort-Object -Unique)
     $mk = 'mkdir -p ' + (($dirs | ForEach-Object { ShQ $_ }) -join ' ')

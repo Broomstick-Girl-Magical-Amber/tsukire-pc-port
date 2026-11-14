@@ -172,7 +172,11 @@ try {
                 }
             }
         }
-        AdbPushTree $adb $out $target
+        # The dump (if asked) is chosen first so that the space check covers the folder and the dump together, before sending anything.
+        $dumpFile = $null
+        $dumpDest = $null
+        $dumpSame = $false
+        $dumpNeed = [int64]0
         if ($Dump) {
             $dumps = @(Get-ChildItem -LiteralPath $Root -File | Where-Object { $_.Extension -match '^\.(xci|nsp)$' })
             $hint = $null
@@ -184,11 +188,30 @@ try {
             $pick = @($dumps | Where-Object { $_.Name -eq $hint })
             if (-not $pick.Count) { $pick = $dumps }
             if ($pick.Count -ne 1) { Fail "-Dump: $($dumps.Count) .xci/.nsp in $Root and none named ${hint}: copy the dump by hand" }
-            $size = AdbText $adb @('shell', 'stat', '-c', '%s', "$target/$($pick[0].Name)")
-            if ("$size".Trim() -eq "$($pick[0].Length)") { Info "$($pick[0].Name) is already on the phone (same size)" }
+            $dumpFile = $pick[0]
+            $dumpDest = "$target/$($dumpFile.Name)"
+            $onPhone = "$(AdbText $adb @('shell', 'stat', '-c', '%s', $dumpDest))".Trim()
+            $partial = [int64]0
+            [void][int64]::TryParse($onPhone, [ref]$partial)   # a file left by an interrupted copy is overwritten: its space comes back
+            $dumpSame = ($onPhone -eq "$($dumpFile.Length)")
+            if (-not $dumpSame) { $dumpNeed = [Math]::Max([int64]0, [int64]$dumpFile.Length - $partial) }
+        }
+        AdbPushTree $adb $out $target $dumpNeed
+        if ($Dump) {
+            if ($dumpSame) { Info "$($dumpFile.Name) is already on the phone (same size)" }
             else {
-                Info "copying $($pick[0].Name) ($([math]::Round($pick[0].Length / 1GB, 1)) GB): this takes a while"
-                AdbPushBig $adb $pick[0].FullName "$target/$($pick[0].Name)" $pick[0].Length 0 $pick[0].Length
+                AdbRequireSpace $adb $target $dumpNeed   # again: the folder just sent took its share
+                Info "copying $($dumpFile.Name) ($([math]::Round($dumpFile.Length / 1GB, 1)) GB): this takes a while"
+                AdbPushBig $adb $dumpFile.FullName $dumpDest $dumpFile.Length 0 $dumpFile.Length
+                # adb push said it was fine; the size on the phone is the proof (adb shell can fail for a moment right after a big push)
+                $want = "$($dumpFile.Length)"
+                $got = ''
+                for ($attempt = 1; $attempt -le 5 -and $got -ne $want; $attempt++) {
+                    if ($attempt -gt 1) { Start-Sleep -Seconds 3 }
+                    $got = "$(AdbText $adb @('shell', 'stat', '-c', '%s', $dumpDest))".Trim()
+                }
+                if ($got -ne $want) { Fail "$($dumpFile.Name) on the phone is '$got' (expected $want bytes): the copy is not complete (free space on the phone?); run it again" }
+                Info "$($dumpFile.Name): $want bytes on the phone, checked"
             }
         }
         Info "on the phone: $target"
@@ -199,6 +222,9 @@ try {
         Write-Host "Done. Copy the CONTENTS of $out to a folder of the phone (for example Internal storage\$PhoneFolder),"
         Write-Host 'put the .xci/.nsp in that folder (or choose it in the app with "Dump") and choose the folder in the app.'
     }
+    # Explicit success: android_port.ps1 (RunScript) reads $LASTEXITCODE after this script, and the last `adb shell` of a
+    # copy (the progress poll, the stat of a file not on the phone yet) can leave a 1 there even though everything worked.
+    exit 0
 } catch {
     Write-Host ''
     Write-Host "ERROR in phone_data: $($_.Exception.Message)" -ForegroundColor Red
