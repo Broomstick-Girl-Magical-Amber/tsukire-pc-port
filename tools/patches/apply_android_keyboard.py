@@ -3,7 +3,7 @@
 
 Pulido of the Android port. Before: a keyboard only moved the d-pad with its arrows (KEYCODE_DPAD_*); every other key
 (Space, Enter, letters, Tab, Ctrl...) went back to the system and the game never saw it, and the HUD never showed the
-keyboard icons. Measured on the S25 with apply_android_key_diag.py (claude/tsukihime-android-teclado.md).
+keyboard icons.
 
 - runtime/src/platform.h (Android): `plat::KeyState {held[256], downs[256]}` and `read_keys`: the keys of the physical
   keyboard by Windows virtual-key code (the codes input.ini names and keyboard_tiles.bin is drawn with); downs counts

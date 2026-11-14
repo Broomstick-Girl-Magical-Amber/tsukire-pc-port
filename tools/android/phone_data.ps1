@@ -1,5 +1,4 @@
 # phone_data.ps1 - Puts together the port folder for the phone (phase 1 of the Android port,
-# claude/tsukihime-android.md): only what the game reads besides the dump, with the same layout as the port on the PC, so
 # the game finds everything by itself. Copy that folder to the phone (USB by hand, or adb with -InternalStorage or
 # -ExternalStorage), put the .xci/.nsp in it (or choose it in the app with "Dump") and choose the folder in the app.
 #

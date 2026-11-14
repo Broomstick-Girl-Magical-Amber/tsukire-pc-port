@@ -1,5 +1,4 @@
 # build_game.ps1 - The game's library for Android (lib<game>.so) built on this PC WITHOUT Android Studio or the NDK
-# (phase 2 of the Android port, claude/tsukihime-android-fase2.md): the code recompiled from your dump
 # (data\<edition>\gen: tools\recomp_tsukihime.ps1 first) is compiled for arm64 with the LLVM clang the PC install already
 # has, and linked with the prebuilt runtime and libraries of the "Android pack".
 #

@@ -1,4 +1,3 @@
-// Home screen of the Android port (claude/tsukihime-android.md, phase 1): the player picks the port folder on the phone
 // (the same layout as the port on the PC: <folder>/data/<edition>, the .xci/.nsp in <folder>, mods in
 // <folder>/mods/<edition>) and, if it is elsewhere, the dump, both with Android's own file picker (the Storage Access
 // Framework); the launcher turns the choice into a plain path, checks the data and finds the dump, and Play starts the

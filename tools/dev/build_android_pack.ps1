@@ -1,5 +1,4 @@
 # build_android_pack.ps1 - MAINTAINER: makes the "Android pack" (phase 2 of the Android port,
-# claude/tsukihime-android-fase2.md): what an end user needs to build the game's library for Android WITHOUT Android
 # Studio, the NDK or vcpkg, only with the LLVM clang of the PC install. Nothing of the game goes into it:
 #   runtime\<game>\libruntime.a   the runtime + games\tsukihime_common built for arm64-android (the objects of the
 #                                 NDK build of tools\android\build_apk.ps1 -Edition, without the recompiled code)

@@ -1,6 +1,6 @@
 """apply_android_present.py - Android presentation of Tsukihime: upright picture, bars, sRGB after resume (AP_ANDROID_PRESENT).
 
-Phase 1 of the Android port (claude/tsukihime-android.md). On Android the picture always goes through the present pass
+Phase 1 of the Android port. On Android the picture always goes through the present pass
 (nvn_present.cpp: it turns it with the screen and fits it with bars), not through the blit of nvn_vk.cpp, and three
 things were missing for Tsukihime there:
   - runtime/src/nvn/nvn_present.cpp: the window origin. Tsukihime draws with NVN's lower-left origin

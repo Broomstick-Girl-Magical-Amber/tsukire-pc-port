@@ -1,7 +1,6 @@
 """apply_android_input.py - Android touch screen as Tsukihime's own touch screen, plus gestures (AP_ANDROID_INPUT).
 
-Phase 1 of the Android port (claude/tsukihime-android.md); version 2 (2026-11-11, claude/tsukihime-android-gestos.md)
-adds the gestures and the long press on the title logo. To update from version 1: --remove with the version 1 file
+Adds the gestures and the long press on the title logo. To update from version 1: --remove with the version 1 file
 first, then apply this one.
 
 On Windows the mouse becomes the Switch touch screen (AP_MOUSE + hle_hid_tsuki.cpp: a left click is a touch, a drag a

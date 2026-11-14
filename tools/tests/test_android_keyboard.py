@@ -3,7 +3,7 @@
 
 Two harnesses, built for the host with __ANDROID__ defined and the NDK and JNI stubbed (headers written here):
 1. Platform: runtime/src/platform_android_input.cpp with fake input events and a fake InputDevice (JNI). Devices: the
-   two interfaces of the S25 test keyboard (SINO WEALTH, id 10 and id 11 "System Control" with a joystick source), a
+   two interfaces of test keyboard (SINO WEALTH, id 10 and id 11 "System Control" with a joystick source), a
    DualSense, a controller of alphabetic type with a gamepad source, a virtual keyboard and the volume keys. Checks
    which events are taken, which go to the system, read_keys, read_pad (the old path) and the HUD hook.
 2. Game: games/tsukihime_common/input_tsuki.cpp (keyboard_pad) with read_keys and the clock stubbed: the defaults (FSN

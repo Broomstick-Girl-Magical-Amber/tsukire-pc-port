@@ -1,9 +1,7 @@
 """apply_carga_cache.py - a cache of decoded images for the game's loads (AP_CARGA_CACHE).
 
 hle_carga.cpp decodes the game's JPEG, PNG and zlib/gzip loads natively. The game decodes the same files again and
-again while it runs (S25, 2026-11-13: 4 GB out of gzip and 1.9 GB out of JPEG in 5.4 minutes, many of them the same
-sizes over and over; the texture uploader already finds 3 of every 4 uploaded MB identical to an earlier upload), and
-its main thread waits for every one of those loads: they are the 100-200 ms stalls and most of what is left under
+again while it runs, and its main thread waits for every one of those loads: they are the 100-200 ms stalls and most of what is left under
 60 fps.
 
 This keeps the decoded output of what was decoded before:

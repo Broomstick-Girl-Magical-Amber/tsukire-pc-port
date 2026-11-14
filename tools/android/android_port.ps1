@@ -1,5 +1,4 @@
 # android_port.ps1 - Everything the phone needs, in one command (phase 2.3 of the Android port,
-# claude/tsukihime-android-fase2.md): after the game is recompiled on this PC (tools\recomp_tsukihime.ps1, or the
 # launcher's "Recompile"), it builds the game's library for Android (build_game.ps1: the Android pack + the LLVM clang
 # of the PC install; no Android Studio, no NDK), puts the folder for the phone together (phone_data.ps1) and, if asked,
 # sends it to the phone by USB with adb and installs or updates the app.

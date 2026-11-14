@@ -1,14 +1,13 @@
 """apply_android_adpf.py - the game's worker threads in the ADPF session, and its target (AP_ANDROID_ADPF). Android.
 
 perf_hint.cpp asks Android for higher clocks through an ADPF session (APerformanceHint): the threads that make a
-frame join it and each frame's duration is reported against a 16.7 ms target. In Tsukihime (frame profile, S25,
-2026-11-12) the game's main thread works ~4 ms per frame and waits ~8.5 ms for its own worker threads (two waits per
+frame join it and each frame's duration is reported against a 16.7 ms target. In Tsukihime, the game's main thread works ~4 ms per frame and waits ~8.5 ms for its own worker threads (two waits per
 frame on a condition variable); the whole process uses ~12 ms of CPU per frame on 8 cores and ~12 % of the frames
 take more than 20 ms (~54 fps). The session held only the main thread, and its reported work (~12.5 ms on average)
 stayed under the target: Android had no reason to raise the clocks, and the workers it waits for were not in it.
 
-Both on by default since version 3 (S25, 2026-11-12/13: each one alone helped little; together 53.7 -> 56.1 fps and the
-frames over 20 ms 13.3 % -> 7.0 %, about the same heat as the threads alone). In config.txt:
+Both on by default since version 3
+In config.txt:
 - the game threads (NX_ADPF_GUEST=0 turns them off): every 600 frames, the guest threads that used at least 0.5 ms of
   CPU per frame (at most 6, the busiest first) join the session next to the ones already in it; once in, a thread
   stays until it drops under 0.25 ms or ends (version 4: a thread near the line made the session again 24 times in
@@ -93,7 +92,7 @@ void perf_hint_frame(int64_t ns) {
         // The ADPF target is the frame period: 33.3 ms when NX_FPS_CAP holds the game at 30 fps (nvn_queue.cpp).
         const char* cap = std::getenv("NX_FPS_CAP");
         int64_t target = cap && std::atoi(cap) > 0 && std::atoi(cap) <= 30 ? 33'333'333 : 16'666'667;
-        if (target == 16'666'667) target = 12'000'000;  // AP_ANDROID_ADPF: 12 ms at 60 fps (measured on the S25)
+        if (target == 16'666'667) target = 12'000'000;  // AP_ANDROID_ADPF: 12 ms at 60 fps
         if (const char* t = std::getenv("NX_ADPF_TARGET_MS")) {
             const double ms = std::atof(t);
             if (ms >= 4.0 && ms <= 33.4) target = int64_t(ms * 1e6);
