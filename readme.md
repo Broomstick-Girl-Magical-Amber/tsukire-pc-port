@@ -20,6 +20,7 @@ This project is a fork of [SuperMarioWonderRecomp](https://github.com/BelmanteGu
 - **A Windows launcher (`tsukihime_launcher.exe`) to play**, manage saves and edit controls. On Linux (tested with Proton), the recompilation is still done from the console. [Get it from Releases](https://github.com/Broomstick-Girl-Magical-Amber/tsukire-pc-port/releases).
 - One command installs everything and builds the game, on Windows (about **6 minutes**) and on Linux.
 - **The port reads your dump directly.** The `.xci` / `.nsp` stays in the repository root and the game reads its files from it. Nothing is extracted.
+- Android port is supported, but only on high-end phones for now (it needs Vulkan 1.3, so I'm working on Vulkan 1.1 support). See the [Android readme](./readme_android.md) for the installation steps.
 - Community patches in `.nsp` format (tested with translation patches on the Japanese edition, on Windows and Linux). See [Updates and patches](#updates-and-patches).
 - Saves are in `data/tsuki/user/save` (Japanese) and `data/tsuki_global/user/save` (global). Saves from an emulator or a Switch save dump can be imported. Back them up before updating or rebuilding.
 - Tested on real hardware with Windows 10, Windows 11 and Ubuntu (Intel, AMD and NVIDIA GPUs), and on Windows 10 and Ubuntu virtual machines.
@@ -58,7 +59,7 @@ This project is a fork of [SuperMarioWonderRecomp](https://github.com/BelmanteGu
 **To do (also open for the community)**
 
 - Native Linux build.
-- Android port (the framework still contains Android material from the fork, but nothing for the remake has been done).
+- Vulkan 1.1 Support
 
 ## Screenshots
 
