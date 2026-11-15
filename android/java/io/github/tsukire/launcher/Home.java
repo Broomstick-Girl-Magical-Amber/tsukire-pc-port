@@ -8,7 +8,7 @@
 // The choice goes to <files>/data_root.txt, which android_main reads (platform_android.cpp). A dump outside the folder goes to NX_ROMFS_DUMP in <data root>/config.txt
 // (romfs_direct.cpp). Needs "all files access" (MANAGE_EXTERNAL_STORAGE): the game reads the folder and the dump with
 // plain paths, so only folders of the phone's storage or an SD card work (not Drive or other apps).
-// Vulkan: the renderer needs 1.3; a phone that declares less gets a warning before Play (the player may still try), and
+// Vulkan: the renderer needs 1.1; a phone that declares less gets a warning before Play (the player may still try), and
 // when the game stopped at Vulkan (nvn_vk.cpp: "nvn/vk: ..." at the end of nx.log) the next start says why.
 // Portrait (the manifest); the game itself is landscape. The interface is built in code (no layouts); texts in
 // Spanish or English by the phone's language.
@@ -57,8 +57,8 @@ public class Home extends Activity {
     static final int REQ_FOLDER = 1, REQ_DUMP = 2;
     static final String DUMP_LINE = "NX_ROMFS_DUMP=";
     static final String DUMP_NOTE = "# NX_ROMFS_DUMP: written by the Android launcher (the dump is not in the port folder)";
-    // The renderer needs Vulkan 1.3 (dynamic rendering, synchronization2): nvn_vk.cpp stops the game without it.
-    static final int VULKAN_13 = (1 << 22) | (3 << 12);
+    // The renderer needs Vulkan 1.1 (without 1.3 it uses render pass objects): nvn_vk.cpp stops the game without it.
+    static final int VULKAN_11 = (1 << 22) | (1 << 12);
 
     // The edition to play (japan | global): the one whose data is in the port folder; the player's choice if both are.
     String edition = "global";
@@ -107,7 +107,7 @@ public class Home extends Activity {
 
     String editionName() {
         return edition.equals("global") ? t("Edici\u00f3n global", "Global edition")
-                                        : t("Edici\u00f3n japonesa (cartucho)", "Japanese edition (cartridge)");
+                                        : t("Edici\u00f3n japonesa", "Japanese edition");
     }
 
     // ---- paths ------------------------------------------------------------------------------------------------------
@@ -303,7 +303,7 @@ public class Home extends Activity {
             r.readFully(b);
             String text = new String(b, StandardCharsets.UTF_8), found = null;
             for (String line : text.split("\n")) {
-                int i = line.indexOf("nvn/vk: ninguna GPU con Vulkan 1.3");
+                int i = line.indexOf("nvn/vk: ninguna GPU con Vulkan 1.");  // 1.1 now; 1.3 in logs of older builds
                 if (i >= 0) {
                     String d = line.substring(i);
                     int a = d.indexOf("): "), z = d.indexOf(". Actualizar");
@@ -372,16 +372,16 @@ public class Home extends Activity {
             vulkanProblem = true;
             s.append(t("La \u00faltima vez el juego se cerr\u00f3 porque la GPU no sirve:\n  ", "Last time the game stopped because the GPU cannot be used:\n  "))
              .append(failure).append("\n")
-             .append(t("El port necesita Vulkan 1.3. Si el tel\u00e9fono no lo tiene, solo una actualizaci\u00f3n del sistema "
+             .append(t("El port necesita Vulkan 1.1. Si el tel\u00e9fono no lo tiene, solo una actualizaci\u00f3n del sistema "
                      + "con un driver de GPU m\u00e1s nuevo lo arregla.\n\n",
-                       "The port needs Vulkan 1.3. If the phone does not have it, only a system update with a newer GPU "
+                       "The port needs Vulkan 1.1. If the phone does not have it, only a system update with a newer GPU "
                      + "driver can fix it.\n\n"));
-        } else if (vk < VULKAN_13) {
+        } else if (vk < VULKAN_11) {
             vulkanProblem = true;
             s.append(vk == 0 ? t("Este tel\u00e9fono no declara Vulkan", "This phone declares no Vulkan")
                              : t("Este tel\u00e9fono declara Vulkan ", "This phone declares Vulkan ") + versionText(vk))
-             .append(t(" y el juego necesita Vulkan 1.3: lo m\u00e1s probable es que se cierre al iniciar.\n\n",
-                       " and the game needs Vulkan 1.3: it will most likely stop when it starts.\n\n"));
+             .append(t(" y el juego necesita Vulkan 1.1: lo m\u00e1s probable es que se cierre al iniciar.\n\n",
+                       " and the game needs Vulkan 1.1: it will most likely stop when it starts.\n\n"));
         }
         s.append(t("Carpeta: ", "Folder: ")).append(f).append("\n\n");
         boolean main = new File(root, "analysis/main.bin").isFile(), sdk = new File(root, "analysis/sdk.bin").isFile();
@@ -443,7 +443,7 @@ public class Home extends Activity {
         final File dump = refresh();
         final String f = folder();
         if (dump == null || f == null || installing) return;
-        if (!vulkanConfirmed && vulkanVersion() < VULKAN_13) {
+        if (!vulkanConfirmed && vulkanVersion() < VULKAN_11) {
             askVulkan();
             return;
         }
@@ -489,17 +489,17 @@ public class Home extends Activity {
         } }).start();
     }
 
-    // The phone declares no Vulkan 1.3: say so before starting (the declared version can lag behind an updated driver,
+    // The phone declares no Vulkan 1.1: say so before starting (the declared version can lag behind an updated driver,
     // so the player may still try).
     void askVulkan() {
         int vk = vulkanVersion();
         String has = vk == 0 ? t("no declara Vulkan", "declares no Vulkan") : t("declara Vulkan ", "declares Vulkan ") + versionText(vk);
         new AlertDialog.Builder(this)
-            .setTitle(t("Vulkan 1.3 requerido", "Vulkan 1.3 required"))
-            .setMessage(t("El juego necesita una GPU con Vulkan 1.3 y este tel\u00e9fono " + has + ".\n\n"
+            .setTitle(t("Vulkan 1.1 requerido", "Vulkan 1.1 required"))
+            .setMessage(t("El juego necesita una GPU con Vulkan 1.1 y este tel\u00e9fono " + has + ".\n\n"
                         + "Lo m\u00e1s probable es que el juego se cierre al iniciar. Solo una actualizaci\u00f3n del "
                         + "sistema con un driver de GPU m\u00e1s nuevo lo arregla.",
-                          "The game needs a GPU with Vulkan 1.3 and this phone " + has + ".\n\n"
+                          "The game needs a GPU with Vulkan 1.1 and this phone " + has + ".\n\n"
                         + "The game will most likely stop when it starts. Only a system update with a newer GPU driver "
                         + "can fix it."))
             .setNegativeButton(t("Volver", "Back"), null)

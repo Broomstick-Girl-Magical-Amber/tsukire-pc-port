@@ -77,6 +77,54 @@ VkShaderStageFlags stage_bit(ShaderStage s) {
                                         : VK_SHADER_STAGE_COMPUTE_BIT;
 }
 
+// AP_VK11 (apply_vk11.py): removes the capability declarations a module makes but never uses, on a GPU without them.
+// Every translated shader declares FragmentShaderPixelInterlockEXT (and the extension), many GroupNonUniform*, and
+// none uses them; a Vulkan 1.1 Mali (no interlock, subgroups in fragment and compute only) refused the pipelines.
+// Only OpCapability / OpExtension words of the header go, so no id changes. A module that does use them is kept.
+// Returns whether something was removed.
+bool strip_unused_caps(std::vector<uint32_t>& code, bool interlock, bool subgroup) {
+    if ((!interlock && !subgroup) || code.size() < 5 || code[0] != 0x07230203u) return false;
+    bool uses_interlock = false, uses_subgroup = false;
+    std::vector<size_t> heads;  // OpCapability and OpExtension instructions
+    for (size_t i = 5; i < code.size();) {
+        const uint32_t op = code[i] & 0xffff, n = code[i] >> 16;
+        if (!n || i + n > code.size()) return false;  // malformed: left alone
+        if (op == 5364 || op == 5365 || (op == 16 && n >= 3 && code[i + 2] >= 5366 && code[i + 2] <= 5371))
+            uses_interlock = true;  // OpBegin/EndInvocationInterlockEXT, an interlock execution mode
+        if ((op >= 333 && op <= 366) || op == 4421 || op == 4422 || (op >= 4428 && op <= 4430) || op == 4432 ||
+            (op == 71 && n >= 4 && code[i + 2] == 11 &&
+             ((code[i + 3] >= 36 && code[i + 3] <= 41) || (code[i + 3] >= 4416 && code[i + 3] <= 4420))))
+            uses_subgroup = true;  // a subgroup instruction or a subgroup built-in
+        if (op == 17 || op == 10) heads.push_back(i);
+        i += n;
+    }
+    std::vector<bool> drop(code.size(), false);
+    bool any = false;
+    for (size_t i : heads) {
+        const uint32_t op = code[i] & 0xffff, n = code[i] >> 16;
+        bool go = false;
+        if (op == 17 && n >= 2) {
+            const uint32_t cap = code[i + 1];
+            if (interlock && !uses_interlock && (cap == 5363 || cap == 5372 || cap == 5378)) go = true;
+            if (subgroup && !uses_subgroup && cap >= 61 && cap <= 68) go = true;
+        } else if (op == 10 && n >= 2 && interlock && !uses_interlock) {
+            const char* s = reinterpret_cast<const char*>(&code[i + 1]);
+            go = strnlen(s, size_t(n - 1) * 4) == 33 && std::memcmp(s, "SPV_EXT_fragment_shader_interlock", 33) == 0;
+        }
+        if (go) drop[i] = any = true;
+    }
+    if (!any) return false;
+    std::vector<uint32_t> out(code.begin(), code.begin() + 5);
+    out.reserve(code.size());
+    for (size_t i = 5; i < code.size();) {
+        const uint32_t n = code[i] >> 16;
+        if (!drop[i]) out.insert(out.end(), code.begin() + i, code.begin() + i + n);
+        i += n;
+    }
+    code.swap(out);
+    return true;
+}
+
 // `kinds`: per vertex input location, 0 float or the integer kind of its attribute format (vertex_int_kind).
 // `unwritten`: fragment input locations the vertex stage does not write (default_unwritten_inputs).
 VkShaderModule module_of(const ShaderInfo* s, const uint8_t* kinds = nullptr, uint32_t unwritten = 0) {
@@ -114,6 +162,11 @@ VkShaderModule module_of(const ShaderInfo* s, const uint8_t* kinds = nullptr, ui
                     }
                 std::remove(in.c_str()), std::remove(out.c_str());
             }
+        }
+        if (strip_unused_caps(code, vk_spv_strip_interlock(), vk_spv_strip_subgroup())) {  // AP_VK11
+            static int stripped = 0;
+            if (++stripped == 1 || stripped % 100 == 0)
+                log("nvn/vk: shaders: unused capability declarations removed in %d modules so far", stripped);
         }
         VkShaderModuleCreateInfo ci{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
         ci.codeSize = code.size() * 4;

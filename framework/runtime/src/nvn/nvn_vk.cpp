@@ -62,6 +62,8 @@ VkSurfaceTransformFlagBitsKHR g_sc_transform = VK_SURFACE_TRANSFORM_IDENTITY_BIT
 VkFormat g_sc_format = VK_FORMAT_B8G8R8A8_UNORM;
 VkSemaphore g_acquired = VK_NULL_HANDLE, g_rendered = VK_NULL_HANDLE;
 VkBool32 g_depth_clip_control = VK_FALSE;
+// AP_VK11: dynamic rendering (Vulkan 1.3) on this GPU, and whether unused shader capability declarations must go.
+bool g_dynamic_rendering = true, g_spv_strip_interlock = false, g_spv_strip_subgroup = false;
 bool g_integrated = false;
 bool g_require_sg32 = false;  // compute pipelines are made with a required subgroup size of 32 (Maxwell's warp)  // the chosen GPU is an integrated one (unified memory, the GPU is the long side)
 VkPhysicalDeviceFeatures g_features{};  // the core features enabled (vk_features())
@@ -172,19 +174,14 @@ void* g_gipa = nullptr;  // vkGetInstanceProcAddr, for surfaces made later (make
 bool make_surface();
 
 #ifdef NX_VK_REQUIRE_13  // AP_VK_REQ (apply_vk_requirements.py)
-// El render usa funciones core de Vulkan 1.3 (dynamic rendering, synchronization2): con un device 1.2 esos punteros
-// quedan nulos y el primer submit salta a 0. Se elige una GPU que cumpla; si ninguna, un aviso claro y la salida.
-// NX_VK_SKIP_CHECK=1: sin la verificacion.
+// AP_VK11 (apply_vk11.py): Vulkan 1.1 is enough. Without 1.3's dynamic rendering the passes are render pass and
+// framebuffer objects (nvn_renderpass.cpp), synchronization2 is not used, and shader capabilities the GPU lacks but
+// no instruction uses are removed (nvn_pipeline.cpp). A GPU with 1.1 is chosen; if none, a clear warning and exit
+// (code 5). NX_VK_SKIP_CHECK=1: no check.
 bool vk_req_ok(VkPhysicalDevice pd, VkPhysicalDeviceProperties& p) {
     p = {};
     p_vkGetPhysicalDeviceProperties(pd, &p);
-    if (VK_API_VERSION_MAJOR(p.apiVersion) == 1 && VK_API_VERSION_MINOR(p.apiVersion) < 3) return false;
-    if (!p_vkGetPhysicalDeviceFeatures2) return false;
-    VkPhysicalDeviceVulkan13Features f13{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
-    VkPhysicalDeviceFeatures2 f{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
-    f.pNext = &f13;
-    p_vkGetPhysicalDeviceFeatures2(pd, &f);
-    return f13.dynamicRendering && f13.synchronization2;
+    return VK_API_VERSION_MAJOR(p.apiVersion) > 1 || VK_API_VERSION_MINOR(p.apiVersion) >= 1;
 }
 
 VkPhysicalDevice vk_req_pick(const std::vector<VkPhysicalDevice>& gpus, VkPhysicalDevice chosen) {
@@ -208,25 +205,25 @@ VkPhysicalDevice vk_req_pick(const std::vector<VkPhysicalDevice>& gpus, VkPhysic
         if (best) {
             VkPhysicalDeviceProperties q{};
             p_vkGetPhysicalDeviceProperties(best, &q);
-            log("nvn/vk: %s: sin Vulkan 1.3 (dynamic rendering, synchronization2); se usa %s", why, q.deviceName);
+            log("nvn/vk: %s: sin Vulkan 1.1; se usa %s", why, q.deviceName);  // AP_VK11
             return best;
         }
     }
-    log("nvn/vk: ninguna GPU con Vulkan 1.3 (dynamic rendering, synchronization2): %s. Actualizar el driver de la "
+    log("nvn/vk: ninguna GPU con Vulkan 1.1 (o mas nueva): %s. Actualizar el driver de la "
         "GPU (NX_VK_SKIP_CHECK=1 omite esta verificacion)", why);
-    std::fprintf(stderr, "nvn/vk: se necesita Vulkan 1.3; la GPU tiene %s. Actualiza el driver de la GPU.\n", why);
+    std::fprintf(stderr, "nvn/vk: se necesita Vulkan 1.1; la GPU tiene %s. Actualiza el driver de la GPU.\n", why);
     std::fflush(stderr);
 #if defined(_WIN32)
     wchar_t msg[1024];
     std::swprintf(msg, sizeof msg / sizeof msg[0],
-                  L"El juego necesita Vulkan 1.3 y esta GPU o su driver no lo soportan.\n\n"
+                  L"El juego necesita Vulkan 1.1 y esta GPU o su driver no lo soportan.\n\n"
                   L"GPU: %hs\n\n"
                   L"Actualiza el driver de la GPU desde la p\u00e1gina del fabricante (Intel: Intel Driver & Support "
                   L"Assistant; AMD: Adrenalin; NVIDIA: GeForce/Studio), no desde Windows Update.\n\n"
-                  L"This GPU or its driver does not support Vulkan 1.3. Please update the GPU driver.\n\n"
+                  L"This GPU or its driver does not support Vulkan 1.1. Please update the GPU driver.\n\n"
                   L"NX_VK_SKIP_CHECK=1 omite esta verificaci\u00f3n.",
                   why);
-    ::MessageBoxW(nullptr, msg, L"Vulkan 1.3 requerido", 0x10 /* MB_ICONERROR */);
+    ::MessageBoxW(nullptr, msg, L"Vulkan 1.1 requerido", 0x10 /* MB_ICONERROR */);
 #endif
     _exit(5);
 }
@@ -345,8 +342,10 @@ bool init() {
         void* pNext = nullptr;
         VkBool32 fields[15] = {};
     } fport;
-    features.pNext = &f13;
-    void** tail = &f13.pNext;
+    // AP_VK11: the 1.3 features only on a 1.3 device (a 1.1 device does not know the structure).
+    void** tail = &features.pNext;
+    if (VK_API_VERSION_MAJOR(props.apiVersion) > 1 || VK_API_VERSION_MINOR(props.apiVersion) >= 3)
+        *tail = &f13, tail = &f13.pNext;
     if (has_extension(dext, "VK_EXT_index_type_uint8")) {
         dexts.push_back("VK_EXT_index_type_uint8");
         *tail = &fu8, tail = &fu8.pNext;
@@ -374,6 +373,25 @@ bool init() {
             g_require_sg32 ? "pinned to 32" : "left to the driver");
     }
     g_depth_clip_control = fclip.depthClipControl;
+    {   // AP_VK11: what a Vulkan 1.1 GPU lacks. Dynamic rendering: render pass objects instead. Fragment shader
+        // interlock and subgroups that do not cover every stage and operation: the translated shaders declare them
+        // without using them, and those declarations are removed (nvn_pipeline.cpp). NX_SPV_STRIP=1|0 forces it.
+        g_dynamic_rendering = f13.dynamicRendering;
+        VkPhysicalDeviceSubgroupProperties sg{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES};
+        VkPhysicalDeviceProperties2 p2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
+        p2.pNext = &sg;
+        p_vkGetPhysicalDeviceProperties2(g_physical, &p2);
+        const VkShaderStageFlags all = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
+        g_spv_strip_interlock = !has_extension(dext, "VK_EXT_fragment_shader_interlock");
+        g_spv_strip_subgroup = (sg.supportedStages & all) != all || (sg.supportedOperations & 0xff) != 0xff;
+        if (const char* e = std::getenv("NX_SPV_STRIP"); e && (e[0] == '0' || e[0] == '1'))
+            g_spv_strip_interlock = g_spv_strip_subgroup = e[0] == '1';
+        log("nvn/vk: Vulkan %u.%u: dynamic rendering %s; shaders: unused interlock declarations %s, unused subgroup "
+            "declarations %s (subgroup stages %x, operations %x)", VK_API_VERSION_MAJOR(props.apiVersion),
+            VK_API_VERSION_MINOR(props.apiVersion), g_dynamic_rendering ? "yes" : "no",
+            g_spv_strip_interlock ? "removed" : "kept", g_spv_strip_subgroup ? "removed" : "kept",
+            unsigned(sg.supportedStages), unsigned(sg.supportedOperations));
+    }
     g_features = features.features;
     // NX_ASTC_DECODE=1|linear|srgb: the CPU decoder even where the GPU has ASTC (to compare the two on one GPU).
     set_astc_native(g_features.textureCompressionASTC_LDR);
@@ -568,6 +586,9 @@ VkPhysicalDevice vk_physical() { return g_physical; }
 VkQueue vk_queue() { return g_queue; }
 uint32_t vk_queue_family() { return g_family; }
 bool vk_depth_clip_control() { return g_depth_clip_control; }
+bool vk_dynamic_rendering() { return g_dynamic_rendering; }  // AP_VK11
+bool vk_spv_strip_interlock() { return g_spv_strip_interlock; }
+bool vk_spv_strip_subgroup() { return g_spv_strip_subgroup; }
 const VkPhysicalDeviceFeatures& vk_features() { return g_features; }
 bool gpu_is_integrated() { return g_integrated; }
 bool gpu_require_subgroup32() { return g_require_sg32; }

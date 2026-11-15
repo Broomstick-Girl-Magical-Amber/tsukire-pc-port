@@ -2,7 +2,7 @@
 """spv_inventory.py - what the SPIR-V modules of a folder ask of the Vulkan device (read only).
 
 Usage (in <root>):
-  python tools\\dev\\spv_inventory.py data\\tsuki\\spirv [more folders or .spv files]
+  python tools\\dev\\spv_inventory.py data\\tsuki\\spirv [more folders or .spv files] [--usage]
 
 For every *.spv found (recursively) it reads the header and the leading OpCapability / OpExtension /
 OpExtInstImport / OpEntryPoint instructions and prints:
@@ -11,6 +11,9 @@ OpExtInstImport / OpEntryPoint instructions and prints:
   - every capability and extension with the number of modules that declare it, and the Vulkan feature or
     extension a 1.1 device must have for it,
   - the modules above SPIR-V 1.3, by name.
+With --usage it also scans every instruction and says, per stage, how many modules DECLARE fragment shader
+interlock / subgroup capabilities and how many actually USE them (interlock begin/end and execution modes,
+subgroup instructions, subgroup built-ins), to tell whether the declarations can be dropped for a device without them.
 It writes nothing.
 """
 import os
@@ -117,11 +120,82 @@ def read_module(path):
     return version, caps, exts, imports, models
 
 
+# --usage: instructions and built-ins that really need the capabilities
+OP_DECORATE, OP_EXECUTION_MODE = 71, 16
+INTERLOCK_OPS = {5364: "OpBeginInvocationInterlockEXT", 5365: "OpEndInvocationInterlockEXT"}
+INTERLOCK_MODES = {5366, 5367, 5368, 5369, 5370, 5371}  # PixelInterlockOrdered/Unordered, SampleInterlock..., ShadingRateInterlock...
+SUBGROUP_OPS = set(range(333, 367)) | {4421, 4422, 4428, 4429, 4430, 4432}  # OpGroupNonUniform*, SPV_KHR_shader_ballot/subgroup_vote
+SUBGROUP_BUILTINS = {36, 37, 38, 39, 40, 41, 4416, 4417, 4418, 4419, 4420}  # SubgroupSize, ...LocalInvocationId, masks
+
+
+def scan_usage(path):
+    """(execution models, interlock used, subgroup instructions used, subgroup built-ins used, opcodes seen)"""
+    with open(path, "rb") as f:
+        raw = f.read()
+    endian = "<" if struct.unpack_from("<I", raw)[0] == MAGIC else ">"
+    words = struct.unpack(endian + "%dI" % (len(raw) // 4), raw)
+    models, interlock, subgroup_ops, subgroup_builtins = set(), set(), set(), set()
+    i = 5
+    while i < len(words):
+        op, count = words[i] & 0xFFFF, words[i] >> 16
+        if count == 0 or i + count > len(words):
+            break
+        if op == OP_ENTRY_POINT and count >= 2:
+            models.add(words[i + 1])
+        elif op in INTERLOCK_OPS:
+            interlock.add(INTERLOCK_OPS[op])
+        elif op == OP_EXECUTION_MODE and count >= 3 and words[i + 2] in INTERLOCK_MODES:
+            interlock.add("execution mode %d" % words[i + 2])
+        elif op in SUBGROUP_OPS:
+            subgroup_ops.add(op)
+        elif op == OP_DECORATE and count >= 4 and words[i + 2] == 11 and words[i + 3] in SUBGROUP_BUILTINS:
+            subgroup_builtins.add(words[i + 3])  # Decoration BuiltIn = 11
+        i += count
+    return models, interlock, subgroup_ops, subgroup_builtins
+
+
+def usage_report(files):
+    caps_of = {}
+    for path in files:
+        m = read_module(path)
+        if m is not None:
+            caps_of[path] = set(m[1])
+    rows = defaultdict(Counter)  # stage -> counters
+    examples = defaultdict(list)
+    for path, caps in caps_of.items():
+        models, interlock, sg_ops, sg_bi = scan_usage(path)
+        stage = "/".join(sorted(MODELS.get(k, str(k)) for k in models)) or "?"
+        r = rows[stage]
+        r["modules"] += 1
+        if 5378 in caps or 5363 in caps or 5372 in caps:
+            r["declare interlock"] += 1
+        if interlock:
+            r["USE interlock"] += 1
+            examples[(stage, "interlock")].append("%s (%s)" % (os.path.basename(path), ", ".join(sorted(interlock))))
+        if caps & {61, 62, 63, 64, 65, 66, 67, 68, 4423, 4431}:
+            r["declare subgroup"] += 1
+        if sg_ops or sg_bi:
+            r["USE subgroup"] += 1
+            examples[(stage, "subgroup")].append("%s (ops %s, built-ins %s)" % (
+                os.path.basename(path), sorted(sg_ops), sorted(sg_bi)))
+    print("usage (--usage): per stage, modules that declare a capability and modules that really use it")
+    for stage in sorted(rows):
+        r = rows[stage]
+        print("  %-10s modules %4d | interlock: declare %4d, USE %4d | subgroup: declare %4d, USE %4d" % (
+            stage, r["modules"], r["declare interlock"], r["USE interlock"], r["declare subgroup"], r["USE subgroup"]))
+    for (stage, what), lst in sorted(examples.items()):
+        print("  %s modules that use %s (first 10 of %d):" % (stage, what, len(lst)))
+        for e in lst[:10]:
+            print("    " + e)
+
+
 def version_text(v):
     return "%d.%d" % (v >> 16 & 0xFF, v >> 8 & 0xFF)
 
 
 def main(argv):
+    usage = "--usage" in argv
+    argv = [a for a in argv if a != "--usage"]
     if len(argv) < 2:
         print(__doc__)
         return 2
@@ -172,6 +246,8 @@ def main(argv):
             print("  " + p)
     for p in bad:
         print("not SPIR-V: " + p)
+    if usage:
+        usage_report([p for p in files if p not in bad])
     return 0
 
 

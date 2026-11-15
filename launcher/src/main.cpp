@@ -583,8 +583,8 @@ void OnGameExit(DWORD code) {
     switch (code) {
     case 0: return;   // closed normally (also with the X)
     case 4: t = L2(L"The game stopped because the GPU stopped responding (code 4).", L"El juego se detuvo porque la GPU dej\u00f3 de responder (c\u00f3digo 4)."); break;
-    case 5: t = L2(L"Your graphics driver does not support Vulkan 1.3 (code 5). Update the graphics driver and try again.",
-                   L"Tu driver de video no soporta Vulkan 1.3 (c\u00f3digo 5). Actualiza el driver de video y vuelve a intentarlo."); break;
+    case 5: t = L2(L"Your graphics driver does not support Vulkan 1.1 (code 5). Update the graphics driver and try again.",
+                   L"Tu driver de video no soporta Vulkan 1.1 (c\u00f3digo 5). Actualiza el driver de video y vuelve a intentarlo."); break;
     case 6: t = L2(L"Vulkan is not available on this PC (code 6). The game needs a GPU with a Vulkan driver (a virtual machine usually has none).",
                    L"Vulkan no est\u00e1 disponible en este PC (c\u00f3digo 6). El juego necesita una GPU con driver Vulkan (una m\u00e1quina virtual normalmente no tiene)."); break;
     default:

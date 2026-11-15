@@ -31,7 +31,7 @@
 #   6 venv           framework\private\venv with tools\requirements.txt (exact versions)
 #   7 nsextract      dotnet build tools\nsextract (C#, LibHac from NuGet): the extractor recomp_tsukihime.ps1 uses (AP_DROP_UNUSED)
 #   8 ryubing        private\third_party\ryubing (Codeberg tarball, verified tree) + spirv_harness
-#   9 gpu            Vulkan 1.3 + dynamicRendering + synchronization2 (warning only)
+#   9 gpu            Vulkan 1.1 or newer (warning only; without 1.3's dynamicRendering the game uses render pass objects)
 #  10 cross check    recomp_tsukihime.ps1 -From 0 -To 0 (only with -CrossRecomp)
 #  11 summary        what is ready, what is left to do by hand and the recomp_tsukihime.ps1 command
 #
@@ -1122,16 +1122,13 @@ function Step9 {
     if (-not $gpus.Count) { Warn "vulkaninfo lists no GPU (code $($r.Code)): driver without Vulkan?"; $script:GpuOk = $false; return }
     $any = $false
     foreach ($g in $gpus) {
-        $ok = $g.Api -and $g.Api -ge [version]'1.3' -and $g.Dyn -and $g.Sync2
-        $missing = @()
-        if (-not $g.Api -or $g.Api -lt [version]'1.3') { $missing += "Vulkan $($g.Api)" }
-        if (-not $g.Dyn) { $missing += 'no dynamicRendering' }
-        if (-not $g.Sync2) { $missing += 'no synchronization2' }
+        $ok = $g.Api -and $g.Api -ge [version]'1.1'
         $t = "GPU $($g.Id): $($g.Name) ($($g.Type)), Vulkan $($g.Api), driver $($g.Driver)"
-        if ($ok) { Info "$t -> OK"; if ($g.Type -notmatch 'CPU') { $any = $true } } else { Warn "$t -> not usable to play: $($missing -join ', ')" }
+        $note = if ($ok -and -not $g.Dyn) { ' (no dynamicRendering: render pass objects)' } else { '' }
+        if ($ok) { Info "$t -> OK$note"; if ($g.Type -notmatch 'CPU') { $any = $true } } else { Warn "$t -> not usable to play: Vulkan $($g.Api) (1.1 or newer needed)" }
     }
     $script:GpuOk = $any
-    if ($any) { $script:Done.Add('GPU with Vulkan 1.3 to play') }
+    if ($any) { $script:Done.Add('GPU with Vulkan 1.1 to play') }
     elseif ($OnLinux) { Warn 'no GPU is usable to play (building is possible): in a VM it is normal (llvmpipe); on a PC, Mesa or NVIDIA Vulkan driver' }
     else { Warn 'no GPU is usable to play (building is possible): update the driver from the manufacturer (Intel Driver & Support Assistant, NVIDIA, AMD)' }
 }

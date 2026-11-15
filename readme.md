@@ -20,7 +20,7 @@ This project is a fork of [SuperMarioWonderRecomp](https://github.com/BelmanteGu
 - **A Windows launcher (`tsukihime_launcher.exe`) to play**, manage saves and edit controls. On Linux (tested with Proton), the recompilation is still done from the console. [Get it from Releases](https://github.com/Broomstick-Girl-Magical-Amber/tsukire-pc-port/releases).
 - One command installs everything and builds the game, on Windows (about **6 minutes**) and on Linux.
 - **The port reads your dump directly.** The `.xci` / `.nsp` stays in the repository root and the game reads its files from it. Nothing is extracted.
-- Android port is supported, but only on high-end phones for now (it needs Vulkan 1.3, so I'm working on Vulkan 1.1 support). See the [Android readme](./readme_android.md) for the installation steps.
+- Android port is supported on phones. See the [Android readme](./readme_android.md) for the installation steps.
 - Community patches in `.nsp` format (tested with translation patches on the Japanese edition, on Windows and Linux). See [Updates and patches](#updates-and-patches).
 - Saves are in `data/tsuki/user/save` (Japanese) and `data/tsuki_global/user/save` (global). Saves from an emulator or a Switch save dump can be imported. Back them up before updating or rebuilding.
 - Tested on real hardware with Windows 10, Windows 11 and Ubuntu (Intel, AMD and NVIDIA GPUs), and on Windows 10 and Ubuntu virtual machines.
@@ -52,14 +52,13 @@ This project is a fork of [SuperMarioWonderRecomp](https://github.com/BelmanteGu
 
 **Known limitations**
 
-- You need a GPU and driver with **Vulkan 1.3** (including `dynamicRendering` and `synchronization2`). An older driver crashes: **update your GPU drivers**. Without a GPU, software rendering (`llvmpipe`) works on Linux but is slow.
+- You need a GPU and driver with **Vulkan 1.1** or newer. If the game says the driver is too old: **update your GPU drivers**. Without a GPU, software rendering (`llvmpipe`) works on Linux but is slow.
 - Discord Rich Presence shows the wrong route if you jump into the middle of a day of the other route.
 - On Linux the build is the same Windows `.exe`, played with Proton. Plain Wine is not supported.
 
 **To do (also open for the community)**
 
 - Native Linux build.
-- Vulkan 1.1 Support
 
 ## Screenshots
 
@@ -88,7 +87,7 @@ Some heroines and scenes. Hisui comes first by arbitrary choice.
 - A legal dump of the game, **base version v0 (1.0.0) only**, as `.xci` or `.nsp`, one per edition. Either edition works in either format. An `.nsp` that bundles an update, or an already updated dump, is rejected (updates and patches go in `updates\`). An `.xci` with an update partition is fine: only its base game is read.
 - Your own `prod.keys`.
 - Disk space: the dump itself (about 21–23 GB; it stays, because the game reads it) plus about **3 GB per edition** for `data\` and `build\`. On Windows the tools take about **5 GB more on `C:`** (`%LOCALAPPDATA%\tsuki-tools`).
-- A GPU with Vulkan 1.3 to play.
+- A GPU with Vulkan 1.1 or newer to play.
 
 ## Dump and keys
 

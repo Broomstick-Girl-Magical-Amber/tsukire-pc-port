@@ -30,7 +30,7 @@ For players (Windows; on Linux the `.sh` next to each script takes the same opti
    The launcher does the same: "Install and recompile" tab, "Android" sub-tab (after recompiling in "Windows").
 3. Without sending: copy the contents of `_android\global\phone` to a folder of the phone and put the `.xci`/`.nsp` in it
    (or choose the dump in the app).
-4. In the app: grant the access, choose the folder, Play. The game needs a GPU with Vulkan 1.3: on a phone that declares
+4. In the app: grant the access, choose the folder, Play. The game needs a GPU with Vulkan 1.1: on a phone that declares
    less, the app warns before Play, and after a stop at Vulkan it says why.
 
 For the maintainer (the APK and the Android pack): Android Studio with an NDK (r27 or newer), Build-Tools, Platform-Tools

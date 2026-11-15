@@ -545,7 +545,7 @@ def main():
 # -Extract: the full extraction with nsextract (extract\\romfs), as before. An extract\\romfs from before is not
 # deleted: while it is there the exe reads it first; delete it by hand to free the space.
 # -TrimXci: cuts the 0xFF padding at the end of the .xci of this edition, in place (everything after the data is checked
-# to be 0xFF first; ~8.5 GB in the japanese cartridge; tools\\internal\\romfs_source.py untrim --input <xci> --apply
+# to be 0xFF first; ~8.5 GB in a japanese .xci; tools\\internal\\romfs_source.py untrim --input <xci> --apply
 # undoes it). Keys: if <root>\\data\\prod.keys does not exist and <root>\\prod.keys does, it is MOVED to data\\.
 '''),
     (RECO,
