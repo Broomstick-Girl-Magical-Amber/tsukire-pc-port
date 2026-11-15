@@ -261,14 +261,28 @@ void log_line(const char* line) { __android_log_write(ANDROID_LOG_INFO, nx::game
 
 std::string data_root() { return g_root; }
 
+// AP_LANGUAGE_CACHE (apply_language_cache.py): config.txt is read once per data root and kept, not opened on every
+// call (the language was asked hundreds of times a second, and opening a file on shared storage costs about a
+// millisecond). The home screen writes it before the game starts; the process ends with the game.
 std::string setting(const std::string& key) {
-    std::ifstream f(g_root + "/config.txt");
-    std::string line;
-    while (std::getline(f, line)) {
-        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
-        auto eq = line.find('=');
-        if (eq != std::string::npos && line.substr(0, eq) == key) return line.substr(eq + 1);
+    static std::mutex m;
+    static std::string root;
+    static std::vector<std::pair<std::string, std::string>> lines;  // (key, value) in file order
+    static bool loaded = false;
+    std::lock_guard lk(m);
+    if (!loaded || root != g_root) {
+        lines.clear();
+        std::ifstream f(g_root + "/config.txt");
+        std::string line;
+        while (std::getline(f, line)) {
+            while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+            auto eq = line.find('=');
+            if (eq != std::string::npos) lines.push_back({line.substr(0, eq), line.substr(eq + 1)});
+        }
+        root = g_root, loaded = true;
     }
+    for (auto& [k, v] : lines)
+        if (k == key) return v;
     return {};
 }
 

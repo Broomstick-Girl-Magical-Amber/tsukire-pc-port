@@ -159,6 +159,8 @@ $Markers = @(
     @('japan', 'tools\internal\regen_tsuki.ps1', 'AP_RECOMP_HOOKS', 'apply_recomp_hooks.py', $false),
     @('both', 'framework\games\tsukihime_common\hle_hooks_tsuki.cpp', 'AP_RECOMP_HOOKS', 'hle_hooks_tsuki.cpp (in the repo)', $false),
     @('both', 'framework\runtime\src\language.h', 'AP_LANG_DEFAULT', 'apply_game_language.py', $false),
+    @('both', 'framework\runtime\src\language.h', 'AP_LANGUAGE_CACHE', 'apply_language_cache.py', $false),
+    @('both', 'framework\runtime\src\platform_android.cpp', 'AP_LANGUAGE_CACHE', 'apply_language_cache.py', $false),
     @('both', 'framework\games\tsukihime_common\tsukihime_common.cmake', 'NX_TSUKI_COMMON', 'games\tsukihime_common (shared code, in the repo)', $false),
     @('both', 'framework\games\tsukihime_common\hle_movie.cpp', 'write_frame_to_texture', 'apply_movie_texture.py', $false),
     @('both', 'framework\runtime\src\platform_win.cpp', 'AP_DATA_ROOT_EXE', 'apply_data_root_exe.py', $false),
