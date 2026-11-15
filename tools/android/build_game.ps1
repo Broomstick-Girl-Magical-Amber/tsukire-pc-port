@@ -6,8 +6,10 @@
 #   .\tools\android\build_game.ps1 -Edition japan -Pack <tsukire-android-pack-vN.zip or its folder>
 #   Linux: bash tools/android/build_game.sh -Edition global
 #
-# The pack: <root>\_prepare\android-pack. If it is not there it comes from -Pack, or is downloaded from the URL of
-# tools\internal\android_pack.json (checked against its SHA-256). It has nothing of the game: the runtime built for
+# The pack: <root>\_prepare\android-pack. If it is not there, or its version is older than the one pinned in
+# tools\internal\android_pack.json (the pack published with this copy of the repo), it comes from -Pack or is downloaded
+# from the URL of that file (checked against its SHA-256). A pack made here with tools\dev\build_android_pack.ps1 and
+# a version equal to or newer than the pinned one is kept. It has nothing of the game: the runtime built for
 # Android, FFmpeg and the other libraries, and the Android headers and libraries the compiler needs.
 # Output: <root>\_android\<edition>\lib<game>.so. It is derived from your dump: for your own phone, never publish it.
 # Then: tools\android\phone_data.ps1 -Edition <edition> puts it, with the data, in the folder for the phone.
@@ -30,6 +32,26 @@ function NinjaPath([string]$p) { return (($p -replace '\\', '/') -replace '([ :$
 function NinjaText([string]$t) { return $t.Replace('$', '$$') }
 # A path as a quoted command-line argument.
 function Quoted([string]$p) { return '"' + ($p -replace '\\', '/') + '"' }
+
+# Compares two pack versions ("1.1.3", "1.1.2-pre"): -1, 0 or 1. Numbers part by part (missing parts are 0); with the
+# same numbers, a pre-release ("-pre") is older than the release. A version that is not like that compares as equal.
+function CompareVersion([string]$a, [string]$b) {
+    $ma = [regex]::Match($a.Trim(), '^v?(\d+(?:\.\d+)*)(?:-(.+))?$')
+    $mb = [regex]::Match($b.Trim(), '^v?(\d+(?:\.\d+)*)(?:-(.+))?$')
+    if (-not $ma.Success -or -not $mb.Success) { return 0 }
+    $na = @($ma.Groups[1].Value.Split('.') | ForEach-Object { [int64]$_ })
+    $nb = @($mb.Groups[1].Value.Split('.') | ForEach-Object { [int64]$_ })
+    for ($i = 0; $i -lt [Math]::Max($na.Count, $nb.Count); $i++) {
+        $x = if ($i -lt $na.Count) { $na[$i] } else { 0 }
+        $y = if ($i -lt $nb.Count) { $nb[$i] } else { 0 }
+        if ($x -ne $y) { return $(if ($x -lt $y) { -1 } else { 1 }) }
+    }
+    $pa = $ma.Groups[2].Success; $pb = $mb.Groups[2].Success
+    if ($pa -and -not $pb) { return -1 }
+    if ($pb -and -not $pa) { return 1 }
+    if ($pa -and $pb) { return [Math]::Sign([string]::CompareOrdinal($ma.Groups[2].Value, $mb.Groups[2].Value)) }
+    return 0
+}
 
 function Unzip([string]$zip, [string]$dst) {
     Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
@@ -55,6 +77,20 @@ try {
     }
 
     # ------------------------------------------------------------------------------------------------ the pack
+    $pinFile = Under $Root 'tools\internal\android_pack.json'
+    $pin = $null
+    if (Test-Path -LiteralPath $pinFile) { $pin = Get-Content -LiteralPath $pinFile -Raw | ConvertFrom-Json }
+    # A pack here older than the pinned one (made before the repo was updated) is replaced by the published one: the
+    # runtime is in the pack, so an old pack builds the game without the runtime's newer fixes.
+    $stale = $false
+    $localPj = Join-Path $packDir 'pack.json'
+    if (-not $Pack -and $pin -and "$($pin.url)" -and (Test-Path -LiteralPath $localPj)) {
+        $have = "$((Get-Content -LiteralPath $localPj -Raw | ConvertFrom-Json).version)"
+        if ((CompareVersion $have "$($pin.version)") -lt 0) {
+            Info "the Android pack in $packDir is v$have, older than the published v$($pin.version): it is replaced"
+            $stale = $true
+        }
+    }
     if ($Pack) {
         if (Test-Path -LiteralPath $Pack -PathType Container) {
             if (-not (Test-Path -LiteralPath (Join-Path $Pack 'pack.json'))) { Fail "$Pack is not an Android pack (no pack.json)" }
@@ -63,10 +99,7 @@ try {
             Info "unpacking $Pack"
             Unzip ([IO.Path]::GetFullPath($Pack)) $packDir
         } else { Fail "-Pack ${Pack}: not found" }
-    } elseif (-not (Test-Path -LiteralPath (Join-Path $packDir 'pack.json'))) {
-        $pinFile = Under $Root 'tools\internal\android_pack.json'
-        $pin = $null
-        if (Test-Path -LiteralPath $pinFile) { $pin = Get-Content -LiteralPath $pinFile -Raw | ConvertFrom-Json }
+    } elseif ($stale -or -not (Test-Path -LiteralPath $localPj)) {
         if (-not $pin -or -not "$($pin.url)") { Fail "no Android pack in $packDir and none published yet (tools\internal\android_pack.json): pass -Pack <zip>, or make it with tools\dev\build_android_pack.ps1" }
         $dl = Under $Root "_prepare\downloads\android-pack-v$($pin.version).zip"
         New-Item -ItemType Directory -Path (Split-Path -Parent $dl) -Force | Out-Null
