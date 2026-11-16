@@ -67,6 +67,8 @@ bool g_dynamic_rendering = true, g_spv_strip_interlock = false, g_spv_strip_subg
 bool g_integrated = false;
 bool g_require_sg32 = false;  // compute pipelines are made with a required subgroup size of 32 (Maxwell's warp)  // the chosen GPU is an integrated one (unified memory, the GPU is the long side)
 VkPhysicalDeviceFeatures g_features{};  // the core features enabled (vk_features())
+// AP_VK_E3: optional capabilities the device was created with (format list, mirror clamp to edge, A4B4G4R4).
+bool g_e3_format_list = false, g_e3_mirror_clamp = false, g_e3_4444 = false;
 VkDescriptorPool g_descriptors = VK_NULL_HANDLE;
 
 // The per-submit upload buffer (nvn_vk.h): one host-visible buffer, bump-allocated, reset at every submit.
@@ -358,7 +360,50 @@ bool init() {
         dexts.push_back("VK_KHR_portability_subset");
         *tail = &fport, tail = &fport.pNext;
     }
+    // AP_VK_E3: the format list (core 1.2, extension on 1.1), mirror clamp to edge (extension, or the 1.2 feature
+    // below) and A4B4G4R4 (core 1.3, extension before), each enabled only where the GPU has it. NX_VK_LIMIT=<list>
+    // (format_list, mirror_clamp, 4444, all) leaves one out to test its fallback.
+    const bool e3_12 = VK_API_VERSION_MAJOR(props.apiVersion) > 1 || VK_API_VERSION_MINOR(props.apiVersion) >= 2;
+    const bool e3_13 = VK_API_VERSION_MAJOR(props.apiVersion) > 1 || VK_API_VERSION_MINOR(props.apiVersion) >= 3;
+    auto e3_limited = [](const char* what) {
+        const char* e = std::getenv("NX_VK_LIMIT");
+        if (!e) return false;
+        const std::string list = std::string(",") + e + ",";
+        return list.find(std::string(",") + what + ",") != std::string::npos || list.find(",all,") != std::string::npos;
+    };
+    const bool e3_list_ext = !e3_12 && !e3_limited("format_list") && has_extension(dext, "VK_KHR_image_format_list");
+    if (e3_list_ext) dexts.push_back("VK_KHR_image_format_list");
+    g_e3_format_list = !e3_limited("format_list") && (e3_12 || e3_list_ext);
+    const bool e3_mirror_ext = !e3_limited("mirror_clamp") && has_extension(dext, "VK_KHR_sampler_mirror_clamp_to_edge");
+    if (e3_mirror_ext) dexts.push_back("VK_KHR_sampler_mirror_clamp_to_edge");
+    VkPhysicalDevice4444FormatsFeaturesEXT f4444{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_4444_FORMATS_FEATURES_EXT};
+    const bool e3_4444_ext = !e3_13 && !e3_limited("4444") && has_extension(dext, "VK_EXT_4444_formats");
+    if (e3_4444_ext) {
+        dexts.push_back("VK_EXT_4444_formats");
+        *tail = &f4444, tail = &f4444.pNext;
+    }
     p_vkGetPhysicalDeviceFeatures2(g_physical, &features);
+    VkPhysicalDeviceVulkan12Features f12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
+    {   // AP_VK_E3: mirror clamp by the 1.2 feature only when the extension is not listed (enables no other 1.2 feature)
+        bool feature = false;
+        if (!e3_mirror_ext && e3_12 && !e3_limited("mirror_clamp")) {
+            VkPhysicalDeviceVulkan12Features q12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
+            VkPhysicalDeviceFeatures2 q{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+            q.pNext = &q12;
+            p_vkGetPhysicalDeviceFeatures2(g_physical, &q);
+            if (q12.samplerMirrorClampToEdge) {
+                f12.samplerMirrorClampToEdge = VK_TRUE;
+                *tail = &f12, tail = &f12.pNext;
+                feature = true;
+            }
+        }
+        g_e3_mirror_clamp = e3_mirror_ext || feature;
+        g_e3_4444 = e3_13 ? !e3_limited("4444") : e3_4444_ext && f4444.formatA4B4G4R4;
+        log("vk_e3: format list %s; mirror clamp to edge %s; 4444 %s",
+            g_e3_format_list ? (e3_12 ? "core" : "extension") : "off (fallback: mutable images without the list)",
+            e3_mirror_ext ? "extension" : feature ? "1.2 feature" : "off (fallback: mirrored repeat)",
+            g_e3_4444 ? (e3_13 ? "core" : "extension") : "off (fallback: texture not supported)");
+    }
     {   // The translated shaders assume Maxwell's warp of 32 (TRANSLATOR.md). Intel runs subgroups of 8, 16 or 32 as its
         // compiler chooses; where the size can be pinned (core 1.3 subgroup size control), compute pipelines pin 32.
         VkPhysicalDeviceSubgroupSizeControlProperties sgc{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_PROPERTIES};
@@ -592,6 +637,9 @@ bool vk_spv_strip_subgroup() { return g_spv_strip_subgroup; }
 const VkPhysicalDeviceFeatures& vk_features() { return g_features; }
 bool gpu_is_integrated() { return g_integrated; }
 bool gpu_require_subgroup32() { return g_require_sg32; }
+bool vk_e3_format_list() { return g_e3_format_list; }  // AP_VK_E3 (nvn_image.cpp)
+bool vk_e3_mirror_clamp() { return g_e3_mirror_clamp; }  // (nvn_sampler.cpp)
+bool vk_e3_4444() { return g_e3_4444; }  // (nvn_image.cpp)
 
 uint32_t memory_type(uint32_t bits, VkMemoryPropertyFlags want) {
     for (uint32_t k = 0; k < g_memory.memoryTypeCount; k++)

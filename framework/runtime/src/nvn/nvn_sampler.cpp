@@ -10,6 +10,8 @@ namespace nx::nvn {
 
 using namespace nx::vk;
 
+bool vk_e3_mirror_clamp();  // AP_VK_E3: the device has mirror clamp to edge (nvn_vk.cpp)
+
 namespace {
 
 VkSamplerAddressMode vk_wrap(uint32_t w) {  // NVN: 0 clamp, 1 repeat, 2 mirror clamp, 3 mirror clamp to edge,
@@ -17,7 +19,9 @@ VkSamplerAddressMode vk_wrap(uint32_t w) {  // NVN: 0 clamp, 1 repeat, 2 mirror 
         case 1: return VK_SAMPLER_ADDRESS_MODE_REPEAT;
         case 2:
         case 3:
-        case 4: return VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE;
+        case 4:  // AP_VK_E3: without mirror clamp to edge, mirrored repeat (the same inside 0..1)
+            return vk_e3_mirror_clamp() ? VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE
+                                        : VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;
         case 5: return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
         case 6: return VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;
         default: return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
