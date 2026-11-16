@@ -115,6 +115,8 @@ find_package(JPEG REQUIRED)
 find_package(PNG REQUIRED)
 find_package(ZLIB REQUIRED)
 target_link_libraries(${NX_GAME} PRIVATE JPEG::JPEG PNG::PNG ZLIB::ZLIB)
+# AP_BAR_IMAGES (apply_bar_images.py): the pictures of the bars at the sides (and their present pass) on PC too
+target_compile_definitions(${NX_GAME} PRIVATE NX_EXTEND_BARS)
 foreach(nx_tsuki_dll jpeg62.dll libpng16.dll z.dll zlib1.dll)
     if(EXISTS "${NX_OPUS_ROOT}/bin/${nx_tsuki_dll}")
         add_custom_command(TARGET ${NX_GAME} POST_BUILD

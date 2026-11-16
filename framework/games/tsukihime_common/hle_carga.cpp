@@ -241,6 +241,131 @@ struct Stream {
 
 }  // namespace tsuki_carga
 
+// AP_BAR_IMAGES (apply_bar_images.py): a PNG or JPEG in memory as RGBA8, for the pictures at the sides of the game's
+// picture on a phone (nvn_present.cpp reads <data root>/left_border.* and right_border.*). Returns 0 and a malloc'd
+// width * height * 4 buffer (the caller frees it); anything else is an error and *rgba stays null. Sides of up to
+// max_side pixels. A PNG of any type and depth, an interlaced one too; a JPEG of 1 or 3 components.
+namespace bar_image {
+
+struct PngSource {
+    const uint8_t* data;
+    size_t size, pos;
+};
+
+void bar_png_read(png_structp png, png_bytep out, png_size_t length) {
+    PngSource* s = static_cast<PngSource*>(png_get_io_ptr(png));
+    if (length > s->size - s->pos) png_error(png, "truncated");
+    std::memcpy(out, s->data + s->pos, length);
+    s->pos += length;
+}
+
+int decode_png(const uint8_t* data, size_t size, uint32_t max_side, uint32_t* width, uint32_t* height, uint8_t** rgba) {
+    png_structp png = png_create_read_struct(PNG_LIBPNG_VER_STRING, nullptr, nullptr, nullptr);
+    png_infop info = png ? png_create_info_struct(png) : nullptr;
+    if (!png || !info) {
+        png_destroy_read_struct(&png, &info, nullptr);
+        return 2;
+    }
+    uint8_t* volatile pixels = nullptr;  // set after setjmp: volatile
+    png_bytep* volatile rows = nullptr;
+    if (setjmp(png_jmpbuf(png))) {
+        png_destroy_read_struct(&png, &info, nullptr);
+        std::free(pixels);
+        std::free(rows);
+        return 3;
+    }
+    PngSource source{data, size, 0};
+    png_set_read_fn(png, &source, bar_png_read);
+    png_read_info(png, info);
+    png_uint_32 w = 0, h = 0;
+    int depth = 0, type = 0;
+    png_get_IHDR(png, info, &w, &h, &depth, &type, nullptr, nullptr, nullptr);
+    if (!w || !h || w > max_side || h > max_side) png_error(png, "size");
+    if (type == PNG_COLOR_TYPE_PALETTE) png_set_palette_to_rgb(png);
+    if (type == PNG_COLOR_TYPE_GRAY && depth < 8) png_set_expand_gray_1_2_4_to_8(png);
+    if (png_get_valid(png, info, PNG_INFO_tRNS)) png_set_tRNS_to_alpha(png);
+    if (depth == 16) png_set_strip_16(png);
+    if (type == PNG_COLOR_TYPE_GRAY || type == PNG_COLOR_TYPE_GRAY_ALPHA) png_set_gray_to_rgb(png);
+    png_set_filler(png, 0xff, PNG_FILLER_AFTER);  // alpha 1 where the file has none
+    png_set_interlace_handling(png);
+    png_read_update_info(png, info);
+    if (png_get_rowbytes(png, info) != size_t(w) * 4) png_error(png, "format");
+    pixels = static_cast<uint8_t*>(std::malloc(size_t(w) * h * 4));
+    rows = static_cast<png_bytep*>(std::malloc(sizeof(png_bytep) * h));
+    if (!pixels || !rows) png_error(png, "memory");
+    for (png_uint_32 y = 0; y < h; y++) rows[y] = pixels + size_t(y) * w * 4;
+    png_read_image(png, rows);
+    png_read_end(png, nullptr);
+    png_destroy_read_struct(&png, &info, nullptr);
+    std::free(rows);
+    *width = w, *height = h, *rgba = pixels;
+    return 0;
+}
+
+struct JpegFail {
+    jpeg_error_mgr mgr;
+    jmp_buf jump;
+};
+
+void jpeg_fail(j_common_ptr ci) { longjmp(reinterpret_cast<JpegFail*>(ci->err)->jump, 1); }
+void jpeg_quiet(j_common_ptr) {}
+void jpeg_quiet_level(j_common_ptr, int) {}
+
+int decode_jpeg(const uint8_t* data, size_t size, uint32_t max_side, uint32_t* width, uint32_t* height, uint8_t** rgba) {
+    jpeg_decompress_struct ci;
+    JpegFail fail;
+    uint8_t* volatile pixels = nullptr;  // set after setjmp: volatile
+    ci.err = jpeg_std_error(&fail.mgr);
+    fail.mgr.error_exit = jpeg_fail;
+    fail.mgr.emit_message = jpeg_quiet_level;
+    fail.mgr.output_message = jpeg_quiet;
+    if (setjmp(fail.jump)) {
+        jpeg_destroy_decompress(&ci);
+        std::free(pixels);
+        return 3;
+    }
+    jpeg_create_decompress(&ci);
+    jpeg_mem_src(&ci, data, static_cast<unsigned long>(size));
+    if (jpeg_read_header(&ci, TRUE) != JPEG_HEADER_OK) {
+        jpeg_destroy_decompress(&ci);
+        return 3;
+    }
+    if (!ci.image_width || !ci.image_height || ci.image_width > max_side || ci.image_height > max_side ||
+        (ci.num_components != 1 && ci.num_components != 3)) {
+        jpeg_destroy_decompress(&ci);
+        return 4;
+    }
+    ci.out_color_space = JCS_EXT_RGBA;  // libjpeg-turbo: RGB with alpha 0xff, also from a grey JPEG
+    jpeg_start_decompress(&ci);
+    const size_t row = size_t(ci.output_width) * 4;
+    pixels = static_cast<uint8_t*>(std::malloc(row * ci.output_height));
+    if (!pixels) {
+        jpeg_destroy_decompress(&ci);
+        return 2;
+    }
+    while (ci.output_scanline < ci.output_height) {
+        JSAMPROW line = pixels + size_t(ci.output_scanline) * row;
+        jpeg_read_scanlines(&ci, &line, 1);
+    }
+    jpeg_finish_decompress(&ci);
+    *width = ci.output_width, *height = ci.output_height, *rgba = pixels;
+    jpeg_destroy_decompress(&ci);
+    return 0;
+}
+
+}  // namespace bar_image
+
+extern "C" int tsuki_decode_image(const uint8_t* data, size_t size, uint32_t max_side, uint32_t* width, uint32_t* height,
+                                  uint8_t** rgba) {
+    if (!data || !width || !height || !rgba) return 1;
+    *rgba = nullptr;
+    if (size >= 8 && data[0] == 0x89 && data[1] == 'P' && data[2] == 'N' && data[3] == 'G')
+        return bar_image::decode_png(data, size, max_side, width, height, rgba);
+    if (size >= 3 && data[0] == 0xff && data[1] == 0xd8 && data[2] == 0xff)
+        return bar_image::decode_jpeg(data, size, max_side, width, height, rgba);
+    return 1;
+}
+
 #ifndef TSUKI_CARGA_SOLO_NUCLEO
 
 namespace nx {

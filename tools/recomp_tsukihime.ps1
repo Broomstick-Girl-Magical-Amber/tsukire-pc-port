@@ -19,7 +19,8 @@
 #   4 structure      japan: games\tsukihime; global: create_tsukihime_global.ps1 (idempotent)
 #   5 analysis       tools\nso2bin.py -> analysis\main.bin and sdk.bin
 #   6 recomp         regen_tsuki*.ps1 main, sdk -> gen\ (the previous gen\ is kept as gen.old)
-#   7 fonts          fonts\shared_0.ttf (Noto Sans JP, OFL license): from -Fonts, from <root>\resources\fonts\ (in the repo) or from the other edition
+#   7 fonts          fonts\shared_0.ttf (Noto Sans JP, OFL license): from -Fonts, from <root>\resources\fonts\ (in the repo) or from the other edition;
+#                    then the side-bar images: <root>\media\left_border.png and right_border.png -> <data>\ (never replaces yours)
 #   8 shaders        tsuki_shaders_offline.py (romfs\shader + main) -> harness only for those without a .spv
 #   9 build          cmake -B (parameters of the existing CMakeCache) + cmake --build; then the HUD icons by device
 #                    (tools\hud\build_hud_assets.py -> <data>\hud; never fatal: without them the game keeps its icons)
@@ -201,6 +202,9 @@ $Markers = @(
     @('both', 'framework\games\tsukihime_common\hle_hid_tsuki.cpp', 'AP_TITLE_CLICK', 'apply_title_click.py', $false),
     @('both', 'framework\games\tsukihime_common\title_bg.cpp', 'AP_TITLE_CLICK', 'title_bg.cpp (copy it to games\tsukihime_common)', $false),
     @('both', 'framework\runtime\src\nvn\nvn_vk.cpp', 'AP_GPU_HANG', 'apply_gpu_hang.py', $false),
+    @('both', 'framework\runtime\src\nvn\nvn_present.cpp', 'AP_BAR_IMAGES', 'apply_bar_images.py', $false),
+    @('both', 'framework\games\tsukihime_common\hle_carga.cpp', 'AP_BAR_IMAGES', 'apply_bar_images.py', $false),
+    @('both', 'framework\games\tsukihime_common\tsukihime_common.cmake', 'AP_BAR_IMAGES', 'apply_bar_images.py', $false),
     @('both', 'framework\runtime\src\nvn\nvn_frames.cpp', 'AP_GPU_HANG', 'apply_gpu_hang.py', $false),
     @('both', 'framework\runtime\src\nvn\nvn_image.cpp', 'AP_STORAGE_IMAGES', 'apply_storage_images.py', $false),
     @('both', 'framework\runtime\src\nvn\nvn_pipeline.cpp', 'AP_STORAGE_IMAGES', 'apply_storage_images.py', $false),
@@ -1172,7 +1176,27 @@ function Step6 {
     if ($previous) { Warn "the previous gen\ was kept in $previous (delete it by hand whenever you want)" }
 }
 
+# Side-bar images of the Android build (the game looks for left_border / right_border in the data root, in
+# png, jpg or jpeg, and a border.* has priority over both). The ones of the repo (media\) are the default: a side that
+# already has an image of its own in the data root (any extension), or a border.*, is left alone. Never fatal.
+function BarImages {
+    foreach ($side in 'left_border', 'right_border') {
+        $src = Under $Root "media\$side.png"
+        if (-not (Test-Path -LiteralPath $src -PathType Leaf)) { Info "media\$side.png is not in the repo: no default image for that side bar"; continue }
+        $mine = @('png', 'jpg', 'jpeg') | ForEach-Object { Under $Data "$side.$_" } | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }
+        if ($mine) { Info "${side}: yours is already in the data root (kept)"; continue }
+        if (Get-ChildItem -Path (Under $Data 'border.*') -File -ErrorAction SilentlyContinue) { Info "border.* is in the data root: it takes priority, $side not needed"; continue }
+        Copy-Item -LiteralPath $src -Destination (Under $Data "$side.png")
+        Info "$side.png copied from media\"
+    }
+}
+
 function Step7 {
+    Step7Fonts
+    BarImages
+}
+
+function Step7Fonts {
     $dst = Under $Data 'fonts\shared_0.ttf'
     if (Test-Path -LiteralPath $dst) {
         $h = Sha256 $dst

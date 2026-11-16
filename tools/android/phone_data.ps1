@@ -18,6 +18,8 @@
 #   data\<...>\fonts\             the shared font (Noto Sans JP, OFL)
 #   data\<...>\hud\               the HUD icons by device (if they were built)
 #   data\<...>\language.txt, title.ini   if you have them
+#   data\<...>\left_border.*, right_border.*, border.*   the side-bar images (png/jpg/jpeg): yours from data\<...>, and for
+#                                 a side without one, the default of the repo (media\left_border.png, media\right_border.png)
 #   mods\<edition>\               with -Mods: the active layers (folders not starting with _ or .)
 #   data\<...>\user\              with -Saves: your saves (on the phone they replace the ones there!)
 # Not copied: extract\, exefs\, gen\, romfs_build\, updates\, input.ini, config.txt (Windows options), nx.log,
@@ -93,6 +95,22 @@ try {
     $copied = 0
     foreach ($f in @('analysis\main.bin', 'analysis\sdk.bin', 'analysis\main_source.txt', 'romfs_source.bin', 'language.txt', 'title.ini')) {
         if (Test-Path -LiteralPath (Under $data $f)) { $copied += SyncFile (Under $data $f) (Under $outData $f) }
+    }
+    # Side-bar images: the user's own (data root) first; for a side with none, the default of the repo.
+    # border.* (one image, split in two by the game) has priority in the game, so with it the defaults are not needed.
+    $ownBars = @()
+    foreach ($stem in 'border', 'left_border', 'right_border') {
+        foreach ($x in 'png', 'jpg', 'jpeg') {
+            if (Test-Path -LiteralPath (Under $data "$stem.$x") -PathType Leaf) { $copied += SyncFile (Under $data "$stem.$x") (Under $outData "$stem.$x"); $ownBars += $stem }
+        }
+    }
+    if ($ownBars -notcontains 'border') {
+        foreach ($side in 'left_border', 'right_border') {
+            $def = Under $Root "media\$side.png"
+            if ($ownBars -contains $side) { continue }
+            if (Test-Path -LiteralPath $def -PathType Leaf) { $copied += SyncFile $def (Under $outData "$side.png") }
+            else { Warn "no media\$side.png: the side bars of that side stay blurred" }
+        }
     }
     # the game's library (tools\android\build_game.ps1): the app installs it from data\<...>\android\
     $gameLib = Under $Root "_android\$Edition\lib$($ed.Game).so"
