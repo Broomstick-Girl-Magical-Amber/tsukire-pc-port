@@ -34,6 +34,18 @@ const uint8_t* guest_bytes(uint64_t gpu) {
 
 }  // namespace replay
 
+// AP_MOUSE_BACK (apply_mouse_back.py): the last frame (+ 1) in which a draw sampled a texture the HUD patch tags: the
+// help bar's atlas, on screen only while a submenu is open. hle_hid_tsuki.cpp asks nx_help_bar_visible(): with the bar up
+// the right mouse button goes back (B) instead of opening the system menu (Y). NX_MOUSE_BACK=0 turns the scan off.
+namespace {
+std::atomic<uint64_t> g_help_bar_frame{0};
+}  // namespace
+
+extern "C" bool nx_help_bar_visible() {
+    const uint64_t t = g_help_bar_frame.load(std::memory_order_relaxed);
+    return t != 0 && g_frame.load(std::memory_order_relaxed) + 1 - t <= 3;
+}
+
 using namespace replay;
 
 namespace {
@@ -530,6 +542,18 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
     set_dynamic(cb, vp, sc);
 
     trace_skin(indexed, c, vs, fs);
+    {   // AP_MOUSE_BACK: a draw that samples a tagged texture (the help bar) = a submenu is open
+        static const bool scan = [] { const char* e = std::getenv("NX_MOUSE_BACK"); return !(e && e[0] == '0'); }();
+        const uint64_t bar_now = g_frame.load(std::memory_order_relaxed) + 1;
+        if (scan && g_help_bar_frame.load(std::memory_order_relaxed) != bar_now)
+            for (const ResolvedTexture& r : g_textures.resolved) {
+                GpuImage* s = r.texture ? image_of(r.texture) : nullptr;
+                if (s && s->filter_tag) {
+                    g_help_bar_frame.store(bar_now, std::memory_order_relaxed);
+                    break;
+                }
+            }
+    }
     if (indexed) {
         uint32_t count = uint32_t(c.i[0]);
         if (g_bound.has_index && g_bound.index.buffer == in.index.buffer && g_bound.index.offset == in.index.offset &&

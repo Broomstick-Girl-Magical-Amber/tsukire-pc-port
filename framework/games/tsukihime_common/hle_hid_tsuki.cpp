@@ -91,6 +91,25 @@ void GetNpadControllerColorLR(CPU& c) {  // (NpadControllerColor* left, NpadCont
 #if defined(_WIN32)
 constexpr uint64_t kMs = 1000000;
 
+extern "C" bool nx_help_bar_visible();  // AP_MOUSE_BACK (nvn_draw.cpp)
+
+// AP_MOUSE_BACK: the right button, when input.ini gives it exactly Y (the system menu), goes back (B) while the help bar is
+// on screen (a submenu is open); in the text and in the system menu itself it stays Y. NX_MOUSE_BACK=0: always as set.
+const tsuki::Target& mouse_back_target() {
+    static const tsuki::Target t = [] { tsuki::Target x; tsuki::parse_target("B", x); return x; }();
+    return t;
+}
+
+bool mouse_back_wanted(const tsuki::Target& right) {
+    static const bool on = env_on("NX_MOUSE_BACK", true);
+    static const tsuki::Target y = [] { tsuki::Target x; tsuki::parse_target("Y", x); return x; }();
+    if (!on || !y.any() || right.bits != y.bits || right.lx != y.lx || right.ly != y.ly || right.rx != y.rx ||
+        right.ry != y.ry || !nx_help_bar_visible())
+        return false;
+    if (trace_on()) log("hid: clic derecho -> B (barra de ayuda visible)");
+    return true;
+}
+
 void mouse_pad(plat::PadState& p) {
     if (!mouse_on()) return;
     const tsuki::Target* side[3] = {nullptr, &tsuki::mouse_target(tsuki::kMouseRight),
@@ -128,9 +147,15 @@ void mouse_pad(plat::PadState& p) {
 #endif
     // Derecho y medio: apretados mientras se mantienen, y al menos 80 ms desde el clic (un clic mas corto que un
     // frame igual se ve).
+    static bool back_held = false, back_now = false;  // AP_MOUSE_BACK
     for (int k = 1; k < 3; k++) {
         if (ptr.downs[k] != seen[k]) seen[k] = ptr.downs[k], until[k] = now + 80 * kMs;
-        if ((ptr.buttons >> k & 1) || now < until[k]) tsuki::press(p, *side[k]);
+        const bool down = (ptr.buttons >> k & 1) || now < until[k];
+        if (k == 1) {  // AP_MOUSE_BACK: decided when the right button goes down, kept while it is down
+            if (down && !back_held) back_now = mouse_back_wanted(*side[1]);
+            back_held = down;
+        }
+        if (down) tsuki::press(p, k == 1 && back_now ? mouse_back_target() : *side[k]);
     }
     // Rueda: cada muesca (120) es una pulsacion de 60 ms seguida de 40 ms suelto; como mucho 5 en cola.
     while (ptr.wheel - wheel_used >= 120) wheel_used += 120, pending = std::min(pending + 1, 5);

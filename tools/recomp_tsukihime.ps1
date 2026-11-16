@@ -204,6 +204,8 @@ $Markers = @(
     @('both', 'framework\runtime\src\nvn\nvn_draw.cpp', 'AP_TITLE_CLICK', 'apply_title_click.py', $false),
     @('both', 'framework\games\tsukihime_common\hle_hid_tsuki.cpp', 'AP_TITLE_CLICK', 'apply_title_click.py', $false),
     @('both', 'framework\games\tsukihime_common\title_bg.cpp', 'AP_TITLE_CLICK', 'title_bg.cpp (copy it to games\tsukihime_common)', $false),
+    @('both', 'framework\runtime\src\nvn\nvn_draw.cpp', 'AP_MOUSE_BACK', 'apply_mouse_back.py', $false),
+    @('both', 'framework\games\tsukihime_common\hle_hid_tsuki.cpp', 'AP_MOUSE_BACK', 'apply_mouse_back.py', $false),
     @('both', 'framework\runtime\src\nvn\nvn_vk.cpp', 'AP_GPU_HANG', 'apply_gpu_hang.py', $false),
     @('both', 'framework\runtime\src\nvn\nvn_present.cpp', 'AP_BAR_IMAGES', 'apply_bar_images.py', $false),
     @('both', 'framework\games\tsukihime_common\hle_carga.cpp', 'AP_BAR_IMAGES', 'apply_bar_images.py', $false),
