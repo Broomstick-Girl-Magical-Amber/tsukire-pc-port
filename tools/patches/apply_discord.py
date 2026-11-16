@@ -21,6 +21,7 @@ new file in the GLOB) and cmake --build build\\tsukihime; the same with build\\t
 from _patch import run
 
 MARK = "AP_DISCORD"
+CONSOLIDATED = "later patches build on its text: it stays in the tree (2026-11-16)"
 
 DECL = r'''
 // AP_DISCORD (apply_discord.py): avisos para Discord Rich Presence (games/tsukihime_common/discord_tsuki.cpp).

@@ -22,6 +22,7 @@ the GLOB) and cmake --build build\\tsukihime; the same with build\\tsukihime_glo
 from _patch import run
 
 MARK = "AP_TITLE_BG"
+CONSOLIDATED = "later patches build on its text: it stays in the tree (2026-11-16)"
 
 DECL_ANCHOR = "}  // namespace tsuki_discord\n"
 DECL_NEW = DECL_ANCHOR + r'''

@@ -20,6 +20,7 @@ leaves the files byte for byte as they were. After: cmake --build build\\tsukihi
 from _patch import run
 
 MARK = "AP_TITLE_LIVE"
+CONSOLIDATED = "later patches build on its text: it stays in the tree (2026-11-16)"
 
 # ---- movie_core.h
 H_ANCHOR = "    Status open_memory(std::string data);  // toma el contenido del archivo completo\n"

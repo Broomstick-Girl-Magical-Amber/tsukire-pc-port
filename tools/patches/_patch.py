@@ -6,10 +6,15 @@ Each patcher gives: MARK (marker), EDITS [(relative file or glob pattern, anchor
 - All or nothing: checks every anchor before writing; if one is missing or repeated, it touches nothing.
 - Keeps CRLF (the EDITS text uses \\n and is converted if the file is CRLF) and the BOM if there is one.
 - --remove does the reverse replacement: leaves the files byte for byte as they were.
+- The marker is matched as a whole word: AP_CARGA is not found inside AP_CARGA_CACHE.
+- A patcher that sets CONSOLIDATED = "<why>" is part of the tree for good: later patches build on its text, so --remove
+  refuses (with that reason) instead of failing on a missing anchor, and applying it again over a tree that has it
+  does nothing (its marker may be gone from files a later patch rewrote).
 """
 import argparse
 import glob
 import os
+import re
 import sys
 
 # Relative to where this script is: <root>/tools/patches/_patch.py -> <root>/framework
@@ -41,6 +46,10 @@ def resolve(root, rel):
     return path
 
 
+def has_mark(txt, mark):
+    return re.search(r"(?<![A-Za-z0-9_])" + re.escape(mark) + r"(?![A-Za-z0-9_])", txt) is not None
+
+
 def run(mark, edits, doc):
     ap = argparse.ArgumentParser(description=doc, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--root", default=FRAMEWORK_ROOT, help="framework folder (default <root>/framework, relative to this script)")
@@ -53,7 +62,14 @@ def run(mark, edits, doc):
             paths[rel] = resolve(a.root, rel)
             files[rel] = load(paths[rel])
 
-    marked = {rel: mark in txt for rel, (txt, _, _) in files.items()}
+    marked = {rel: has_mark(txt, mark) for rel, (txt, _, _) in files.items()}
+    consolidated = getattr(sys.modules.get("__main__"), "CONSOLIDATED", "")
+    if consolidated and any(marked.values()):
+        if a.remove:
+            sys.exit(f"{os.path.basename(sys.argv[0])} ({mark}) is consolidated and cannot be removed on its own: "
+                     f"{consolidated}. Nothing touched.")
+        print(f"Already in the tree ({mark}, consolidated). Nothing to do.")
+        return
     if not a.remove and all(marked.values()):
         print(f"Already applied (marker {mark} in every file). Nothing to do.")
         return
@@ -73,7 +89,7 @@ def run(mark, edits, doc):
             sys.exit(f"ERROR: anchor found {n} times in {rel} (1 expected):\n{src[:300]}\nNothing touched.")
         new[rel] = new[rel].replace(src, dst)
 
-    if a.remove and any(mark in t for t in new.values()):
+    if a.remove and any(has_mark(t, mark) for t in new.values()):
         sys.exit(f"ERROR: a {mark} is left after removing (file edited by hand?). Nothing touched.")
 
     for rel, txt in new.items():

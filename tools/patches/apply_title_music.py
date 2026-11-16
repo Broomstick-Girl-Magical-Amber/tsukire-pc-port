@@ -15,6 +15,7 @@ patcher only wires it into the runtime:
 from _patch import run
 
 MARK = "AP_TITLE_MUSIC"
+CONSOLIDATED = "later patches build on its text: it stays in the tree (2026-11-16)"
 
 DECL_ANCHOR = "namespace fs = std::filesystem;\n"
 DECL_NEW = DECL_ANCHOR + r'''

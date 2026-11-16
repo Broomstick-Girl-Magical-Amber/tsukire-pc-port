@@ -38,6 +38,7 @@ private\\venv\\Scripts\\python ..\\tools\\patches\\apply_romfs_direct.py. Then: 
 from _patch import run
 
 MARK = "AP_ROMFS_DIRECT"
+CONSOLIDATED = "later patches build on its text: it stays in the tree (2026-11-16)"
 FS = "runtime/src/hle_fs.cpp"
 CMAKE = "games/tsukihime_common/tsukihime_common.cmake"
 MODS = "../tools/internal/mods_nsp.py"

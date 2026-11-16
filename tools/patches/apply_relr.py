@@ -27,6 +27,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _patch import run  # noqa: E402
 
 MARK = "AP_RELR"
+CONSOLIDATED = "later patches build on its text: it stays in the tree (2026-11-16)"
 NSO = "recomp/nso.py"
 REGEN = "../tools/internal/regen_tsuki_global.ps1"
 

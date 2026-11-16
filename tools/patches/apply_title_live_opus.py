@@ -20,6 +20,7 @@ Idempotent (marker AP_TITLE_LIVE_OPUS), all or nothing, keeps CRLF and BOM; --re
 from _patch import run
 
 MARK = "AP_TITLE_LIVE_OPUS"
+CONSOLIDATED = "later patches build on its text: it stays in the tree (2026-11-16)"
 
 INC_ANCHOR = "#include <unordered_map>\n"
 INC_NEW = INC_ANCHOR + "#include <vector>\n"

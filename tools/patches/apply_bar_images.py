@@ -1,4 +1,4 @@
-"""apply_bar_images.py - pictures for the bars at the sides of the picture, on Android and on PC (AP_BAR_IMAGES), version 3.
+"""apply_bar_images.py - pictures for the bars at the sides of the picture, on Android and on PC (AP_BAR_IMAGES), version 4.
 
 On a phone wider than 16:9 the bars at the sides of the game's picture show its blurred edge (apply_android_present.py,
 kFragmentExtend). With this patch, if <data root>/border exists, or <data root>/left_border and <data root>/right_border
@@ -21,19 +21,19 @@ window or a full screen of another shape than 16:9 shows them at the sides. With
 nothing changes: the blit. (The window keeps 16:9 while it is dragged, so the bars only show when it is maximized or in
 full screen on a wider or taller monitor.)
 
-Version 1 (2026-11-16) only read left_border and right_border, version 2 added border. To update from either: python
-apply_bar_images.py --remove with the old file, replace it with this one, and apply.
+Version 1 (2026-11-16) only read left_border and right_border, version 2 added border, version 3 the PC (with a line in
+tsukihime_common.cmake that broke the --remove of apply_native_loading.py; version 4 defines it in nvn_present.cpp
+instead). To update from any of them: python apply_bar_images.py --remove with the old file, replace it with this one,
+and apply.
 
-Files (all under NX_EXTEND_BARS, which Android defines in tsukihime_common.cmake and, from version 3, the PC build too):
+Files (all under NX_EXTEND_BARS, which Android defines in tsukihime_common.cmake and nvn_present.cpp defines on Windows):
   - runtime/src/nvn/nvn_present.cpp: kFragmentBars (kFragmentExtend plus the two pictures, in set 1 of a pipeline layout of
     its own: the set layout, the push constants and the pipelines of the rest of the pass are not touched), the loading of
     the files, their images (made once, copied in during the first frame), and the draw. The shader's GLSL is in the
     comment above the array. A failure anywhere keeps the blurred bars and logs one line ("nvn/vk: bar images: ...").
   - games/tsukihime_common/hle_carga.cpp: tsuki_decode_image, PNG and JPEG to RGBA8 with the libpng and libjpeg-turbo that
     AP_CARGA already links (weak in nvn_present.cpp: a build without it keeps the blurred bars).
-  - games/tsukihime_common/tsukihime_common.cmake: defines NX_EXTEND_BARS for the PC build (the Android part of that file
-    already does it). With it, the PC pass draws the bars like the Android one (kFragmentExtend) whenever it is on.
-  - tools/recomp_tsukihime.ps1: the three rows of $Markers, after the one of nvn_vk.cpp / AP_GPU_HANG (no other patcher
+  - tools/recomp_tsukihime.ps1: the two rows of $Markers, after the one of nvn_vk.cpp / AP_GPU_HANG (no other patcher
     anchors on it).
 The runtime changes: for the phone, build_apk.ps1 and then build_android_pack.ps1 (+ pin_android_release.ps1) before
 "Prepare for Android"; for the PC, recompile the exe (step 9 of recomp_tsukihime.ps1). Order: it edits the same file as apply_android_present.py but none of the text that one inserts, so
@@ -46,7 +46,12 @@ PRESENT = "runtime/src/nvn/nvn_present.cpp"
 CARGA = "games/tsukihime_common/hle_carga.cpp"
 RECO = "../tools/recomp_tsukihime.ps1"
 
-DECL_NEW = """#ifdef NX_EXTEND_BARS  // AP_BAR_IMAGES (apply_bar_images.py)
+DECL_NEW = """// AP_BAR_IMAGES (apply_bar_images.py): on PC too (Android defines NX_EXTEND_BARS in tsukihime_common.cmake); the PC
+// present pass is used only when there are pictures for the bars (present_pass_wanted)
+#if defined(_WIN32) && !defined(NX_EXTEND_BARS)
+#define NX_EXTEND_BARS
+#endif
+#ifdef NX_EXTEND_BARS  // AP_BAR_IMAGES (apply_bar_images.py)
 // hle_carga.cpp (libpng, libjpeg-turbo): a PNG or JPEG decoded to RGBA8. Returns 0 and a malloc'd width * height * 4
 // buffer that the caller frees. Weak off Windows: a build without it keeps the blurred bars.
 #if defined(_WIN32)  // the PC exe always has it (hle_carga.cpp); MSVC has no __attribute__
@@ -796,7 +801,6 @@ RECO_OLD = r"""    @('both', 'framework\runtime\src\nvn\nvn_vk.cpp', 'AP_GPU_HAN
 """
 RECO_NEW = RECO_OLD + r"""    @('both', 'framework\runtime\src\nvn\nvn_present.cpp', 'AP_BAR_IMAGES', 'apply_bar_images.py', $false),
     @('both', 'framework\games\tsukihime_common\hle_carga.cpp', 'AP_BAR_IMAGES', 'apply_bar_images.py', $false),
-    @('both', 'framework\games\tsukihime_common\tsukihime_common.cmake', 'AP_BAR_IMAGES', 'apply_bar_images.py', $false),
 """
 
 DECL_OLD = """namespace nx::nvn {
@@ -833,12 +837,6 @@ PWANT_NEW = """        return (e && e[0] == '1') || fsr_on()  // FSR is a pass o
 #endif
             ;
 """
-CMAKE = "games/tsukihime_common/tsukihime_common.cmake"
-CMAKE_OLD = """target_link_libraries(${NX_GAME} PRIVATE JPEG::JPEG PNG::PNG ZLIB::ZLIB)
-"""
-CMAKE_NEW = CMAKE_OLD + """# AP_BAR_IMAGES (apply_bar_images.py): the pictures of the bars at the sides (and their present pass) on PC too
-target_compile_definitions(${NX_GAME} PRIVATE NX_EXTEND_BARS)
-"""
 
 EDITS = [
     (PRESENT, DECL_OLD, DECL_NEW + DECL_OLD),
@@ -848,7 +846,6 @@ EDITS = [
     (PRESENT, BIND_OLD, BIND_NEW),
     (PRESENT, PWANT_OLD, PWANT_NEW),
     (CARGA, CARGA_OLD, CARGA_NEW),
-    (CMAKE, CMAKE_OLD, CMAKE_NEW),
     (RECO, RECO_OLD, RECO_NEW),
 ]
 

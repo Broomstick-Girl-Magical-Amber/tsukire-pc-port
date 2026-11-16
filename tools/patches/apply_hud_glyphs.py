@@ -34,6 +34,7 @@ Idempotent (marker AP_HUD_GLYPHS), all or nothing, keeps CRLF and BOM, refuses i
 from _patch import run
 
 MARK = "AP_HUD_GLYPHS"
+CONSOLIDATED = "later patches build on its text: it stays in the tree (2026-11-16)"
 
 # ---- runtime: the hooks ------------------------------------------------------------------------------------------------
 NVN_H_ANCHOR = ("    ~Texture();  // nvn_vk.cpp: the image is freed once the GPU is done with it\n"

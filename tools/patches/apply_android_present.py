@@ -23,6 +23,7 @@ Windows and Linux/Proton use the blit unless NX_PRESENT_PASS=1; then the flip ap
 from _patch import run
 
 MARK = "AP_ANDROID_PRESENT"
+CONSOLIDATED = "later patches build on its text: it stays in the tree (2026-11-16)"
 PRESENT = "runtime/src/nvn/nvn_present.cpp"
 VK = "runtime/src/nvn/nvn_vk.cpp"
 RECO = "../tools/recomp_tsukihime.ps1"

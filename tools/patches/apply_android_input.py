@@ -34,6 +34,7 @@ Apply: cd <root>\\framework; private\\venv\\Scripts\\python ..\\tools\\patches\\
 from _patch import run
 
 MARK = "AP_ANDROID_INPUT"
+CONSOLIDATED = "later patches build on its text: it stays in the tree (2026-11-16)"
 PLATFORM_H = "runtime/src/platform.h"
 INPUT = "runtime/src/platform_android_input.cpp"
 HID = "games/tsukihime_common/hle_hid_tsuki.cpp"

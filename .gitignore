@@ -82,6 +82,8 @@
 /tools/hud/slice_sheet.py
 !/framework/games/tsukihime_common/hud_glyphs.cpp
 !/framework/games/tsukihime_common/hud_glyphs.h
+# AP_ROMFS_DIRECT: the RomFS read straight from the dump (apply_romfs_direct.py)
+!/framework/games/tsukihime_common/romfs_direct.cpp
 !/utils/
 /utils/*
 !/utils/hud_sliced/

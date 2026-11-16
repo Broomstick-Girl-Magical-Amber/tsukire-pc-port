@@ -27,6 +27,7 @@ that just ended), it is made again without them.
 from _patch import run
 
 MARK = "AP_ANDROID_ADPF"
+CONSOLIDATED = "later patches build on its text: it stays in the tree (2026-11-16)"
 PERF = "runtime/src/perf_hint.cpp"
 KERNEL = "runtime/src/kernel.cpp"
 RECO = "../tools/recomp_tsukihime.ps1"

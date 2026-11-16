@@ -39,9 +39,11 @@
 # name: it is recognised by its content). Steps 1-2 use tools\internal\romfs_source.py (python; no dotnet).
 # -Extract: the full extraction with nsextract (extract\romfs), as before. An extract\romfs from before is not
 # deleted: while it is there the exe reads it first; delete it by hand to free the space.
-# -TrimXci: cuts the 0xFF padding at the end of the .xci of this edition, in place (everything after the data is checked
-# to be 0xFF first; ~8.5 GB in the japanese cartridge; tools\internal\romfs_source.py untrim --input <xci> --apply
-# undoes it). Keys: if <root>\data\prod.keys does not exist and <root>\prod.keys does, it is MOVED to data\.
+# The .xci of this edition is trimmed: the 0xFF padding at its end is cut, in place, every time steps 1-2 read it
+# (everything after the data is checked to be 0xFF first; ~8.5 GB in a japanese .xci; an .xci already trimmed is left
+# as it is; tools\internal\romfs_source.py untrim --input <xci> --apply undoes it). -NoTrimXci keeps the .xci as it
+# is; -TrimXci also trims it on a run that does not read it (the extraction already done).
+# Keys: if <root>\data\prod.keys does not exist and <root>\prod.keys does, it is MOVED to data\.
 # Linux (PowerShell 7, via tools/linux/recomp_linux.sh): same steps; step 9 cross-compiles the SAME Windows exe
 # (clang-cl + lld-link + llvm-rc against the xwin CRT/SDK; tools/linux/clangcl-xwin.cmake) to play it with
 # Proton. The tools are installed by tools/linux/install_requirements_linux.sh. Nothing changes on Windows.
@@ -74,6 +76,7 @@ param(
     [switch]$NoUpdates,
     [switch]$Extract,   # AP_ROMFS_DIRECT: full extraction of the RomFS (nsextract) instead of reading it from the dump
     [switch]$TrimXci,   # AP_ROMFS_DIRECT: trim the 0xFF padding of this edition's .xci (in place, checked first)
+    [switch]$NoTrimXci,   # the .xci is trimmed by default whenever steps 1-2 read it: this keeps it as it is
     [ValidateRange(2, 600)][int]$ProgressSeconds = 30,
     [ValidateRange(0, 512)][int]$Jobs = 0   # AP_RECOMP_PARALLEL: compile jobs of step 9 (0 = ninja's default, CPUs + 2)
 )
@@ -204,7 +207,6 @@ $Markers = @(
     @('both', 'framework\runtime\src\nvn\nvn_vk.cpp', 'AP_GPU_HANG', 'apply_gpu_hang.py', $false),
     @('both', 'framework\runtime\src\nvn\nvn_present.cpp', 'AP_BAR_IMAGES', 'apply_bar_images.py', $false),
     @('both', 'framework\games\tsukihime_common\hle_carga.cpp', 'AP_BAR_IMAGES', 'apply_bar_images.py', $false),
-    @('both', 'framework\games\tsukihime_common\tsukihime_common.cmake', 'AP_BAR_IMAGES', 'apply_bar_images.py', $false),
     @('both', 'framework\runtime\src\nvn\nvn_frames.cpp', 'AP_GPU_HANG', 'apply_gpu_hang.py', $false),
     @('both', 'framework\runtime\src\nvn\nvn_image.cpp', 'AP_STORAGE_IMAGES', 'apply_storage_images.py', $false),
     @('both', 'framework\runtime\src\nvn\nvn_pipeline.cpp', 'AP_STORAGE_IMAGES', 'apply_storage_images.py', $false),
@@ -664,24 +666,25 @@ function Step0 {
 
 # AP_DROP_UNUSED: ExtractFile, PartitionSize and FromContainer removed (nstool)
 $script:WrongEdition = $false
-# AP_ROMFS_DIRECT: -TrimXci cuts the 0xFF padding of the .xci of this edition (romfs_source.py checks every byte first;
+# AP_ROMFS_DIRECT: cuts the 0xFF padding of the .xci of this edition (romfs_source.py checks every byte first;
 # another edition's .xci is left alone, exit code 3).
 function TrimInputs {
     $n = 0
     foreach ($c in @($script:Candidates)) {
         if ((ContainerType $c) -ne 'xci') { continue }
-        Info "-TrimXci: $(Split-Path -Leaf $c) (everything after the data must be 0xFF; reading it takes about a minute)"
+        Info "trim .xci: $(Split-Path -Leaf $c) (everything after the data must be 0xFF; reading it takes about a minute)"
         & $Python $SourcePy trim --keys $Keys --input $c --program-id (Hex16 $V.ProgramId) --apply
         $code = $LASTEXITCODE
         if ($code -eq 3) { Info "$(Split-Path -Leaf $c): not the $Edition edition (not trimmed)"; continue }
         if ($code -ne 0) { Fail "romfs_source.py trim failed with $(Split-Path -Leaf $c) (code $code)" }
         $n++
     }
-    if (-not $n) { Info "-TrimXci: there is no .xci of the $Edition edition in $Root (an .nsp has no padding)" }
+    if (-not $n) { Info "trim .xci: there is no .xci of the $Edition edition in $Root (an .nsp has no padding)" }
 }
 
 function Step1 {
-    if ($TrimXci) { TrimInputs }   # AP_ROMFS_DIRECT
+    # AP_ROMFS_DIRECT: the .xci is trimmed whenever its candidates were found (steps 1-2 read it, or -TrimXci)
+    if (-not $NoTrimXci -and ($TrimXci -or ((Test-Path variable:script:Candidates) -and @($script:Candidates).Count))) { TrimInputs }
     if ((ExtractedOk) -and -not $Replace) {
         Info 'already extracted: the input is not read again (step 3 verifies program ID and build ID of the exefs; -Replace to extract again)'
         return
@@ -1411,7 +1414,23 @@ function CacheProblem([string]$cache) {
     return ''
 }
 
+# A build configured with the VS Build Tools chain on a PC that now builds with clang-cl + xwin (_prepare\toolchain.json):
+# its cache still points to paths that exist, so CacheProblem keeps it, and the build then fails outside the VS
+# environment. It is configured again (its CMakeCache.txt and CMakeFiles are removed; the objects are rebuilt).
+function ForeignToolchainCache([string]$build) {
+    $cache = Under $build 'CMakeCache.txt'
+    if (-not $Toolchain -or $OnLinux -or -not (Test-Path -LiteralPath $cache)) { return }
+    $tc = CacheValue $cache 'CMAKE_TOOLCHAIN_FILE'
+    if ($tc -like '*clangcl-xwin.cmake' -or (CacheValue $cache 'VCPKG_CHAINLOAD_TOOLCHAIN_FILE') -like '*clangcl-xwin.cmake') { return }
+    Info "$build was configured with another toolchain ($(if ($tc) { $tc } else { 'VS Build Tools' })): configuring it again with clang-cl + xwin"
+    Remove-Item -LiteralPath $cache -Force
+    $cmf = Under $build 'CMakeFiles'
+    if (Test-Path -LiteralPath $cmf) { Remove-Item -LiteralPath $cmf -Recurse -Force }
+}
+
 function Step9 {
+    ForeignToolchainCache $Build
+    ForeignToolchainCache $BuildOther   # its parameters would be copied to a new configuration
     if ($script:HudJob) { HudAssets }   # AP_RECOMP_PARALLEL: the background HUD build ends before the compile starts
     $cache = Under $Build 'CMakeCache.txt'
     $gen = ((Under $Data 'gen') -replace '\\', '/')

@@ -15,6 +15,7 @@ order). Apply: cd <root>\\framework; private\\venv\\Scripts\\python ..\\tools\\p
 from _patch import run
 
 MARK = "AP_FIND_INPUTS"
+CONSOLIDATED = "later patches build on its text: it stays in the tree (2026-11-16)"
 RECO = "../tools/recomp_tsukihime.ps1"
 
 EDITS = [

@@ -21,6 +21,7 @@ reconfigures by itself); cmake --build build\\tsukihime and build\\tsukihime_glo
 from _patch import run
 
 MARK = "AP_DATA_ROOT_EXE"
+CONSOLIDATED = "later patches build on its text: it stays in the tree (2026-11-16)"
 
 HELPER = r'''// AP_DATA_ROOT_EXE (apply_data_root_exe.py): with NX_DATA_ROOT_EXE (games/<game>/game.cmake) a relative
 // pc_data_root is taken from the exe's folder instead of the current directory, so the build runs from any folder

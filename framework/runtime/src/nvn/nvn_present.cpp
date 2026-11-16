@@ -16,6 +16,11 @@
 #include "nvn_vk.h"
 #include "platform.h"
 
+// AP_BAR_IMAGES (apply_bar_images.py): on PC too (Android defines NX_EXTEND_BARS in tsukihime_common.cmake); the PC
+// present pass is used only when there are pictures for the bars (present_pass_wanted)
+#if defined(_WIN32) && !defined(NX_EXTEND_BARS)
+#define NX_EXTEND_BARS
+#endif
 #ifdef NX_EXTEND_BARS  // AP_BAR_IMAGES (apply_bar_images.py)
 // hle_carga.cpp (libpng, libjpeg-turbo): a PNG or JPEG decoded to RGBA8. Returns 0 and a malloc'd width * height * 4
 // buffer that the caller frees. Weak off Windows: a build without it keeps the blurred bars.

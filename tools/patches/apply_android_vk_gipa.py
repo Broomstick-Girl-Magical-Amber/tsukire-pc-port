@@ -30,6 +30,7 @@ Apply: cd <root>\\framework; private\\venv\\Scripts\\python ..\\tools\\patches\\
 from _patch import run
 
 MARK = "AP_VK_GIPA"
+CONSOLIDATED = "later patches build on its text: it stays in the tree (2026-11-16)"
 VK = "runtime/src/nvn/nvn_vk.cpp"
 RECO = "../tools/recomp_tsukihime.ps1"
 
