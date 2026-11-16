@@ -765,6 +765,13 @@ VkImageView storage_view(VkCommandBuffer cb, uint64_t texture, const ImageShape&
         v.levels = 1, v.swizzle = 0;  // storage views: one level, identity
         if (VkImageView iv = view_of(*img, view_type(shape), v)) return iv;
     }
+    if (img && !img->storage) {  // AP_STORAGE_IMAGES: a shader writes an image made without STORAGE (logged once)
+        static std::set<VkImage> told;
+        if (told.size() < 20 && told.insert(img->image).second)
+            log("nvn/vk: a shader writes a %ux%u image (format %d) made without STORAGE usage: it gets a dummy "
+                "(NX_STORAGE_IMAGES=1 gives images STORAGE again on Android)",
+                img->width, img->height, int(img->format));
+    }
     static std::map<VkImageViewType, GpuImage> dummies;
     VkImageViewType type = view_type(shape);
     auto& d = dummies[type];

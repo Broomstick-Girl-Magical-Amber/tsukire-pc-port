@@ -45,6 +45,16 @@
 #include "platform.h"
 #include "platform_android.h"
 
+// AP_PRESENT_SCALE (apply_present_scale.py): the window's buffers may be smaller than the window (NX_PRESENT_HEIGHT),
+// and then ANativeWindow_getWidth/Height give the buffers' size; the window's own pixels (touch coordinates,
+// screen_size) are kept below. (ANativeWindow_getWidth)(w), in parentheses, is the real getter.
+namespace nx::plat {
+int32_t window_pixel_width(ANativeWindow* w);
+int32_t window_pixel_height(ANativeWindow* w);
+}  // namespace nx::plat
+#define ANativeWindow_getWidth(w) nx::plat::window_pixel_width(w)
+#define ANativeWindow_getHeight(w) nx::plat::window_pixel_height(w)
+
 #ifndef MAP_FIXED_NOREPLACE
 #define MAP_FIXED_NOREPLACE 0x100000
 #endif
@@ -62,6 +72,66 @@ std::atomic<ANativeWindow*> g_window{nullptr};
 std::atomic<uint64_t> g_window_gen{0};  // bumped for every new window
 std::atomic<bool> g_visible{false};
 }  // namespace
+
+// AP_PRESENT_SCALE (apply_present_scale.py): the picture goes to the screen at most at the game's own height
+// (NX_PRESENT_HEIGHT=<pixels>; 0 = the screen's own size; unset: NX_RENDER_RES's height, else 720 handheld / 1080
+// docked). The window's buffers get that size on their short side (ANativeWindow_setBuffersGeometry), Vulkan reports
+// it as the surface's, and the compositor scales the buffers to the screen at no GPU cost: the present pass at
+// 2316x1080 took ~6.8 ms a frame on a Mali-G77 held at 260-377 MHz. The window's own size is read first and kept.
+namespace {
+std::atomic<ANativeWindow*> g_pixels_of{nullptr};
+std::atomic<int32_t> g_pixels_w{0}, g_pixels_h{0};
+
+int32_t present_height() {
+    if (const char* e = std::getenv("NX_PRESENT_HEIGHT"); e && *e) return int32_t(std::atoi(e));
+    if (const char* r = std::getenv("NX_RENDER_RES")) {
+        unsigned rw = 0, rh = 0;
+        if (std::sscanf(r, "%ux%u", &rw, &rh) == 2 && rw && rh) return int32_t(rh);
+    }
+    return std::getenv("NX_HANDHELD") ? 720 : 1080;
+}
+}  // namespace
+
+int32_t window_pixel_width(ANativeWindow* w) {
+    return w && w == g_pixels_of.load() ? g_pixels_w.load() : (ANativeWindow_getWidth)(w);
+}
+
+int32_t window_pixel_height(ANativeWindow* w) {
+    return w && w == g_pixels_of.load() ? g_pixels_h.load() : (ANativeWindow_getHeight)(w);
+}
+
+// Sizes the window's buffers (on the UI thread, before the game sees a new window). True when the window's own size
+// changed since the last call for the same window (then the swapchain must be made again).
+bool set_present_geometry(ANativeWindow* w) {
+    if (!w) return false;
+    ANativeWindow_setBuffersGeometry(w, 0, 0, 0);  // the window's own size again, to read it
+    const int32_t pw = (ANativeWindow_getWidth)(w), ph = (ANativeWindow_getHeight)(w);
+    const bool changed = g_pixels_of.load() == w && (pw != g_pixels_w.load() || ph != g_pixels_h.load());
+    g_pixels_w = pw, g_pixels_h = ph;
+    g_pixels_of = w;
+    if (pw <= 0 || ph <= 0) return changed;
+    const int32_t shortest = std::min(pw, ph), target = present_height();
+    int32_t bw = pw, bh = ph, err = 0;
+    if (target > 0 && target < shortest) {
+        const double s = double(target) / double(shortest);
+        bw = std::max<int32_t>(2, int32_t(double(pw) * s + 0.5) & ~1);
+        bh = std::max<int32_t>(2, int32_t(double(ph) * s + 0.5) & ~1);
+        err = ANativeWindow_setBuffersGeometry(w, bw, bh, 0);
+        if (err) bw = pw, bh = ph;
+    }
+    static int32_t logged[4] = {-1, -1, -1, -1};
+    if (logged[0] != pw || logged[1] != ph || logged[2] != bw || logged[3] != bh) {
+        logged[0] = pw, logged[1] = ph, logged[2] = bw, logged[3] = bh;
+        if (bw == pw && bh == ph)
+            nx::log("present: the screen is %dx%d; the window's buffers keep that size (NX_PRESENT_HEIGHT %d%s)", pw, ph,
+                    target, err ? ", refused by the window" : "");
+        else
+            nx::log("present: the screen is %dx%d; the window's buffers are %dx%d (NX_PRESENT_HEIGHT %d), the compositor "
+                    "scales them",
+                    pw, ph, bw, bh, target);
+    }
+    return changed;
+}
 
 // ---- memory ---------------------------------------------------------------------------------------------------
 
@@ -440,10 +510,14 @@ void on_cmd(android_app* app, int32_t cmd) {
     using namespace nx::plat;
     switch (cmd) {
         case APP_CMD_INIT_WINDOW:
+            set_present_geometry(app->window);  // AP_PRESENT_SCALE: before the game sees the window
             g_window = app->window;
             g_window_gen++;
             g_visible = true;
             request_immersive();
+            break;
+        case APP_CMD_WINDOW_RESIZED:  // AP_PRESENT_SCALE: a new screen size (a foldable, split screen): new buffers
+            if (app->window && app->window == g_window.load() && set_present_geometry(app->window)) g_window_gen++;
             break;
         case APP_CMD_TERM_WINDOW:  // the window goes away once this returns
             g_window = nullptr;

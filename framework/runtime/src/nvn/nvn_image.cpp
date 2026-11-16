@@ -185,6 +185,17 @@ GpuImage* image_of(uint64_t guest) {
         VkFormatProperties fp{};
         p_vkGetPhysicalDeviceFormatProperties(vk_physical(), ci.format, &fp);
         img->storage = !compressed && !aspect && (fp.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT);
+#if defined(__ANDROID__)
+        // AP_STORAGE_IMAGES (apply_storage_images.py): no STORAGE usage on Android (it can turn framebuffer compression
+        // off on Mali and other mobile GPUs; the game's shaders did not write images); NX_STORAGE_IMAGES=1 gives it back.
+        static const bool storage_wanted = [] {
+            const char* e = std::getenv("NX_STORAGE_IMAGES");
+            const bool on = e && e[0] == '1';
+            if (!on) log("nvn/vk: images are made without STORAGE usage (framebuffer compression); NX_STORAGE_IMAGES=1 gives it back");
+            return on;
+        }();
+        if (!storage_wanted) img->storage = false;
+#endif
         if (img->storage) ci.usage |= VK_IMAGE_USAGE_STORAGE_BIT;
     }
     ci.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;

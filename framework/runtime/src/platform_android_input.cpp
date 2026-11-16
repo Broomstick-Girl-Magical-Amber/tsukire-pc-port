@@ -45,6 +45,15 @@
 #include "platform_android.h"
 #include "touch_layout.h"
 
+// AP_PRESENT_SCALE (apply_present_scale.py): the window's buffers may be smaller than the window (NX_PRESENT_HEIGHT);
+// touch coordinates are in the window's own pixels, which platform_android.cpp keeps.
+namespace nx::plat {
+int32_t window_pixel_width(ANativeWindow* w);
+int32_t window_pixel_height(ANativeWindow* w);
+}  // namespace nx::plat
+#define ANativeWindow_getWidth(w) nx::plat::window_pixel_width(w)
+#define ANativeWindow_getHeight(w) nx::plat::window_pixel_height(w)
+
 // Android input: game controllers and touch (split from platform_android.cpp).
 namespace nx::plat {
 

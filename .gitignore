@@ -35,6 +35,11 @@
 # framework\), dev (analysis), tests
 !/tools/internal/
 !/tools/patches/
+
+/tools/patches/diag_packaged_layout.py
+# temporary diagnostics
+/tools/patches/*_diag.py
+
 !/tools/dev/
 !/tools/tests/
 # nsextract (C#, LibHac): only the sources are tracked (not bin\ or obj\)
