@@ -453,7 +453,48 @@ void* vulkan_get_instance_proc_addr() {
 
 const char* vulkan_surface_extension() { return VK_KHR_ANDROID_SURFACE_EXTENSION_NAME; }
 
+// AP_FRAME_RATE (apply_android_frame_rate.py): the window is told how many frames a second the game makes (60, or
+// NX_DISPLAY_HZ's), so that Android can pick a refresh rate they fit in evenly: a 90 Hz screen left at 90 shows 60
+// frames unevenly, and a 120 Hz one need not refresh twice per frame. ANativeWindow_setFrameRate (Android 11), found
+// with dlsym. NX_FRAME_RATE=<hz>: another rate; NX_FRAME_RATE=0: nothing is asked, as before.
+namespace {
+void request_frame_rate(ANativeWindow* w) {
+    using SetFrameRate = int32_t (*)(ANativeWindow*, float, int8_t);
+    static const SetFrameRate set = [] {
+        SetFrameRate f = nullptr;
+        for (const char* name : {"libnativewindow.so", "libandroid.so"})
+            if (void* lib = f ? nullptr : dlopen(name, RTLD_NOW | RTLD_LOCAL))
+                f = reinterpret_cast<SetFrameRate>(dlsym(lib, "ANativeWindow_setFrameRate"));
+        return f;
+    }();
+    static const float rate = [] {
+        if (const char* e = std::getenv("NX_FRAME_RATE"); e && *e) return float(std::atof(e));
+        if (const char* e = std::getenv("NX_DISPLAY_HZ")) {  // as display_period_ns (hle_vi.cpp)
+            const int hz = std::atoi(e);
+            if (hz >= 30 && hz <= 360) return float(hz);
+        }
+        return 60.0f;
+    }();
+    static int said = 0;  // 1: not asked, 2 + the answer: asked
+    if (!w) return;
+    if (!set || !(rate >= 1.0f)) {
+        if (said != 1)
+            said = 1, nx::log("present: the frame rate is not told to the window (%s)",
+                              set ? "NX_FRAME_RATE=0" : "no ANativeWindow_setFrameRate in this system");
+        return;
+    }
+    // Compatibility 0 (default): the game has no fixed source rate to keep, any multiple of it is as good.
+    const int32_t r = set(w, rate, 0);
+    if (said != 2 + (r != 0)) {
+        said = 2 + (r != 0);
+        nx::log("present: the window is told the game runs at %.0f fps (ANativeWindow_setFrameRate: %d)", double(rate),
+                int(r));
+    }
+}
+}  // namespace
+
 int vulkan_create_surface(void* instance, void* native_window, uint64_t* surface, void* gipa) {
+    request_frame_rate(static_cast<ANativeWindow*>(native_window));
     auto create = reinterpret_cast<PFN_vkCreateAndroidSurfaceKHR>(reinterpret_cast<PFN_vkGetInstanceProcAddr>(gipa)(
         static_cast<VkInstance>(instance), "vkCreateAndroidSurfaceKHR"));
     VkAndroidSurfaceCreateInfoKHR ci{VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR};
