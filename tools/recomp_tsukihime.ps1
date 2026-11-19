@@ -171,6 +171,7 @@ $Markers = @(
     @('both', 'framework\runtime\src\platform_linux.cpp', 'AP_LINUX_PLATFORM', 'apply_linux_platform.py', $false),
     @('both', 'framework\runtime\src\platform_win.cpp', 'AP_DATA_ROOT_EXE', 'apply_data_root_exe.py', $false),
     @('both', 'framework\games\tsukihime_common\hle_movie.cpp', 'AP_DISCORD', 'apply_discord.py', $false),
+    @('both', 'framework\games\tsukihime_common\discord_tsuki.cpp', 'AP_LINUX_DISCORD', 'apply_linux_discord.py', $false),
     @('both', 'framework\games\tsukihime_common\discord_tsuki.cpp', 'AP_DISCORD', 'discord_tsuki.cpp (copy it to games\tsukihime_common)', $false),
     @('both', 'framework\games\tsukihime_common\tsukihime_common.cmake', 'AP_CARGA', 'apply_native_loading.py', $false),
     @('both', 'framework\games\tsukihime_common\hle_carga.cpp', 'AP_CARGA', 'hle_carga.cpp (copy it to games\tsukihime_common)', $false),
