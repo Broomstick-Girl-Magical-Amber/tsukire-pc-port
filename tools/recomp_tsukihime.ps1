@@ -19,7 +19,8 @@
 #   4 structure      japan: games\tsukihime; global: create_tsukihime_global.ps1 (idempotent)
 #   5 analysis       tools\nso2bin.py -> analysis\main.bin and sdk.bin
 #   6 recomp         regen_tsuki*.ps1 main, sdk -> gen\ (the previous gen\ is kept as gen.old)
-#   7 fonts          fonts\shared_0.ttf (Noto Sans JP, OFL license): from -Fonts, from <root>\resources\fonts\ (in the repo) or from the other edition
+#   7 fonts          fonts\shared_0.ttf (Noto Sans JP, OFL license): from -Fonts, from <root>\resources\fonts\ (in the repo) or from the other edition;
+#                    then the side-bar images: <root>\media\left_border.png and right_border.png -> <data>\ (never replaces yours)
 #   8 shaders        tsuki_shaders_offline.py (romfs\shader + main) -> harness only for those without a .spv
 #   9 build          cmake -B (parameters of the existing CMakeCache) + cmake --build; then the HUD icons by device
 #                    (tools\hud\build_hud_assets.py -> <data>\hud; never fatal: without them the game keeps its icons)
@@ -38,9 +39,11 @@
 # name: it is recognised by its content). Steps 1-2 use tools\internal\romfs_source.py (python; no dotnet).
 # -Extract: the full extraction with nsextract (extract\romfs), as before. An extract\romfs from before is not
 # deleted: while it is there the exe reads it first; delete it by hand to free the space.
-# -TrimXci: cuts the 0xFF padding at the end of the .xci of this edition, in place (everything after the data is checked
-# to be 0xFF first; ~8.5 GB in the japanese cartridge; tools\internal\romfs_source.py untrim --input <xci> --apply
-# undoes it). Keys: if <root>\data\prod.keys does not exist and <root>\prod.keys does, it is MOVED to data\.
+# The .xci of this edition is trimmed: the 0xFF padding at its end is cut, in place, every time steps 1-2 read it
+# (everything after the data is checked to be 0xFF first; ~8.5 GB in a japanese .xci; an .xci already trimmed is left
+# as it is; tools\internal\romfs_source.py untrim --input <xci> --apply undoes it). -NoTrimXci keeps the .xci as it
+# is; -TrimXci also trims it on a run that does not read it (the extraction already done).
+# Keys: if <root>\data\prod.keys does not exist and <root>\prod.keys does, it is MOVED to data\.
 # Linux (PowerShell 7, via tools/linux/recomp_linux.sh): same steps; step 9 cross-compiles the SAME Windows exe
 # (clang-cl + lld-link + llvm-rc against the xwin CRT/SDK; tools/linux/clangcl-xwin.cmake) to play it with
 # Proton. The tools are installed by tools/linux/install_requirements_linux.sh. Nothing changes on Windows.
@@ -73,6 +76,7 @@ param(
     [switch]$NoUpdates,
     [switch]$Extract,   # AP_ROMFS_DIRECT: full extraction of the RomFS (nsextract) instead of reading it from the dump
     [switch]$TrimXci,   # AP_ROMFS_DIRECT: trim the 0xFF padding of this edition's .xci (in place, checked first)
+    [switch]$NoTrimXci,   # the .xci is trimmed by default whenever steps 1-2 read it: this keeps it as it is
     [ValidateRange(2, 600)][int]$ProgressSeconds = 30,
     [ValidateRange(0, 512)][int]$Jobs = 0   # AP_RECOMP_PARALLEL: compile jobs of step 9 (0 = ninja's default, CPUs + 2)
 )
@@ -135,13 +139,23 @@ $Markers = @(
     @('both', 'framework\runtime\include\nx\game.h', 'audio_execution_mode_offset', 'apply_audio_sdk.py', $false),
     @('both', 'framework\runtime\src\hle_audio.cpp', 'execution_mode_offset()', 'apply_audio_sdk.py', $false),
     @('both', 'framework\runtime\src\hle_audio.cpp', 'OpenDefaultAudioOutNoEvent', 'apply_audio_out.py', $false),
+    @('both', 'framework\runtime\src\hle_audio.cpp', 'AP_AUDIO_PACE', 'apply_audio_pace.py', $false),
     @('both', 'framework\runtime\src\platform.h', 'AP_MOUSE', 'apply_mouse.py', $false),
     @('both', 'framework\runtime\src\platform_win.cpp', 'AP_MOUSE', 'apply_mouse.py', $false),
     @('both', 'framework\runtime\src\hle_hid.cpp', 'AP_MOUSE', 'apply_mouse.py', $false),
     @('both', 'framework\runtime\src\platform.h', 'AP_PAD_SOURCE', 'apply_pad_source.py', $false),
     @('both', 'framework\runtime\src\platform_win.cpp', 'AP_PAD_SOURCE', 'apply_pad_source.py', $false),
     @('both', 'framework\runtime\src\hle_hid.cpp', 'AP_PAD_SOURCE', 'apply_pad_source.py', $false),
+    @('both', 'framework\games\tsukihime_common\tsukihime_common.cmake', 'AP_ANDROID_BUILD', 'apply_android_build.py', $false),
+    @('japan', 'framework\games\tsukihime\game.cmake', 'AP_ANDROID_BUILD', 'apply_android_build.py', $false),
+    @('global', 'framework\games\tsukihime_global\game.cmake', 'AP_ANDROID_BUILD', 'apply_android_build.py', $true),
+    @('both', '.gitignore', 'AP_ANDROID_BUILD', 'apply_android_build.py', $false),
     @('both', 'framework\runtime\src\platform_win.cpp', 'AP_WINDOW', 'apply_game_window.py', $false),
+    @('both', 'framework\runtime\src\platform.h', 'AP_ANDROID_INPUT', 'apply_android_input.py', $false),
+    @('both', 'framework\runtime\src\platform_android_input.cpp', 'AP_ANDROID_INPUT', 'apply_android_input.py', $false),
+    @('both', 'framework\games\tsukihime_common\hle_hid_tsuki.cpp', 'AP_ANDROID_INPUT', 'apply_android_input.py', $false),
+    @('both', 'framework\games\tsukihime_common\hle_carga.cpp', 'AP_CARGA_CACHE', 'apply_carga_cache.py', $false),
+    @('both', 'framework\games\tsukihime_common\hle_hid_tsuki.cpp', 'AP_ANDROID_DOUBLE_TAP', 'apply_android_double_tap.py', $false),
     @('both', 'framework\runtime\src\svc_am.cpp', 'AP_LANG_LOG', 'apply_lang_log.py', $false),
     @('both', 'framework\recomp\__main__.py', 'AP_RECOMP_HOOKS', 'apply_recomp_hooks.py', $false),
     @('both', 'framework\runtime\include\nx\runtime.h', 'AP_RECOMP_HOOKS', 'apply_recomp_hooks.py', $false),
@@ -149,6 +163,8 @@ $Markers = @(
     @('japan', 'tools\internal\regen_tsuki.ps1', 'AP_RECOMP_HOOKS', 'apply_recomp_hooks.py', $false),
     @('both', 'framework\games\tsukihime_common\hle_hooks_tsuki.cpp', 'AP_RECOMP_HOOKS', 'hle_hooks_tsuki.cpp (in the repo)', $false),
     @('both', 'framework\runtime\src\language.h', 'AP_LANG_DEFAULT', 'apply_game_language.py', $false),
+    @('both', 'framework\runtime\src\language.h', 'AP_LANGUAGE_CACHE', 'apply_language_cache.py', $false),
+    @('both', 'framework\runtime\src\platform_android.cpp', 'AP_LANGUAGE_CACHE', 'apply_language_cache.py', $false),
     @('both', 'framework\games\tsukihime_common\tsukihime_common.cmake', 'NX_TSUKI_COMMON', 'games\tsukihime_common (shared code, in the repo)', $false),
     @('both', 'framework\games\tsukihime_common\hle_movie.cpp', 'write_frame_to_texture', 'apply_movie_texture.py', $false),
     @('both', 'framework\runtime\src\platform_win.cpp', 'AP_DATA_ROOT_EXE', 'apply_data_root_exe.py', $false),
@@ -188,8 +204,21 @@ $Markers = @(
     @('both', 'framework\runtime\src\nvn\nvn_draw.cpp', 'AP_TITLE_CLICK', 'apply_title_click.py', $false),
     @('both', 'framework\games\tsukihime_common\hle_hid_tsuki.cpp', 'AP_TITLE_CLICK', 'apply_title_click.py', $false),
     @('both', 'framework\games\tsukihime_common\title_bg.cpp', 'AP_TITLE_CLICK', 'title_bg.cpp (copy it to games\tsukihime_common)', $false),
+    @('both', 'framework\runtime\src\nvn\nvn_draw.cpp', 'AP_MOUSE_BACK', 'apply_mouse_back.py', $false),
+    @('both', 'framework\games\tsukihime_common\hle_hid_tsuki.cpp', 'AP_MOUSE_BACK', 'apply_mouse_back.py', $false),
     @('both', 'framework\runtime\src\nvn\nvn_vk.cpp', 'AP_GPU_HANG', 'apply_gpu_hang.py', $false),
+    @('both', 'framework\runtime\src\nvn\nvn_present.cpp', 'AP_BAR_IMAGES', 'apply_bar_images.py', $false),
+    @('both', 'framework\games\tsukihime_common\hle_carga.cpp', 'AP_BAR_IMAGES', 'apply_bar_images.py', $false),
     @('both', 'framework\runtime\src\nvn\nvn_frames.cpp', 'AP_GPU_HANG', 'apply_gpu_hang.py', $false),
+    @('both', 'framework\runtime\src\nvn\nvn_image.cpp', 'AP_STORAGE_IMAGES', 'apply_storage_images.py', $false),
+    @('both', 'framework\runtime\src\nvn\nvn_pipeline.cpp', 'AP_STORAGE_IMAGES', 'apply_storage_images.py', $false),
+    @('both', 'framework\runtime\src\nvn\nvn_present.cpp', 'AP_ANDROID_PRESENT', 'apply_android_present.py', $false),
+    @('both', 'framework\runtime\src\perf_hint.cpp', 'AP_ANDROID_ADPF', 'apply_android_adpf.py', $false),
+    @('both', 'framework\runtime\src\kernel.cpp', 'AP_ANDROID_ADPF', 'apply_android_adpf.py', $false),
+    @('both', 'framework\runtime\src\nvn\nvn_bc.cpp', 'AP_BC_FAST', 'apply_bc_fast.py', $false),
+    @('both', 'framework\runtime\src\nvn\nvn_vk.cpp', 'AP_ANDROID_PRESENT', 'apply_android_present.py', $false),
+    @('both', 'framework\runtime\src\kernel.cpp', 'AP_FRAME_PROFILE', 'apply_frame_profile.py', $false),
+    @('both', 'framework\runtime\src\nvn\nvn_queue.cpp', 'AP_FRAME_PROFILE', 'apply_frame_profile.py', $false),
     @('both', 'framework\runtime\include\nx\runtime.h', 'AP_MOVIE_STREAM', 'apply_movie_stream.py', $false),
     @('both', 'framework\runtime\src\hle_fs.cpp', 'AP_MOVIE_STREAM', 'apply_movie_stream.py', $false),
     @('both', 'framework\games\tsukihime_common\movie_core.h', 'AP_MOVIE_STREAM', 'apply_movie_stream.py', $false),
@@ -197,11 +226,23 @@ $Markers = @(
     @('both', 'framework\games\tsukihime_common\hle_movie.cpp', 'AP_MOVIE_STREAM', 'apply_movie_stream.py', $false),
     @('both', 'framework\runtime\src\nvn\nvn_vk.cpp', 'AP_VK_REQ', 'apply_vk_requirements.py', $false),
     @('both', 'framework\runtime\src\nvn\nvn_vk.cpp', 'AP_VK_FAIL', 'apply_vk_fail.py', $false),
+    @('both', 'framework\runtime\src\nvn\nvn_vk.cpp', 'AP_VK11', 'apply_vk11.py', $false),
+    @('both', 'framework\runtime\src\nvn\nvn_vk.cpp', 'AP_VK_GIPA', 'apply_android_vk_gipa.py', $false),
+    @('both', 'framework\runtime\src\nvn\nvn_vk.cpp', 'AP_VK_E3', 'apply_vk_e3.py', $false),
+    @('both', 'framework\runtime\src\nvn\nvn_sampler.cpp', 'AP_VK_E3', 'apply_vk_e3.py', $false),
+    @('both', 'framework\runtime\src\nvn\nvn_image.cpp', 'AP_VK_E3', 'apply_vk_e3.py', $false),
     @('both', 'framework\runtime\src\hle_fs.cpp', 'AP_ROMFS_MODS', 'apply_romfs_mods.py', $false),
     @('both', 'framework\games\tsukihime_common\tsukihime_common.cmake', 'AP_ROMFS_MODS', 'apply_romfs_mods.py', $false),
     @('both', 'framework\runtime\src\nvn\nvn_objects.cpp', 'AP_PACKAGED_LAYOUT', 'apply_packaged_layout.py', $false),
     @('both', 'framework\games\tsukihime_common\tsukihime_common.cmake', 'AP_PACKAGED_LAYOUT', 'apply_packaged_layout.py', $false),
+    @('both', 'framework\runtime\src\nvn\nvn_upload.cpp', 'AP_BC_STAGING', 'apply_bc_staging.py', $false),
     @('both', 'framework\games\tsukihime_common\hud_glyphs.cpp', 'AP_HUD_GLYPHS', 'hud_glyphs.cpp and hud_glyphs.h (in the repo)', $false),
+    @('both', 'framework\runtime\src\platform.h', 'AP_ANDROID_KEYBOARD', 'apply_android_keyboard.py', $false),
+    @('both', 'framework\runtime\src\platform_android_input.cpp', 'AP_ANDROID_KEYBOARD', 'apply_android_keyboard.py', $false),
+    @('both', 'framework\games\tsukihime_common\input_tsuki.cpp', 'AP_ANDROID_KEYBOARD', 'apply_android_keyboard.py', $false),
+    @('both', 'framework\games\tsukihime_common\input_tsuki.h', 'AP_ANDROID_KEYBOARD', 'apply_android_keyboard.py', $false),
+    @('both', 'framework\games\tsukihime_common\hle_hid_tsuki.cpp', 'AP_ANDROID_KEYBOARD', 'apply_android_keyboard.py', $false),
+    @('both', 'framework\games\tsukihime_common\hud_android.cpp', 'AP_ANDROID_KEYBOARD', 'apply_android_keyboard.py', $false),
     @('both', 'framework\runtime\src\nvn\nvn_upload.cpp', 'AP_HUD_GLYPHS', 'apply_hud_glyphs.py', $false),
     @('both', 'framework\games\tsukihime_common\input_tsuki.cpp', 'AP_HUD_GLYPHS', 'apply_hud_glyphs.py', $false),
     @('both', 'framework\games\tsukihime_common\tsukihime_common.cmake', 'AP_HUD_GLYPHS', 'apply_hud_glyphs.py', $false),
@@ -218,6 +259,15 @@ $Markers = @(
     @('both', 'tools\internal\mods_nsp.py', 'AP_MOD_RECIPES', 'apply_mod_recipes.py', $false),
     @('both', 'framework\runtime\src\hle_fs.cpp', 'AP_MOD_RECIPES', 'apply_mod_recipes.py', $false),
     @('both', 'framework\games\tsukihime_common\romfs_direct.cpp', 'AP_MOD_RECIPES', 'apply_mod_recipes.py', $false),
+    @('both', 'framework\games\tsukihime_common\romfs_direct.cpp', 'AP_ANDROID_ROMFS', 'apply_android_romfs.py', $false),
+    @('both', 'framework\games\tsukihime_common\romfs_direct.cpp', 'AP_ANY_CONTAINER', 'apply_any_container.py', $false),
+    @('both', 'tools\internal\romfs_source.py', 'AP_ANY_CONTAINER', 'apply_any_container.py', $false),
+    @('both', 'framework\runtime\src\platform.h', 'AP_ANDROID_HUD', 'apply_android_hud.py', $false),
+    @('both', 'framework\runtime\src\platform_android_input.cpp', 'AP_ANDROID_HUD', 'apply_android_hud.py', $false),
+    @('both', 'framework\runtime\src\platform_android.cpp', 'AP_FRAME_RATE', 'apply_android_frame_rate.py', $false),
+    @('both', 'framework\games\tsukihime_common\hud_android.cpp', 'AP_ANDROID_HUD', 'hud_android.cpp (copy it to games\tsukihime_common)', $false),
+    @('both', 'framework\runtime\src\platform_android.cpp', 'AP_PRESENT_SCALE', 'apply_present_scale.py', $false),
+    @('both', 'framework\runtime\src\platform_android_input.cpp', 'AP_PRESENT_SCALE', 'apply_present_scale.py', $false),
     @('both', 'tools\hud\build_hud_assets.py', 'AP_ROMFS_DIRECT', 'apply_romfs_direct.py', $false),
     @('both', 'tools\recomp_tsukihime.ps1', 'AP_FIND_INPUTS', 'apply_find_inputs.py', $false),
     @('both', 'tools\recomp_tsukihime.ps1', 'AP_CACHE_MOVED', 'apply_cache_moved.py', $false),
@@ -623,24 +673,25 @@ function Step0 {
 
 # AP_DROP_UNUSED: ExtractFile, PartitionSize and FromContainer removed (nstool)
 $script:WrongEdition = $false
-# AP_ROMFS_DIRECT: -TrimXci cuts the 0xFF padding of the .xci of this edition (romfs_source.py checks every byte first;
+# AP_ROMFS_DIRECT: cuts the 0xFF padding of the .xci of this edition (romfs_source.py checks every byte first;
 # another edition's .xci is left alone, exit code 3).
 function TrimInputs {
     $n = 0
     foreach ($c in @($script:Candidates)) {
         if ((ContainerType $c) -ne 'xci') { continue }
-        Info "-TrimXci: $(Split-Path -Leaf $c) (everything after the data must be 0xFF; reading it takes about a minute)"
+        Info "trim .xci: $(Split-Path -Leaf $c) (everything after the data must be 0xFF; reading it takes about a minute)"
         & $Python $SourcePy trim --keys $Keys --input $c --program-id (Hex16 $V.ProgramId) --apply
         $code = $LASTEXITCODE
         if ($code -eq 3) { Info "$(Split-Path -Leaf $c): not the $Edition edition (not trimmed)"; continue }
         if ($code -ne 0) { Fail "romfs_source.py trim failed with $(Split-Path -Leaf $c) (code $code)" }
         $n++
     }
-    if (-not $n) { Info "-TrimXci: there is no .xci of the $Edition edition in $Root (an .nsp has no padding)" }
+    if (-not $n) { Info "trim .xci: there is no .xci of the $Edition edition in $Root (an .nsp has no padding)" }
 }
 
 function Step1 {
-    if ($TrimXci) { TrimInputs }   # AP_ROMFS_DIRECT
+    # AP_ROMFS_DIRECT: the .xci is trimmed whenever its candidates were found (steps 1-2 read it, or -TrimXci)
+    if (-not $NoTrimXci -and ($TrimXci -or ((Test-Path variable:script:Candidates) -and @($script:Candidates).Count))) { TrimInputs }
     if ((ExtractedOk) -and -not $Replace) {
         Info 'already extracted: the input is not read again (step 3 verifies program ID and build ID of the exefs; -Replace to extract again)'
         return
@@ -1135,7 +1186,27 @@ function Step6 {
     if ($previous) { Warn "the previous gen\ was kept in $previous (delete it by hand whenever you want)" }
 }
 
+# Side-bar images of the Android build (the game looks for left_border / right_border in the data root, in
+# png, jpg or jpeg, and a border.* has priority over both). The ones of the repo (media\) are the default: a side that
+# already has an image of its own in the data root (any extension), or a border.*, is left alone. Never fatal.
+function BarImages {
+    foreach ($side in 'left_border', 'right_border') {
+        $src = Under $Root "media\$side.png"
+        if (-not (Test-Path -LiteralPath $src -PathType Leaf)) { Info "media\$side.png is not in the repo: no default image for that side bar"; continue }
+        $mine = @('png', 'jpg', 'jpeg') | ForEach-Object { Under $Data "$side.$_" } | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }
+        if ($mine) { Info "${side}: yours is already in the data root (kept)"; continue }
+        if (Get-ChildItem -Path (Under $Data 'border.*') -File -ErrorAction SilentlyContinue) { Info "border.* is in the data root: it takes priority, $side not needed"; continue }
+        Copy-Item -LiteralPath $src -Destination (Under $Data "$side.png")
+        Info "$side.png copied from media\"
+    }
+}
+
 function Step7 {
+    Step7Fonts
+    BarImages
+}
+
+function Step7Fonts {
     $dst = Under $Data 'fonts\shared_0.ttf'
     if (Test-Path -LiteralPath $dst) {
         $h = Sha256 $dst
@@ -1350,7 +1421,23 @@ function CacheProblem([string]$cache) {
     return ''
 }
 
+# A build configured with the VS Build Tools chain on a PC that now builds with clang-cl + xwin (_prepare\toolchain.json):
+# its cache still points to paths that exist, so CacheProblem keeps it, and the build then fails outside the VS
+# environment. It is configured again (its CMakeCache.txt and CMakeFiles are removed; the objects are rebuilt).
+function ForeignToolchainCache([string]$build) {
+    $cache = Under $build 'CMakeCache.txt'
+    if (-not $Toolchain -or $OnLinux -or -not (Test-Path -LiteralPath $cache)) { return }
+    $tc = CacheValue $cache 'CMAKE_TOOLCHAIN_FILE'
+    if ($tc -like '*clangcl-xwin.cmake' -or (CacheValue $cache 'VCPKG_CHAINLOAD_TOOLCHAIN_FILE') -like '*clangcl-xwin.cmake') { return }
+    Info "$build was configured with another toolchain ($(if ($tc) { $tc } else { 'VS Build Tools' })): configuring it again with clang-cl + xwin"
+    Remove-Item -LiteralPath $cache -Force
+    $cmf = Under $build 'CMakeFiles'
+    if (Test-Path -LiteralPath $cmf) { Remove-Item -LiteralPath $cmf -Recurse -Force }
+}
+
 function Step9 {
+    ForeignToolchainCache $Build
+    ForeignToolchainCache $BuildOther   # its parameters would be copied to a new configuration
     if ($script:HudJob) { HudAssets }   # AP_RECOMP_PARALLEL: the background HUD build ends before the compile starts
     $cache = Under $Build 'CMakeCache.txt'
     $gen = ((Under $Data 'gen') -replace '\\', '/')

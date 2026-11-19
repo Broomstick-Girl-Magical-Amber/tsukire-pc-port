@@ -91,6 +91,25 @@ void GetNpadControllerColorLR(CPU& c) {  // (NpadControllerColor* left, NpadCont
 #if defined(_WIN32)
 constexpr uint64_t kMs = 1000000;
 
+extern "C" bool nx_help_bar_visible();  // AP_MOUSE_BACK (nvn_draw.cpp)
+
+// AP_MOUSE_BACK: the right button, when input.ini gives it exactly Y (the system menu), goes back (B) while the help bar is
+// on screen (a submenu is open); in the text and in the system menu itself it stays Y. NX_MOUSE_BACK=0: always as set.
+const tsuki::Target& mouse_back_target() {
+    static const tsuki::Target t = [] { tsuki::Target x; tsuki::parse_target("B", x); return x; }();
+    return t;
+}
+
+bool mouse_back_wanted(const tsuki::Target& right) {
+    static const bool on = env_on("NX_MOUSE_BACK", true);
+    static const tsuki::Target y = [] { tsuki::Target x; tsuki::parse_target("Y", x); return x; }();
+    if (!on || !y.any() || right.bits != y.bits || right.lx != y.lx || right.ly != y.ly || right.rx != y.rx ||
+        right.ry != y.ry || !nx_help_bar_visible())
+        return false;
+    if (trace_on()) log("hid: clic derecho -> B (barra de ayuda visible)");
+    return true;
+}
+
 void mouse_pad(plat::PadState& p) {
     if (!mouse_on()) return;
     const tsuki::Target* side[3] = {nullptr, &tsuki::mouse_target(tsuki::kMouseRight),
@@ -128,9 +147,15 @@ void mouse_pad(plat::PadState& p) {
 #endif
     // Derecho y medio: apretados mientras se mantienen, y al menos 80 ms desde el clic (un clic mas corto que un
     // frame igual se ve).
+    static bool back_held = false, back_now = false;  // AP_MOUSE_BACK
     for (int k = 1; k < 3; k++) {
         if (ptr.downs[k] != seen[k]) seen[k] = ptr.downs[k], until[k] = now + 80 * kMs;
-        if ((ptr.buttons >> k & 1) || now < until[k]) tsuki::press(p, *side[k]);
+        const bool down = (ptr.buttons >> k & 1) || now < until[k];
+        if (k == 1) {  // AP_MOUSE_BACK: decided when the right button goes down, kept while it is down
+            if (down && !back_held) back_now = mouse_back_wanted(*side[1]);
+            back_held = down;
+        }
+        if (down) tsuki::press(p, k == 1 && back_now ? mouse_back_target() : *side[k]);
     }
     // Rueda: cada muesca (120) es una pulsacion de 60 ms seguida de 40 ms suelto; como mucho 5 en cola.
     while (ptr.wheel - wheel_used >= 120) wheel_used += 120, pending = std::min(pending + 1, 5);
@@ -141,6 +166,40 @@ void mouse_pad(plat::PadState& p) {
         pulse_end = now + 60 * kMs;
     }
     if (now < pulse_end) tsuki::press(p, pulse_dir > 0 ? wheel_up : wheel_down);
+}
+#endif
+
+#if defined(__ANDROID__)
+// AP_ANDROID_INPUT (apply_android_input.py): gestures -> buttons of the pad. A long press (next_touch_sample) = Y;
+// two fingers swiped left = X. Each one a 120 ms press. The other two-finger gestures press nothing: the game already
+// does those by touch (hiding the text, fast forward while held; rewind, auto and fast forward in its mini menu).
+std::atomic<bool> g_long_press{false};
+std::atomic<bool> g_double_tap{false};  // AP_ANDROID_DOUBLE_TAP: the second tap of a double tap = A (confirm)
+bool gestures_on() {
+    static const bool on = env_on("NX_TOUCH_GESTURES", true);
+    return on;
+}
+void touch_pad(plat::PadState& p) {
+    if (!mouse_on() || !gestures_on()) return;
+    plat::TouchGestures g;
+    plat::read_gestures(g);
+    static std::mutex m;
+    std::lock_guard lk(m);
+    constexpr uint64_t kPress = 120000000;
+    static bool init = false;
+    static plat::TouchGestures seen;
+    static uint64_t until[7] = {};  // long press, tap, swipe up, down, left, right, double tap (AP_ANDROID_DOUBLE_TAP)
+    constexpr uint64_t kBits[7] = {plat::kY, 0, 0, 0, plat::kX, 0, plat::kA};
+    if (!init) init = true, seen = g;
+    const uint64_t now = plat::monotonic_ns();
+    if (g_long_press.exchange(false, std::memory_order_relaxed)) until[0] = now + kPress;
+    if (g_double_tap.exchange(false, std::memory_order_relaxed)) until[6] = now + kPress;  // AP_ANDROID_DOUBLE_TAP
+    if (g.taps != seen.taps) until[1] = now + kPress;
+    for (int d = 0; d < 4; d++)
+        if (g.swipes[d] != seen.swipes[d]) until[2 + d] = now + kPress;
+    seen = g;
+    for (int k = 0; k < 7; k++)  // AP_ANDROID_DOUBLE_TAP: 7
+        if (now < until[k]) p.buttons |= kBits[k];
 }
 #endif
 
@@ -158,6 +217,12 @@ void trace_pad(const plat::PadState& p) {
 void tsuki_pad_hook(plat::PadState& p) {
 #if defined(_WIN32)
     mouse_pad(p);
+#endif
+#if defined(__ANDROID__)
+    touch_pad(p);  // AP_ANDROID_INPUT: the touch gestures
+#endif
+#if defined(__ANDROID__)
+    tsuki::keyboard_pad(p);  // AP_ANDROID_KEYBOARD: the physical keyboard (input.ini)
 #endif
     if (trace_on()) trace_pad(p);
 }
@@ -182,7 +247,7 @@ struct TouchSample {
     int32_t x = 0, y = 0;
 };
 
-#if defined(_WIN32)
+#if defined(_WIN32) || defined(__ANDROID__)  // AP_ANDROID_INPUT: on Android a finger is the left button
 // Ventana -> pantalla del juego: el rectangulo donde el framework presenta la imagen (plat::picture_rect,
 // apply_aspect.py): con NX_FIXED_ASPECT la imagen con franjas, sin ella el area cliente entera (estirada).
 struct ScreenPoint {
@@ -194,7 +259,14 @@ ScreenPoint to_screen(const plat::PointerState& p) {
     const plat::PictureRect r = plat::picture_rect(p.w, p.h);
     if (!r.w || !r.h) return {false, 0, 0};
     double u = double(p.x - r.x) / r.w, v = double(p.y - r.y) / r.h;
-    return {u >= 0 && u < 1 && v >= 0 && v < 1, std::clamp(int32_t(u * kTouchW), 0, kTouchW - 1),
+#if defined(__ANDROID__)
+    // AP_ANDROID_INPUT: a touch on the black bars counts too, moved to the nearest edge of the picture (the clamps
+    // below). NX_TOUCH_BARS=0: ignored, as on PC.
+    static const bool bars = env_on("NX_TOUCH_BARS", true);
+#else
+    constexpr bool bars = false;
+#endif
+    return {bars || (u >= 0 && u < 1 && v >= 0 && v < 1), std::clamp(int32_t(u * kTouchW), 0, kTouchW - 1),
             std::clamp(int32_t(v * kTouchH), 0, kTouchH - 1)};
 }
 
@@ -255,6 +327,129 @@ TouchSample next_touch_sample() {
         g_touching = false;
         s.count = 1, s.attr = kAttrEnd;
         if (trace_on()) log("hid: fin del toque en %d,%d", g_touch_x, g_touch_y);
+    }
+    s.x = g_touch_x, s.y = g_touch_y;
+#elif defined(__ANDROID__)
+    // AP_ANDROID_INPUT (apply_android_input.py): a finger. Held back until it is clear what it is: lifted (a tap, the
+    // game gets it then, pressed as long as the finger was), moved (a drag, the game gets it from where it went down) or kept still for
+    // NX_LONG_PRESS_MS (a long press: the title logo changes the video, anywhere else Y; the game never sees it).
+    // A second finger makes it a gesture (platform_android_input.cpp; buttons in touch_pad): a touch already sent ends.
+    if (!mouse_on()) return s;
+    plat::PointerState p;
+    plat::read_pointer(p);
+    plat::TouchGestures gs;
+    plat::read_gestures(gs);
+    if (!g_touch_init) g_touch_init = true, g_touch_seen_downs = p.downs[0];
+    const ScreenPoint pt = to_screen(p);
+    const bool held = p.buttons & 1, new_down = p.downs[0] != g_touch_seen_downs;
+    enum { kIdle, kPending, kTouching, kReplay, kGesture };
+    static int state = kIdle;
+    static int32_t sx = 0, sy = 0, wx = 0, wy = 0;  // where it went down: game screen, window pixels
+    static uint64_t t0 = 0, replay_end = 0;  // kReplay: a tap given to the game as it was pressed, until replay_end
+    // AP_ANDROID_DOUBLE_TAP: a finger that goes down within NX_DOUBLE_TAP_MS (300; 0 = off) of the end of the last
+    // tap, and near it (5 % of the screen height), is the second tap of a double tap: lifted, it presses A (confirm)
+    // and the game gets no touch. Moved it is a drag, kept still the long press, as any other finger.
+    static uint64_t tap_end = 0;  // when the game got the End of the last tap (0: no tap to pair with)
+    static int32_t tap_x = 0, tap_y = 0;
+    static bool second = false;  // the finger in kPending is the second tap of a pair
+    static const uint64_t double_ns = [] {
+        const char* e = std::getenv("NX_DOUBLE_TAP_MS");
+        return uint64_t(e && *e ? std::clamp(std::atoi(e), 0, 1000) : 300) * 1000000;
+    }();
+    static const bool gestures = env_on("NX_TOUCH_GESTURES", true);
+    static const uint64_t long_ns = [] {
+        const char* e = std::getenv("NX_LONG_PRESS_MS");
+        return uint64_t(e && *e ? std::max(150, std::atoi(e)) : 500) * 1000000;
+    }();
+    auto start = [&] {
+        state = kTouching;
+        g_touching = true;
+        g_touch_x = sx, g_touch_y = sy;
+        s.count = 1, s.attr = kAttrStart;
+        if (trace_on()) log("hid: toque en %d,%d", sx, sy);
+    };
+    if (gestures && gs.fingers >= 2 && (state == kPending || state == kTouching || state == kReplay)) {
+        if (state == kTouching || state == kReplay) s.count = 1, s.attr = kAttrEnd;  // a touch already sent ends where it was
+        g_touching = false;
+        state = kGesture;
+        if (trace_on()) log("hid: segundo dedo: gesto, no toque");
+    } else if (state == kIdle) {
+        if (new_down) {
+            g_touch_seen_downs = p.downs[0];
+            if (pt.inside) {
+                sx = pt.x, sy = pt.y, wx = p.x, wy = p.y, t0 = plat::monotonic_ns();
+                state = kPending;
+                // AP_ANDROID_DOUBLE_TAP (v2 also logs: once that it is on, and with NX_INPUT_TRACE=1 how far in time
+                // and place each finger is from the last tap, to see why a double tap was or was not taken)
+                const uint64_t gap = tap_end ? t0 - tap_end : 0;
+                const float dist = std::hypot(float(sx - tap_x), float(sy - tap_y));
+                second = gestures && double_ns && tap_end && gap <= double_ns && dist <= 0.05f * kTouchH;
+                static bool said = false;
+                if (!said) {
+                    said = true;
+                    log("hid: doble toque = A: %s (NX_DOUBLE_TAP_MS %llu, hasta %.0f px)",
+                        gestures && double_ns ? "activo" : "apagado", (unsigned long long)(double_ns / 1000000),
+                        0.05f * kTouchH);
+                }
+                if (tap_end && trace_on())
+                    log("hid: dedo en %d,%d a %llu ms y %.0f px del toque anterior: %s", sx, sy,
+                        (unsigned long long)(gap / 1000000), dist, second ? "segundo toque (doble)" : "no es doble");
+                tap_end = 0;
+                if (!gestures) start();
+            }
+        }
+    } else if (state == kPending) {
+        const float moved = std::hypot(float(p.x - wx), float(p.y - wy)) / float(std::max(1u, p.h));
+        if ((!held || new_down) && second) {
+            // AP_ANDROID_DOUBLE_TAP: the second tap of a double tap: A (touch_pad), the game gets no touch. A finger
+            // already down again (new_down) is seen in kIdle, as a new touch.
+            second = false;
+            state = kIdle;
+            g_double_tap.store(true, std::memory_order_relaxed);
+            if (trace_on()) log("hid: doble toque en %d,%d: A", sx, sy);
+        } else if (!held || new_down) {
+            // A tap: the game gets it as it was, pressed for as long as the finger was (at least 80 ms, at most
+            // 300 ms): Start, held samples, then End. Start followed at once by End is seen (the button lights up)
+            // but not acted upon.
+            const uint64_t now = plat::monotonic_ns();
+            replay_end = now + std::clamp<uint64_t>(now - t0, 80000000, 300000000);
+            start();
+            state = kReplay;
+        } else if (moved > 0.03f) {
+            start();  // a drag: followed from the next sample
+        } else if (plat::monotonic_ns() - t0 >= long_ns) {
+            state = kGesture;
+            const ScreenPoint at{true, sx, sy};
+            if (title_logo_click(at)) {
+                if (trace_on()) log("hid: toque largo en el logo del titulo (%d,%d): cambia el video", sx, sy);
+            } else {
+                g_long_press.store(true, std::memory_order_relaxed);
+                if (trace_on()) log("hid: toque largo en %d,%d: Y", sx, sy);
+            }
+        }
+    } else if (state == kReplay) {
+        if (plat::monotonic_ns() < replay_end) {
+            s.count = 1;  // still pressed, where it went down
+        } else {
+            g_touching = false;
+            state = kIdle;
+            tap_end = plat::monotonic_ns(), tap_x = sx, tap_y = sy;  // AP_ANDROID_DOUBLE_TAP: a tap to pair with
+            s.count = 1, s.attr = kAttrEnd;
+            if (trace_on()) log("hid: fin del toque en %d,%d", g_touch_x, g_touch_y);
+        }
+    } else if (state == kTouching) {
+        if (held && !new_down) {
+            g_touch_x = pt.x, g_touch_y = pt.y;  // arrastre: sigue al dedo, limitado a la pantalla
+            s.count = 1;
+        } else {
+            g_touching = false;
+            state = kIdle;
+            s.count = 1, s.attr = kAttrEnd;
+            if (trace_on()) log("hid: fin del toque en %d,%d", g_touch_x, g_touch_y);
+        }
+    } else if (!held && gs.fingers == 0) {  // kGesture: over once every finger is up
+        g_touch_seen_downs = p.downs[0];
+        state = kIdle;
     }
     s.x = g_touch_x, s.y = g_touch_y;
 #endif

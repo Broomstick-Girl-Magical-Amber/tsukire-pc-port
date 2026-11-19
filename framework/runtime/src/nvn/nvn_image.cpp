@@ -11,6 +11,9 @@ namespace nx::nvn {
 
 using namespace nx::vk;
 
+bool vk_e3_format_list();  // AP_VK_E3: the device can take a format list (nvn_vk.cpp)
+bool vk_e3_4444();         // the device has A4B4G4R4 enabled (nvn_vk.cpp)
+
 namespace {
 
 bool check(VkResult r, const char* what) {  // as nvn_vk.cpp's
@@ -25,6 +28,7 @@ bool check(VkResult r, const char* what) {  // as nvn_vk.cpp's
 // dropped first; a format it cannot make at all is logged once and the texture gets no image (the dummy).
 bool image_supported(VkImageCreateInfo& ci, uint32_t nvn_format) {
     auto ok = [&] {
+        if (ci.format == VK_FORMAT_A4B4G4R4_UNORM_PACK16 && !vk_e3_4444()) return false;  // AP_VK_E3
         VkImageFormatProperties p{};
         return p_vkGetPhysicalDeviceImageFormatProperties(vk_physical(), ci.format, ci.imageType, ci.tiling, ci.usage,
                                                           ci.flags, &p) == VK_SUCCESS &&
@@ -157,7 +161,8 @@ GpuImage* image_of(uint64_t guest) {
     VkFormat listed[2] = {};
     VkImageFormatListCreateInfo list{VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO};
     img->mutable_format = aspect == 0 && !img->alpha_from_r;
-    if (img->mutable_format && ubwc_flags()) {
+    // AP_VK_E3: the list only where the device takes it; otherwise mutable without it, as on a PC.
+    if (img->mutable_format && ubwc_flags() && vk_e3_format_list()) {
         auto pair = [&](VkFormat a, VkFormat b) {
             if (img->format != a && img->format != b) return false;
             listed[0] = a, listed[1] = b;
@@ -185,6 +190,17 @@ GpuImage* image_of(uint64_t guest) {
         VkFormatProperties fp{};
         p_vkGetPhysicalDeviceFormatProperties(vk_physical(), ci.format, &fp);
         img->storage = !compressed && !aspect && (fp.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT);
+#if defined(__ANDROID__)
+        // AP_STORAGE_IMAGES (apply_storage_images.py): no STORAGE usage on Android (it can turn framebuffer compression
+        // off on Mali and other mobile GPUs; the game's shaders did not write images); NX_STORAGE_IMAGES=1 gives it back.
+        static const bool storage_wanted = [] {
+            const char* e = std::getenv("NX_STORAGE_IMAGES");
+            const bool on = e && e[0] == '1';
+            if (!on) log("nvn/vk: images are made without STORAGE usage (framebuffer compression); NX_STORAGE_IMAGES=1 gives it back");
+            return on;
+        }();
+        if (!storage_wanted) img->storage = false;
+#endif
         if (img->storage) ci.usage |= VK_IMAGE_USAGE_STORAGE_BIT;
     }
     ci.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;

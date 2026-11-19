@@ -18,6 +18,35 @@
 #define IDD_CTL_OPTIONS         112
 #define IDD_BIND                113
 #define IDD_PLAYTAB             114
+#define IDD_ANDROID             115   // AP_LAUNCHER_ANDROID (apply_launcher_android.py): the Android sub-tab
+#define IDD_INSTALLTAB          116   // Install and recompile: the Windows and Android sub-tabs
+
+// Install and recompile: sub-tabs; Android sub-tab
+#define IDC_INSTALL_TABS        1824
+#define IDC_AND_ED_GROUP        1800
+#define IDC_AND_JP              1801
+#define IDC_AND_JP_STATE        1802
+#define IDC_AND_GL              1803
+#define IDC_AND_GL_STATE        1804
+#define IDC_AND_INFO            1805
+#define IDC_AND_PHONE_GROUP     1806
+#define IDC_AND_SEND_LABEL      1807
+#define IDC_AND_SEND            1808
+#define IDC_AND_MODS            1809
+#define IDC_AND_SAVES           1810
+#define IDC_AND_DUMP            1811
+#define IDC_AND_START           1812
+#define IDC_AND_CONSOLE         1813
+#define IDC_AND_CANCEL          1814
+#define IDC_AND_OPEN            1815
+#define IDC_AND_PROG_GROUP      1816
+#define IDC_AND_STEP            1817
+#define IDC_AND_TIME            1818
+#define IDC_AND_PROGRESS        1819
+#define IDC_AND_LOG             1820
+#define IDC_AND_RESULT          1821
+#define IDC_AND_COPY            1822
+#define IDC_AND_OPENLOGS        1823
 
 // main window
 #define IDC_TAB                 1000

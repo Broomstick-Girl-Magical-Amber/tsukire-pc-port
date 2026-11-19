@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _patch import run  # noqa: E402
 
 MARK = "AP_TOOL_TIMES"
+CONSOLIDATED = "later patches build on its text: it stays in the tree (2026-11-16)"
 INST = "../tools/install_requirements.ps1"
 
 ADMIN_OLD = """        try { InstallTool $c; $r[$c] = 'ok' } catch { $r[$c] = "error: $($_.Exception.Message)"; Write-Host "   ERROR: $($_.Exception.Message)" -ForegroundColor Red }

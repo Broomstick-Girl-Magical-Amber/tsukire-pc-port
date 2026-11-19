@@ -23,6 +23,7 @@ Idempotent (marker AP_TITLE_FADE), all or nothing, keeps CRLF and BOM; --remove 
 from _patch import run
 
 MARK = "AP_TITLE_FADE"
+CONSOLIDATED = "later patches build on its text: it stays in the tree (2026-11-16)"
 
 # ---- movie_core.cpp: one timeline after a swap
 OFF_FIELD_A = "    bool have = false, eof = false;\n"

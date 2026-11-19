@@ -583,8 +583,8 @@ void OnGameExit(DWORD code) {
     switch (code) {
     case 0: return;   // closed normally (also with the X)
     case 4: t = L2(L"The game stopped because the GPU stopped responding (code 4).", L"El juego se detuvo porque la GPU dej\u00f3 de responder (c\u00f3digo 4)."); break;
-    case 5: t = L2(L"Your graphics driver does not support Vulkan 1.3 (code 5). Update the graphics driver and try again.",
-                   L"Tu driver de video no soporta Vulkan 1.3 (c\u00f3digo 5). Actualiza el driver de video y vuelve a intentarlo."); break;
+    case 5: t = L2(L"Your graphics driver does not support Vulkan 1.1 (code 5). Update the graphics driver and try again.",
+                   L"Tu driver de video no soporta Vulkan 1.1 (c\u00f3digo 5). Actualiza el driver de video y vuelve a intentarlo."); break;
     case 6: t = L2(L"Vulkan is not available on this PC (code 6). The game needs a GPU with a Vulkan driver (a virtual machine usually has none).",
                    L"Vulkan no est\u00e1 disponible en este PC (c\u00f3digo 6). El juego necesita una GPU con driver Vulkan (una m\u00e1quina virtual normalmente no tiene)."); break;
     default:
@@ -647,6 +647,7 @@ void ShowPage(int page) {
 void RefreshAll() {
     RefreshPlay();
     RefreshInstall();
+    RefreshAndroid();   // AP_LAUNCHER_ANDROID
     RefreshMods();
     RefreshControls();
     RefreshOptions();
@@ -680,8 +681,9 @@ INT_PTR CALLBACK MainProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
             it.pszText = const_cast<wchar_t*>(names[i]);
             TabCtrl_InsertItem(g.tab, i, &it);
         }
-        const int ids[4] = {IDD_PLAYTAB, IDD_INSTALL, IDD_MODS, IDD_CONTROLS};
-        DLGPROC procs[4] = {PlayTabProc, InstallProc, ModsProc, ControlsProc};
+        // AP_LAUNCHER_ANDROID: Install and recompile holds the Windows and Android sub-tabs (android.cpp)
+        const int ids[4] = {IDD_PLAYTAB, IDD_INSTALLTAB, IDD_MODS, IDD_CONTROLS};
+        DLGPROC procs[4] = {PlayTabProc, InstallTabProc, ModsProc, ControlsProc};
         for (int i = 0; i < 4; i++) g.pages[i] = CreateDialogParamW(g.inst, MAKEINTRESOURCEW(ids[i]), dlg, procs[i], 0);
         PlacePages(dlg);
         SetDlgItemTextW(dlg, IDC_FOOTER, Format(L2(L"Port folder: %ls", L"Carpeta del port: %ls"), g.root.c_str()).c_str());

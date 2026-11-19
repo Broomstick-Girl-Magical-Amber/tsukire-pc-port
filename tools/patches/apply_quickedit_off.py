@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _patch import run  # noqa: E402
 
 MARK = "AP_QUICKEDIT"
+CONSOLIDATED = "later patches build on its text: it stays in the tree (2026-11-16)"
 INST = "../tools/install_requirements.ps1"
 
 TAIL_OLD = """if ($FunctionsOnly) { return }

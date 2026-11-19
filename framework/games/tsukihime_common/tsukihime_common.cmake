@@ -5,6 +5,9 @@
 # (por ejemplo NX_TSUKI_GLOBAL), inerte para la japonesa.
 set(NX_TSUKI_COMMON "${CMAKE_CURRENT_LIST_DIR}")
 file(GLOB NX_TSUKI_COMMON_SOURCES CONFIGURE_DEPENDS "${NX_TSUKI_COMMON}/*.cpp")
+if(ANDROID)  # AP_ANDROID_BUILD: controllers and touch come from the runtime (platform_android_input.cpp), not SDL3
+    list(FILTER NX_TSUKI_COMMON_SOURCES EXCLUDE REGEX "/pad_sdl\\.cpp$")
+endif()
 target_sources(${NX_GAME} PRIVATE ${NX_TSUKI_COMMON_SOURCES})
 target_include_directories(${NX_GAME} PRIVATE "${NX_TSUKI_COMMON}")  # movie_core.h, input_tsuki.h
 # AP_PACKAGED_LAYOUT (apply_packaged_layout.py): block height of packaged (BNTX) textures from the game, not guessed
@@ -31,6 +34,42 @@ target_compile_definitions(${NX_GAME} PRIVATE NX_ROMFS_DIRECT)
 # AP_CONFIG_ENV (apply_config_env.py): the NX_* lines of <data root>/config.txt become environment variables at start
 # (platform_win.cpp); the launcher's Controls and title tab writes that file
 target_compile_definitions(${NX_GAME} PRIVATE NX_CONFIG_ENV)
+
+# AP_ANDROID_BUILD (apply_android_build.py): Android (arm64-v8a, NDK). The libraries come built for arm64-android
+# (static) from NX_ANDROID_DEPS, the prefix tools/android/android_deps.ps1 leaves in <root>/_prepare/android-deps
+# (vcpkg, triplet arm64-android). The rest of this file is for Windows: return() ends it here on Android.
+if(ANDROID)
+    # the bars around the picture repeat its edge pixels (apply_android_present.py, nvn_present.cpp)
+    target_compile_definitions(${NX_GAME} PRIVATE NX_EXTEND_BARS)
+    # no Windows resources (icon, version): game.cmake adds tsukihime.rc, which is not compiled here
+    set_source_files_properties("${NX_TSUKI_COMMON}/tsukihime.rc" PROPERTIES HEADER_FILE_ONLY ON)
+    if(NX_GAME STREQUAL "tsukihime_global")
+        # _init at +0x10 (SDK 17.5.4) is set in game.cmake; repeated here in case create_tsukihime_global.ps1 ever
+        # writes it inside the if(NOT ANDROID) of the RC lines (the same value: no redefinition warning)
+        target_compile_definitions(${NX_GAME} PRIVATE NX_DT_INIT=0x10)
+    endif()
+    set(NX_ANDROID_DEPS "${CMAKE_SOURCE_DIR}/../_prepare/android-deps" CACHE PATH
+        "Prefix with include/ and lib/ of FFmpeg, opus, libjpeg-turbo, libpng and zlib for arm64-android")
+    if(NOT EXISTS "${NX_ANDROID_DEPS}/include/libavcodec/avcodec.h")
+        message(FATAL_ERROR "NX_ANDROID_DEPS (${NX_ANDROID_DEPS}) has no include/libavcodec/avcodec.h: "
+                            "run tools/android/android_deps.ps1")
+    endif()
+    target_include_directories(${NX_GAME} PRIVATE "${NX_ANDROID_DEPS}/include" "${NX_ANDROID_DEPS}/include/opus")
+    # The NDK toolchain limits find_* to its sysroot: NO_DEFAULT_PATH + NO_CMAKE_FIND_ROOT_PATH look only in the
+    # prefix. Static link order: from the most dependent to the least.
+    foreach(nx_lib avformat avcodec swscale swresample avutil opus jpeg png16 z)
+        find_library(NX_ANDROID_LIB_${nx_lib} NAMES ${nx_lib} lib${nx_lib}.a
+                     PATHS "${NX_ANDROID_DEPS}/lib" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
+        if(NOT NX_ANDROID_LIB_${nx_lib})
+            message(FATAL_ERROR "lib${nx_lib}.a is not in ${NX_ANDROID_DEPS}/lib (tools/android/android_deps.ps1)")
+        endif()
+        target_link_libraries(${NX_GAME} PRIVATE "${NX_ANDROID_LIB_${nx_lib}}")
+    endforeach()
+    # libm and mediandk come with the NDK: vcpkg's FFmpeg for Android has the MediaCodec wrapper (AMediaCodec_*),
+    # unused (the game decodes in software) but needed by the static link.
+    target_link_libraries(${NX_GAME} PRIVATE m mediandk)
+    return()
+endif()
 
 # FFmpeg for the movie:: HLE.
 # AP_FFMPEG_PREBUILT (apply_ffmpeg_prebuilt.py): with NX_FFMPEG_ROOT (recomp_tsukihime.ps1 sets it to the prebuilt FFmpeg 9.0

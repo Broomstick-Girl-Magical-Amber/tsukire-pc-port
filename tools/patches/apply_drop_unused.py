@@ -22,9 +22,10 @@ Kept on purpose: Git, CMake, Ninja, LLVM, VS Build Tools, .NET (harness and nsex
 headers, vulkaninfo), Python, the five vcpkg ports, and on Linux make / g++ / pkg-config / nasm / zip (vcpkg asks for
 them; nasm is for libjpeg-turbo).
 
-tools\requirements.txt is UTF-16 (with BOM), which _patch.py does not read: this script changes it after the text files
+tools\requirements.txt was UTF-16 (with BOM), which _patch.py does not read: this script changes it after the text files
 (only if it is exactly the reference file, or exactly the patched one for --remove), and --remove restores it byte for
-byte.
+byte. The repo copy is UTF-8 without BOM since 2026-11-16: that text counts as already patched (nothing to do; --remove
+refuses, as this patcher is consolidated).
 
 Run: cd <root>\framework; private\venv\Scripts\python ..\tools\patches\apply_drop_unused.py [--remove]
 Then (optional) delete tools\nstool.exe (Windows) or tools/nstool (Linux), and tools/tests/test_vcpkg_cross.sh (the
@@ -38,6 +39,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _patch import FRAMEWORK_ROOT, run  # noqa: E402
 
 MARK = "AP_DROP_UNUSED"
+CONSOLIDATED = "later patches build on its text: it stays in the tree (2026-11-16)"
 RECOMP = "../tools/recomp_tsukihime.ps1"
 INSTALL = "../tools/install_requirements.ps1"
 LINUX = "../tools/linux/install_requirements_linux.ps1"
@@ -685,10 +687,11 @@ def requirements(root, remove):
         sys.exit(f"ERROR: {path} does not exist")
     raw = open(path, "rb").read()
     before, after = b"\xff\xfe" + REQ_BEFORE.encode("utf-16-le"), b"\xff\xfe" + REQ_AFTER.encode("utf-16-le")
+    after8 = REQ_AFTER.encode("utf-8")   # the repo copy was later converted to UTF-8 without BOM: it is also "after"
     want, have = (before, after) if remove else (after, before)
-    if raw == want:
+    if raw == want or (not remove and raw == after8):
         return path, None
-    if raw != have:
+    if raw != have and not (remove and raw == after8):   # remove with the UTF-8 file: run() refuses (consolidated)
         sys.exit(f"ERROR: {path} is not the reference file (edited by hand?): nothing touched. Remove fonttools and "
                  "zstandard from it by hand if you want.")
     return path, want

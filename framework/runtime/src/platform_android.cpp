@@ -45,6 +45,16 @@
 #include "platform.h"
 #include "platform_android.h"
 
+// AP_PRESENT_SCALE (apply_present_scale.py): the window's buffers may be smaller than the window (NX_PRESENT_HEIGHT),
+// and then ANativeWindow_getWidth/Height give the buffers' size; the window's own pixels (touch coordinates,
+// screen_size) are kept below. (ANativeWindow_getWidth)(w), in parentheses, is the real getter.
+namespace nx::plat {
+int32_t window_pixel_width(ANativeWindow* w);
+int32_t window_pixel_height(ANativeWindow* w);
+}  // namespace nx::plat
+#define ANativeWindow_getWidth(w) nx::plat::window_pixel_width(w)
+#define ANativeWindow_getHeight(w) nx::plat::window_pixel_height(w)
+
 #ifndef MAP_FIXED_NOREPLACE
 #define MAP_FIXED_NOREPLACE 0x100000
 #endif
@@ -62,6 +72,66 @@ std::atomic<ANativeWindow*> g_window{nullptr};
 std::atomic<uint64_t> g_window_gen{0};  // bumped for every new window
 std::atomic<bool> g_visible{false};
 }  // namespace
+
+// AP_PRESENT_SCALE (apply_present_scale.py): the picture goes to the screen at most at the game's own height
+// (NX_PRESENT_HEIGHT=<pixels>; 0 = the screen's own size; unset: NX_RENDER_RES's height, else 720 handheld / 1080
+// docked). The window's buffers get that size on their short side (ANativeWindow_setBuffersGeometry), Vulkan reports
+// it as the surface's, and the compositor scales the buffers to the screen at no GPU cost: the present pass at
+// 2316x1080 took ~6.8 ms a frame on a Mali-G77 held at 260-377 MHz. The window's own size is read first and kept.
+namespace {
+std::atomic<ANativeWindow*> g_pixels_of{nullptr};
+std::atomic<int32_t> g_pixels_w{0}, g_pixels_h{0};
+
+int32_t present_height() {
+    if (const char* e = std::getenv("NX_PRESENT_HEIGHT"); e && *e) return int32_t(std::atoi(e));
+    if (const char* r = std::getenv("NX_RENDER_RES")) {
+        unsigned rw = 0, rh = 0;
+        if (std::sscanf(r, "%ux%u", &rw, &rh) == 2 && rw && rh) return int32_t(rh);
+    }
+    return std::getenv("NX_HANDHELD") ? 720 : 1080;
+}
+}  // namespace
+
+int32_t window_pixel_width(ANativeWindow* w) {
+    return w && w == g_pixels_of.load() ? g_pixels_w.load() : (ANativeWindow_getWidth)(w);
+}
+
+int32_t window_pixel_height(ANativeWindow* w) {
+    return w && w == g_pixels_of.load() ? g_pixels_h.load() : (ANativeWindow_getHeight)(w);
+}
+
+// Sizes the window's buffers (on the UI thread, before the game sees a new window). True when the window's own size
+// changed since the last call for the same window (then the swapchain must be made again).
+bool set_present_geometry(ANativeWindow* w) {
+    if (!w) return false;
+    ANativeWindow_setBuffersGeometry(w, 0, 0, 0);  // the window's own size again, to read it
+    const int32_t pw = (ANativeWindow_getWidth)(w), ph = (ANativeWindow_getHeight)(w);
+    const bool changed = g_pixels_of.load() == w && (pw != g_pixels_w.load() || ph != g_pixels_h.load());
+    g_pixels_w = pw, g_pixels_h = ph;
+    g_pixels_of = w;
+    if (pw <= 0 || ph <= 0) return changed;
+    const int32_t shortest = std::min(pw, ph), target = present_height();
+    int32_t bw = pw, bh = ph, err = 0;
+    if (target > 0 && target < shortest) {
+        const double s = double(target) / double(shortest);
+        bw = std::max<int32_t>(2, int32_t(double(pw) * s + 0.5) & ~1);
+        bh = std::max<int32_t>(2, int32_t(double(ph) * s + 0.5) & ~1);
+        err = ANativeWindow_setBuffersGeometry(w, bw, bh, 0);
+        if (err) bw = pw, bh = ph;
+    }
+    static int32_t logged[4] = {-1, -1, -1, -1};
+    if (logged[0] != pw || logged[1] != ph || logged[2] != bw || logged[3] != bh) {
+        logged[0] = pw, logged[1] = ph, logged[2] = bw, logged[3] = bh;
+        if (bw == pw && bh == ph)
+            nx::log("present: the screen is %dx%d; the window's buffers keep that size (NX_PRESENT_HEIGHT %d%s)", pw, ph,
+                    target, err ? ", refused by the window" : "");
+        else
+            nx::log("present: the screen is %dx%d; the window's buffers are %dx%d (NX_PRESENT_HEIGHT %d), the compositor "
+                    "scales them",
+                    pw, ph, bw, bh, target);
+    }
+    return changed;
+}
 
 // ---- memory ---------------------------------------------------------------------------------------------------
 
@@ -261,14 +331,28 @@ void log_line(const char* line) { __android_log_write(ANDROID_LOG_INFO, nx::game
 
 std::string data_root() { return g_root; }
 
+// AP_LANGUAGE_CACHE (apply_language_cache.py): config.txt is read once per data root and kept, not opened on every
+// call (the language was asked hundreds of times a second, and opening a file on shared storage costs about a
+// millisecond). The home screen writes it before the game starts; the process ends with the game.
 std::string setting(const std::string& key) {
-    std::ifstream f(g_root + "/config.txt");
-    std::string line;
-    while (std::getline(f, line)) {
-        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
-        auto eq = line.find('=');
-        if (eq != std::string::npos && line.substr(0, eq) == key) return line.substr(eq + 1);
+    static std::mutex m;
+    static std::string root;
+    static std::vector<std::pair<std::string, std::string>> lines;  // (key, value) in file order
+    static bool loaded = false;
+    std::lock_guard lk(m);
+    if (!loaded || root != g_root) {
+        lines.clear();
+        std::ifstream f(g_root + "/config.txt");
+        std::string line;
+        while (std::getline(f, line)) {
+            while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+            auto eq = line.find('=');
+            if (eq != std::string::npos) lines.push_back({line.substr(0, eq), line.substr(eq + 1)});
+        }
+        root = g_root, loaded = true;
     }
+    for (auto& [k, v] : lines)
+        if (k == key) return v;
     return {};
 }
 
@@ -369,7 +453,48 @@ void* vulkan_get_instance_proc_addr() {
 
 const char* vulkan_surface_extension() { return VK_KHR_ANDROID_SURFACE_EXTENSION_NAME; }
 
+// AP_FRAME_RATE (apply_android_frame_rate.py): the window is told how many frames a second the game makes (60, or
+// NX_DISPLAY_HZ's), so that Android can pick a refresh rate they fit in evenly: a 90 Hz screen left at 90 shows 60
+// frames unevenly, and a 120 Hz one need not refresh twice per frame. ANativeWindow_setFrameRate (Android 11), found
+// with dlsym. NX_FRAME_RATE=<hz>: another rate; NX_FRAME_RATE=0: nothing is asked, as before.
+namespace {
+void request_frame_rate(ANativeWindow* w) {
+    using SetFrameRate = int32_t (*)(ANativeWindow*, float, int8_t);
+    static const SetFrameRate set = [] {
+        SetFrameRate f = nullptr;
+        for (const char* name : {"libnativewindow.so", "libandroid.so"})
+            if (void* lib = f ? nullptr : dlopen(name, RTLD_NOW | RTLD_LOCAL))
+                f = reinterpret_cast<SetFrameRate>(dlsym(lib, "ANativeWindow_setFrameRate"));
+        return f;
+    }();
+    static const float rate = [] {
+        if (const char* e = std::getenv("NX_FRAME_RATE"); e && *e) return float(std::atof(e));
+        if (const char* e = std::getenv("NX_DISPLAY_HZ")) {  // as display_period_ns (hle_vi.cpp)
+            const int hz = std::atoi(e);
+            if (hz >= 30 && hz <= 360) return float(hz);
+        }
+        return 60.0f;
+    }();
+    static int said = 0;  // 1: not asked, 2 + the answer: asked
+    if (!w) return;
+    if (!set || !(rate >= 1.0f)) {
+        if (said != 1)
+            said = 1, nx::log("present: the frame rate is not told to the window (%s)",
+                              set ? "NX_FRAME_RATE=0" : "no ANativeWindow_setFrameRate in this system");
+        return;
+    }
+    // Compatibility 0 (default): the game has no fixed source rate to keep, any multiple of it is as good.
+    const int32_t r = set(w, rate, 0);
+    if (said != 2 + (r != 0)) {
+        said = 2 + (r != 0);
+        nx::log("present: the window is told the game runs at %.0f fps (ANativeWindow_setFrameRate: %d)", double(rate),
+                int(r));
+    }
+}
+}  // namespace
+
 int vulkan_create_surface(void* instance, void* native_window, uint64_t* surface, void* gipa) {
+    request_frame_rate(static_cast<ANativeWindow*>(native_window));
     auto create = reinterpret_cast<PFN_vkCreateAndroidSurfaceKHR>(reinterpret_cast<PFN_vkGetInstanceProcAddr>(gipa)(
         static_cast<VkInstance>(instance), "vkCreateAndroidSurfaceKHR"));
     VkAndroidSurfaceCreateInfoKHR ci{VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR};
@@ -426,10 +551,14 @@ void on_cmd(android_app* app, int32_t cmd) {
     using namespace nx::plat;
     switch (cmd) {
         case APP_CMD_INIT_WINDOW:
+            set_present_geometry(app->window);  // AP_PRESENT_SCALE: before the game sees the window
             g_window = app->window;
             g_window_gen++;
             g_visible = true;
             request_immersive();
+            break;
+        case APP_CMD_WINDOW_RESIZED:  // AP_PRESENT_SCALE: a new screen size (a foldable, split screen): new buffers
+            if (app->window && app->window == g_window.load() && set_present_geometry(app->window)) g_window_gen++;
             break;
         case APP_CMD_TERM_WINDOW:  // the window goes away once this returns
             g_window = nullptr;

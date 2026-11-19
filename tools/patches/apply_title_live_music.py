@@ -18,6 +18,7 @@ Idempotent (marker AP_TITLE_LIVE_MUSIC), all or nothing, keeps CRLF and BOM; --r
 from _patch import run
 
 MARK = "AP_TITLE_LIVE_MUSIC"
+CONSOLIDATED = "later patches build on its text: it stays in the tree (2026-11-16)"
 
 DECL_ANCHOR = "std::string remap_stream(const std::string& path);\n}  // namespace tsuki_title\n#endif\n"
 DECL_NEW = ("std::string remap_stream(const std::string& path);\n}  // namespace tsuki_title\n#endif\n"

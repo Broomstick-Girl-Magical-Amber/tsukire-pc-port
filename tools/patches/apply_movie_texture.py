@@ -7,14 +7,6 @@ this+0x32f8 + idx*0xC0, double buffer), and the original (CopyOutputBufferToClie
 into that texture. Our HLE lent it the NV12 in the Buffer: the frame never reached the texture
 (TM_CI.mp4 looked white, the menu background titlebg1.mp4 frozen).
 
-Changes in games/tsukihime_common/hle_movie.cpp:
-  - Decoder(type, 3, mode): the host decoder delivers RGBA (VideoFormat::RGBA, swscale) instead of NV12.
-  - GetOutputBuffer with format 3: finds the NVNtexture* (the pointer kept in the Buffer, or the Buffer itself) and
-    leaves the frame as a framework Texture::TexelWrite, the same path as nvnTextureWriteTexels: it is applied
-    to the Vulkan image before the next use. A frame that covers the whole texture discards the earlier
-    pending ones. The game's Buffer stays intact.
-  - Log (once per texture): address, size and NVN format; warnings if the texture is not found or if the
-    format is not 4 bytes per texel.
 
 Usage: python apply_movie_texture.py [framework root]   (default: <root>\\framework, derived from the location of this script)
 Idempotent; all or nothing; keeps CRLF.

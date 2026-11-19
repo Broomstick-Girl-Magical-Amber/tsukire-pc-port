@@ -20,6 +20,7 @@ Idempotent (marker AP_ROMFS_MODS), all or nothing, keeps CRLF and BOM, refuses i
 from _patch import run
 
 MARK = "AP_ROMFS_MODS"
+CONSOLIDATED = "later patches build on its text: it stays in the tree (2026-11-16)"
 
 LAYERS = r'''// AP_ROMFS_MODS (apply_romfs_mods.py): romfs layers. With NX_ROMFS_MODS (games/tsukihime_common) the rom: mount and
 // read_game_file look first in every folder of <root>/mods/<edition> that has a romfs/ (NX_MODS_DIR overrides the

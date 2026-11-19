@@ -124,6 +124,18 @@ struct PointerState {
 #if defined(_WIN32)
 void read_pointer(PointerState& p);  // platform_win.cpp
 #endif
+#if defined(__ANDROID__)  // AP_ANDROID_INPUT (apply_android_input.py): the first finger as a left-button mouse
+void read_pointer(PointerState& p);  // platform_android_input.cpp (pointer mode, Tsukihime)
+// Two-finger gestures of pointer mode (platform_android_input.cpp): counters that only grow (the reader keeps the last
+// values it saw), whether two fingers are being held still now, and how many fingers are down.
+struct TouchGestures {
+    uint32_t taps = 0;           // two-finger taps
+    uint32_t swipes[4] = {};     // two-finger swipes: up, down, left, right
+    bool hold = false;           // two fingers held still (NX_TWO_HOLD_MS, 400 ms) and still down
+    int32_t fingers = 0;
+};
+void read_gestures(TouchGestures& g);
+#endif
 // A game's own pad input on top of read_pad (hle_hid.cpp calls it for player 1); null (the default): none.
 using PadHook = void (*)(PadState& p);
 extern PadHook pad_hook;
@@ -131,12 +143,33 @@ extern PadHook pad_hook;
 // fixed one (XInput pad 0 + keys); read_pad still adds input_script after it. Null (the default): as always.
 extern PadHook pad_source;
 
+#if defined(__ANDROID__)  // AP_ANDROID_HUD (apply_android_hud.py)
+// The kind of device the last real input came from, for a game's own HUD (Tsukihime: the button icons): 0 finger,
+// 1 Xbox (or a generic controller), 2 PlayStation, 3 Switch. Called on the game thread from read_pad; the first call
+// says 0 unless a controller already spoke. Null (the default): nothing.
+using InputNote = void (*)(int kind);
+extern InputNote input_note;  // platform_android_input.cpp
+#endif
+
 // Audio: s16 stereo 48 kHz. `done` is called (on any thread) when a submitted buffer has been played.
 using AudioDone = void (*)(void* ctx);
 bool audio_open(AudioDone done);
 bool audio_submit(const void* data, size_t bytes, void* ctx);  // false: no device (caller paces itself)
 uint32_t audio_queued();
 void audio_pause(bool paused);  // app in the background
+
+#if defined(__ANDROID__)  // AP_ANDROID_KEYBOARD (apply_android_keyboard.py)
+// A physical keyboard (USB or Bluetooth) for a game that reads it itself (Tsukihime: input.ini), by Windows virtual-key
+// code (VK_*: 'A'-'Z', '0'-'9', 0x20 Space, 0x0D Enter...). held: down now; downs: presses so far (it wraps; a press
+// shorter than a frame still changes it). 0x10/0x11/0x12 (Shift/Ctrl/Alt) are either side. Only while the game sets
+// keys_wanted (and NX_KEYBOARD is not 0); otherwise a keyboard works as before (arrows = d-pad, the rest to the system).
+struct KeyState {
+    uint8_t held[256];
+    uint8_t downs[256];
+};
+void read_keys(KeyState& k);    // platform_android_input.cpp; any thread
+extern bool keys_wanted;        // false by default
+#endif
 
 // Vulkan: the loader's vkGetInstanceProcAddr and the surface extension of this platform.
 void* vulkan_get_instance_proc_addr();

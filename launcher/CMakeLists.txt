@@ -20,6 +20,7 @@ add_executable(tsukihime_launcher WIN32
     src/status.cpp
     src/util.cpp
     src/text.cpp
+    src/android.cpp   # AP_LAUNCHER_ANDROID (apply_launcher_android.py): the Android sub-tab
     res/launcher.rc
 )
 # The .rc names its icon, manifest and headers by path and CMake does not scan them: without this, changing

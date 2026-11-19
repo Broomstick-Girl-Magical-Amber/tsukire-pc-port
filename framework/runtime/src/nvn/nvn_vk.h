@@ -211,6 +211,10 @@ void clears_log();
 bool pass_open();  // a render pass is being recorded
 // Render pass and framebuffer objects instead of dynamic rendering (nvn_renderpass.cpp, NX_RENDER_PASS_OBJECTS).
 bool render_pass_objects();
+// AP_VK11 (apply_vk11.py): the GPU has dynamic rendering (Vulkan 1.3); unused shader capability declarations to remove.
+bool vk_dynamic_rendering();
+bool vk_spv_strip_interlock();
+bool vk_spv_strip_subgroup();
 VkFormat unused_slot_format();  // a pipeline's format for a colour slot with no image
 VkRenderPass compatible_render_pass(uint32_t count, const VkFormat* colors, VkFormat depth);
 void begin_render_pass(VkCommandBuffer cb, uint32_t count, const VkFormat* formats,

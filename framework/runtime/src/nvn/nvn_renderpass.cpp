@@ -104,6 +104,10 @@ bool render_pass_objects() {
     static const bool on = [] {
         const char* e = std::getenv("NX_RENDER_PASS_OBJECTS");
         bool v = e && e[0] == '1';
+        if (!v && !vk_dynamic_rendering()) {  // AP_VK11: a Vulkan 1.1/1.2 GPU
+            log("nvn/vk: no dynamic rendering on this GPU (Vulkan 1.1/1.2): render pass and framebuffer objects");
+            return true;
+        }
         if (v) log("nvn/vk: render pass and framebuffer objects instead of dynamic rendering (NX_RENDER_PASS_OBJECTS)");
         return v;
     }();

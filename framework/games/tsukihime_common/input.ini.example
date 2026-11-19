@@ -22,7 +22,8 @@ SDOWN  = PageDown
 
 [mouse]
 ; Left click = touch (advances, taps the UI). Right = system menu, middle = dialog menu (X),
-; wheel down = next, wheel up = previous. To go back in a submenu with the mouse, change the right button to B.
+; wheel down = next, wheel up = previous. In a submenu (the help bar is on screen) a right button set to Y goes back (B)
+; by itself; NX_MOUSE_BACK=0 turns that off. A right button set to anything else is left as you set it (AP_MOUSE_BACK).
 ; If you prefer the usual wheel (item by item in lists and the flowchart, no effect in the text):
 ; RSUP = RuedaArriba / RSDOWN = RuedaAbajo.
 

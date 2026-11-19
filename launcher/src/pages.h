@@ -6,6 +6,11 @@ enum Page { kPagePlay = 0, kPageInstall = 1, kPageMods = 2, kPageControls = 3 };
 
 INT_PTR CALLBACK PlayProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp);
 INT_PTR CALLBACK InstallProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp);
+// AP_LAUNCHER_ANDROID (android.cpp): Install and recompile = sub-tabs Windows (InstallProc) and Android (AndroidProc)
+INT_PTR CALLBACK InstallTabProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp);
+INT_PTR CALLBACK AndroidProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp);
+void ShowInstallSub(int sub);   // 0 Windows, 1 Android
+void RefreshAndroid();
 INT_PTR CALLBACK ModsProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp);
 INT_PTR CALLBACK ControlsProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp);
 

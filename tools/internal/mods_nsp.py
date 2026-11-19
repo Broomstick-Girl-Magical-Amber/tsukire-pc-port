@@ -853,7 +853,6 @@ def write_recipe(path, plan, size, pid, idx, vread, voff, dump, md5):
                     md5.update(dump.read_section(idx["l6_offset"] + src + c, n))
     os.replace(path + ".tmp", path)
     import random
-    r = RecipeReader(path, dump, idx)
     rnd = random.Random(size)
     probes = [(0, min(size, 1 << 16)), (max(0, size - (1 << 16)), min(size, 1 << 16))]
     probes += [(o, min(size - o, 1 << 20)) for o in (rnd.randrange(0, size) for _ in range(48))]
@@ -861,10 +860,15 @@ def write_recipe(path, plan, size, pid, idx, vread, voff, dump, md5):
         if kind == 1 and len(probes) < 250:
             o = src - voff
             probes += [(max(0, o - 64), min(size - max(0, o - 64), 128)), (max(0, o + m - 64), min(size - max(0, o + m - 64), 128))]
-    for o, n in probes:
-        if n > 0 and r.read(o, n) != vread(voff + o, n):
-            os.remove(path)
-            fail(f"recipe of {os.path.basename(path)}: bytes at {o:#x} differ from the patched romfs (nothing kept)")
+    bad = None
+    with RecipeReader(path, dump, idx) as r:  # closed before the file can be removed (Windows cannot delete an open file)
+        for o, n in probes:
+            if n > 0 and r.read(o, n) != vread(voff + o, n):
+                bad = o
+                break
+    if bad is not None:
+        os.remove(path)
+        fail(f"recipe of {os.path.basename(path)}: bytes at {bad:#x} differ from the patched romfs (nothing kept)")
     return base_bytes
 
 
@@ -875,6 +879,7 @@ class RecipeReader:
         self.f = open(path, "rb")
         hd = self.f.read(48)
         if hd[:8] != RECIPE_MAGIC:
+            self.f.close()
             fail(f"{path} is not a recipe")
         _, n, self.size, _, _, self.data = struct.unpack_from("<IIQQQQ", hd, 8)
         rows = self.f.read(16 * n)
@@ -885,6 +890,15 @@ class RecipeReader:
             at += m
         self.starts = [e[0] for e in self.ext]
         self.dump, self.l6 = dump, idx["l6_offset"]
+
+    def close(self):
+        self.f.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
 
     def read(self, off, n):
         out = bytearray()
@@ -905,12 +919,12 @@ class RecipeReader:
 def cmd_unrecipe(a):
     """Rebuilds the whole file of a .nxrcp (for tools that need it on disk)."""
     d = DumpBase(a.base_dump, load_keys(a.keys), int(a.program_id, 16))
-    r = RecipeReader(a.recipe, d, d.index)
-    with open(a.out + ".tmp", "wb") as f:
-        for o in range(0, r.size, CHUNK):
-            f.write(r.read(o, min(CHUNK, r.size - o)))
-    os.replace(a.out + ".tmp", a.out)
-    print(f"UNRECIPE size={r.size}")
+    with RecipeReader(a.recipe, d, d.index) as r:
+        with open(a.out + ".tmp", "wb") as f:
+            for o in range(0, r.size, CHUNK):
+                f.write(r.read(o, min(CHUNK, r.size - o)))
+        os.replace(a.out + ".tmp", a.out)
+        print(f"UNRECIPE size={r.size}")
 
 
 def main():

@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>  // AP_LANGUAGE_CACHE
 #include <string>
 
 #include "platform.h"
@@ -54,7 +55,7 @@ inline std::string language_read_file(const std::string& path) {
 }
 
 // The language the player configured: NX_LANGUAGE (config.txt on Android), else <data root>/language.txt, else en-US.
-inline uint64_t desired_language() {
+inline uint64_t desired_language_read() {  // AP_LANGUAGE_CACHE: read from disk; desired_language() keeps it
     std::string value = language_lower_trimmed(plat::setting("language"));
     if (value.empty()) value = language_read_file(plat::data_root() + "/language.txt");
     struct Entry { const char* code; const char* names; };
@@ -109,6 +110,20 @@ inline uint64_t desired_language() {
 #else
     return pack_language_code("en-US");
 #endif
+}
+
+// AP_LANGUAGE_CACHE (apply_language_cache.py): some games ask for the language hundreds of times a second (Tsukihime's
+// logic thread, through am's GetDesiredLanguage, while it shows text), and reading config.txt and language.txt took
+// 0.6-1.4 ms each time on Android's shared storage, inside the IPC. The answer is kept and worked out again at most
+// once a second, so a language.txt changed while the game runs is still seen.
+inline uint64_t desired_language() {
+    static std::mutex m;
+    static uint64_t code = 0, at = 0;
+    static bool have = false;
+    std::lock_guard lk(m);
+    const uint64_t now = plat::monotonic_ns();
+    if (!have || now - at >= 1'000'000'000ull) code = desired_language_read(), at = now, have = true;
+    return code;
 }
 
 }  // namespace nx

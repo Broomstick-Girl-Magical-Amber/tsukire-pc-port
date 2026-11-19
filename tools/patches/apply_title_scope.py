@@ -25,6 +25,7 @@ build\\tsukihime_global.
 from _patch import run
 
 MARK = "AP_TITLE_SCOPE"
+CONSOLIDATED = "later patches build on its text: it stays in the tree (2026-11-16)"
 
 DECL_ANCHOR = "std::string remap(const std::string& rel);\n}  // namespace tsuki_title\n"
 DECL_NEW = ("std::string remap(const std::string& rel);\n"

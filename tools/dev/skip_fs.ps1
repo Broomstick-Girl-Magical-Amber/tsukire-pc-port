@@ -41,4 +41,4 @@ try {
 } finally {
     if ($null -eq $prev) { Remove-Item Env:NX_SKIP_FS -ErrorAction SilentlyContinue } else { $env:NX_SKIP_FS = $prev }
 }
-Write-Host "closed. Stripes still there? Tell Claude the range ($From..$To) and yes/no."
+Write-Host "closed"

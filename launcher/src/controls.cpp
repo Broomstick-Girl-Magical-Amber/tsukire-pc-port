@@ -1085,13 +1085,15 @@ struct Choice {
     const wchar_t* en;
     const wchar_t* es;
 };
+// The game renders at most 1920x1080 (it only picks between the Switch's two modes): a bigger value adds no detail and
+// makes it draw some things (the title logo) smaller, so 2560x1440 and 3840x2160 are not offered.
 const Choice kRes[] = {
     {L"", L"Default 1920x1080", L"Por defecto 1920x1080"},
     {L"1280x720", L"1280x720", L"1280x720"},
-    {L"2560x1440", L"2560x1440", L"2560x1440"},
-    {L"3840x2160", L"3840x2160", L"3840x2160"},
     {L"*", L"Other...", L"Otra..."},
 };
+constexpr int kResCount = int(sizeof kRes / sizeof kRes[0]);
+constexpr int kResOther = kResCount - 1;   // "Other...": the value typed in the box
 const Choice kFps[] = {
     {L"", L"60 FPS", L"60 FPS"},
     {L"30 FPS", L"30 FPS", L"30 FPS"},
@@ -1169,11 +1171,11 @@ void FillOptions() {
     const ConfigFile& f = o.cfg;
     CheckDlgButton(p, IDC_OP_FULLSCREEN, ConfigGet(f, L"NX_FULLSCREEN") == L"1" ? BST_CHECKED : BST_UNCHECKED);
     std::wstring res = ConfigGet(f, L"NX_RENDER_RES");
-    int ri = ChoiceIndex(kRes, 4, res);
-    if (ri < 0) ri = 4;
+    int ri = ChoiceIndex(kRes, kResOther, res);
+    if (ri < 0) ri = kResOther;
     SendDlgItemMessageW(p, IDC_OP_RES, CB_SETCURSEL, ri, 0);
-    SetDlgItemTextW(p, IDC_OP_RES_CUSTOM, ri == 4 ? res.c_str() : L"");
-    ShowWindow(GetDlgItem(p, IDC_OP_RES_CUSTOM), ri == 4 ? SW_SHOW : SW_HIDE);
+    SetDlgItemTextW(p, IDC_OP_RES_CUSTOM, ri == kResOther ? res.c_str() : L"");
+    ShowWindow(GetDlgItem(p, IDC_OP_RES_CUSTOM), ri == kResOther ? SW_SHOW : SW_HIDE);
     std::wstring fps = ConfigGet(f, L"NX_FPS_CAP");
     int cap = _wtoi(fps.c_str());
     SendDlgItemMessageW(p, IDC_OP_FPS, CB_SETCURSEL, cap > 0 && cap <= 30 ? 1 : 0, 0);
@@ -1218,9 +1220,9 @@ void SaveOptions() {
     ConfigFile& f = o.cfg;
     ConfigSet(f, L"NX_FULLSCREEN", IsDlgButtonChecked(p, IDC_OP_FULLSCREEN) == BST_CHECKED ? L"1" : L"");
     int ri = int(SendDlgItemMessageW(p, IDC_OP_RES, CB_GETCURSEL, 0, 0));
-    std::wstring res = ri >= 0 && ri < 4 ? kRes[ri].value : Trim(GetDlgText(p, IDC_OP_RES_CUSTOM));
+    std::wstring res = ri >= 0 && ri < kResOther ? kRes[ri].value : Trim(GetDlgText(p, IDC_OP_RES_CUSTOM));
     unsigned w = 0, h = 0;
-    if (ri == 4 && !(swscanf(res.c_str(), L"%ux%u", &w, &h) == 2 && w >= 320 && h >= 180)) res = ConfigGet(f, L"NX_RENDER_RES");   // until it is valid
+    if (ri == kResOther && !(swscanf(res.c_str(), L"%ux%u", &w, &h) == 2 && w >= 320 && h >= 180)) res = ConfigGet(f, L"NX_RENDER_RES");   // until it is valid
     ConfigSet(f, L"NX_RENDER_RES", res);
     int fi = int(SendDlgItemMessageW(p, IDC_OP_FPS, CB_GETCURSEL, 0, 0));
     ConfigSet(f, L"NX_FPS_CAP", fi == 1 ? L"30" : L"");
@@ -1464,7 +1466,7 @@ INT_PTR CALLBACK OptionsPageProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_INITDIALOG:
         EnableThemeDialogTexture(dlg, ETDT_ENABLETAB);
         ApplyDialogText(dlg, IDD_CTL_OPTIONS);
-        FillChoices(GetDlgItem(dlg, IDC_OP_RES), kRes, 5);
+        FillChoices(GetDlgItem(dlg, IDC_OP_RES), kRes, kResCount);
         FillChoices(GetDlgItem(dlg, IDC_OP_FPS), kFps, 2);
         FillChoices(GetDlgItem(dlg, IDC_OP_HUD), kHud, 6);
         SendDlgItemMessageW(dlg, IDC_OP_RES_CUSTOM, EM_LIMITTEXT, 11, 0);
@@ -1482,7 +1484,7 @@ INT_PTR CALLBACK OptionsPageProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
         if (o.loading) break;
         int id = LOWORD(wp), code = HIWORD(wp);
         if (code == CBN_SELCHANGE && id == IDC_OP_RES) {
-            bool custom = SendDlgItemMessageW(dlg, IDC_OP_RES, CB_GETCURSEL, 0, 0) == 4;
+            bool custom = SendDlgItemMessageW(dlg, IDC_OP_RES, CB_GETCURSEL, 0, 0) == kResOther;
             ShowWindow(GetDlgItem(dlg, IDC_OP_RES_CUSTOM), custom ? SW_SHOW : SW_HIDE);
             if (custom) {
                 if (Trim(GetDlgText(dlg, IDC_OP_RES_CUSTOM)).empty()) SetDlgItemTextW(dlg, IDC_OP_RES_CUSTOM, L"1600x900");

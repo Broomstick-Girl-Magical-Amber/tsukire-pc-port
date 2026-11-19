@@ -20,6 +20,7 @@ Idempotent (marker AP_ASPECT), all or nothing, keeps CRLF, refuses if an anchor 
 from _patch import run
 
 MARK = "AP_ASPECT"
+CONSOLIDATED = "later patches build on its text: it stays in the tree (2026-11-16)"
 NVN = "runtime/src/**/nvn_vk.cpp"
 
 EDITS = [

@@ -13,6 +13,7 @@ the base at their place, ranges of the base moved, and new bytes. With a stand-i
 Run from anywhere: python tools/tests/test_mod_recipes.py [--cxx]
 """
 import argparse
+import contextlib
 import hashlib
 import os
 import random
@@ -104,7 +105,8 @@ def main():
     if "AP_MOD_RECIPES" not in (ROOT / "tools" / "internal" / "mods_nsp.py").read_text(encoding="utf-8"):
         print("apply_mod_recipes.py is not applied")
         return 1
-    with tempfile.TemporaryDirectory() as tmp:
+    with contextlib.ExitStack() as stack:
+        tmp = stack.enter_context(tempfile.TemporaryDirectory())
         work = Path(tmp)
         root = work / "port"
         data = root / "data" / "tsuki"
@@ -120,6 +122,7 @@ def main():
              "--source", data / "romfs_source.bin", "--build-romfs", data / "romfs_build", "--exefs", data / "exefs")
 
         d = m.DumpBase(str(root / "tsukihime.xci"), m.load_keys(str(keys)), PID)
+        stack.callback(d.sec.nca.src.fh.close)  # runs before the temp dir is removed: Windows cannot delete an open file
         offs = {r_: o for o, s, r_ in d.index["files"]}
         want, pieces = make_update(d, offs["allpac.mrg"], offs["movie/prologue.mp4"])
         fp = FakePatch(0x123450, pieces, want)
@@ -135,9 +138,9 @@ def main():
         saved = m.write_recipe(str(rcp), plan, SIZE, PID, d.index, fp.read, fp.voff, d, md5)
         check(saved == SIZE - 877 and rcp.stat().st_size < 10000, f"write_recipe: {rcp.stat().st_size} bytes for a {SIZE} byte file")
         check(md5.hexdigest() == hashlib.md5(want).hexdigest(), "write_recipe: MD5 of the whole file (for --verify-csv)")
-        rr = m.RecipeReader(str(rcp), d, d.index)
-        check(rr.read(0, SIZE) == want, "RecipeReader: whole file")
-        okr = all(rr.read(o, n) == want[o:o + n] for o, n in ((RNG.randrange(SIZE), RNG.randrange(1, 400000)) for _ in range(300)))
+        with m.RecipeReader(str(rcp), d, d.index) as rr:  # closed: Windows cannot delete an open file (the temp dir)
+            check(rr.read(0, SIZE) == want, "RecipeReader: whole file")
+            okr = all(rr.read(o, n) == want[o:o + n] for o, n in ((RNG.randrange(SIZE), RNG.randrange(1, 400000)) for _ in range(300)))
         check(okr, "RecipeReader: 300 random ranges")
         t.py(ROOT / "tools" / "internal" / "mods_nsp.py", "unrecipe", "--keys", keys, "--base-dump", root / "tsukihime.xci",
              "--program-id", f"{PID:016X}", "--recipe", rcp, "--out", work / "rebuilt.mrg")

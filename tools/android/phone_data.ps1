@@ -1,0 +1,250 @@
+# phone_data.ps1 - Puts together the port folder for the phone (phase 1 of the Android port,
+# the game finds everything by itself. Copy that folder to the phone (USB by hand, or adb with -InternalStorage or
+# -ExternalStorage), put the .xci/.nsp in it (or choose it in the app with "Dump") and choose the folder in the app.
+#
+#   .\tools\android\phone_data.ps1 -Edition global
+#   .\tools\android\phone_data.ps1 -Edition japan -Mods -Saves        # also the mod layers and your saves of this PC
+#   .\tools\android\phone_data.ps1 -Edition global -InternalStorage    # and copy it to the phone's internal storage (adb)
+#   .\tools\android\phone_data.ps1 -Edition global -ExternalStorage    # or to its SD card (adb)
+#   .\tools\android\phone_data.ps1 -Edition global -InternalStorage -Dump   # the dump too (~23 GB: a while over USB)
+#   .\tools\android\phone_data.ps1 -Edition global -InternalStorage -GetAdb # downloads adb first if this PC has none
+#   Linux: bash tools/android/phone_data.sh -Edition global
+#
+# Result: <root>\_android\<edition>\phone\ with
+#   data\<tsuki|tsuki_global>\analysis\main.bin, sdk.bin, main_source.txt   (the game's modules: from your dump)
+#   data\<...>\android\lib<game>.so   the game's library (build_game.ps1); the app installs it from here
+#   data\<...>\romfs_source.bin   the table of the RomFS (with the key of its NCA: the game never reads prod.keys)
+#   data\<...>\spirv\             the translated shaders
+#   data\<...>\fonts\             the shared font (Noto Sans JP, OFL)
+#   data\<...>\hud\               the HUD icons by device (if they were built)
+#   data\<...>\language.txt, title.ini   if you have them
+#   data\<...>\left_border.*, right_border.*, border.*   the side-bar images (png/jpg/jpeg): yours from data\<...>, and for
+#                                 a side without one, the default of the repo (media\left_border.png, media\right_border.png)
+#   mods\<edition>\               with -Mods: the active layers (folders not starting with _ or .)
+#   data\<...>\user\              with -Saves: your saves (on the phone they replace the ones there!)
+# Not copied: extract\, exefs\, gen\, romfs_build\, updates\, input.ini, config.txt (Windows options), nx.log,
+# pipelines (GPU cache of this PC). Everything here comes from your dump: never publish it.
+# Without -InternalStorage / -ExternalStorage nothing is sent to the phone (copy the folder by hand).
+# -InternalStorage: adb push to /storage/emulated/0/<PhoneFolder> (the phone's own storage; default folder Tsukihime).
+# -ExternalStorage: adb push to /storage/<SD card>/<PhoneFolder> (the SD card; -Volume <id, e.g. 1A2B-3C4D> if there
+# are several). The phone must be connected with USB debugging. Only what is missing or changed is sent, with its
+# progress ("adb: 34% ..."); the rest of that folder (your saves on the phone, the dump) is not touched unless
+# -Saves/-Dump. With -Mods, the mod layers on the phone that are no longer active on this PC are removed from it.
+# adb: -Adb, the PATH, an Android SDK, or the one -GetAdb downloads (Android SDK Platform-Tools of Google, ~7 MB, into
+# the tools folder of the port); Android Studio is not needed.
+param(
+    [Parameter(Mandatory = $true)][ValidateSet('japan', 'global')][string]$Edition,
+    [switch]$Mods,
+    [switch]$Saves,
+    [switch]$InternalStorage,
+    [switch]$ExternalStorage,
+    [string]$Volume,
+    [switch]$Dump,
+    [string]$PhoneFolder = 'Tsukihime',
+    [string]$Root,
+    [string]$Sdk,
+    [string]$Adb,
+    [switch]$GetAdb
+)
+Set-StrictMode -Version 2
+$ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'android_common.ps1')
+
+# Copies a file if the target is missing or differs in size or date (robocopy-like, without deleting anything).
+function SyncFile([string]$src, [string]$dst) {
+    $s = Get-Item -LiteralPath $src
+    if (Test-Path -LiteralPath $dst) {
+        $d = Get-Item -LiteralPath $dst
+        if ($d.Length -eq $s.Length -and $d.LastWriteTimeUtc -eq $s.LastWriteTimeUtc) { return 0 }
+    }
+    New-Item -ItemType Directory -Path (Split-Path -Parent $dst) -Force | Out-Null
+    Copy-Item -LiteralPath $src -Destination $dst -Force
+    (Get-Item -LiteralPath $dst).LastWriteTimeUtc = $s.LastWriteTimeUtc
+    return 1
+}
+function SyncDir([string]$src, [string]$dst) {
+    $n = 0
+    $base = (Get-Item -LiteralPath $src).FullName.TrimEnd('\', '/')
+    foreach ($f in @(Get-ChildItem -LiteralPath $src -Recurse -File -Force)) {
+        $rel = $f.FullName.Substring($base.Length + 1)
+        $n += SyncFile $f.FullName (Join-Path $dst $rel)
+    }
+    return $n
+}
+function SizeOf([string]$p) {
+    if (-not (Test-Path -LiteralPath $p)) { return 0 }
+    $m = @(Get-ChildItem -LiteralPath $p -Recurse -File -Force | Measure-Object -Property Length -Sum)
+    if ($m.Count -and $m[0].Sum) { return [int64]$m[0].Sum }
+    return 0
+}
+
+try {
+    $Root = FindRoot $Root
+    $ed = $AndroidEditions[$Edition]
+    $data = Under $Root $ed.Data
+    $out = Under $Root "_android\$Edition\phone"
+    $outData = Under $out $ed.Data
+
+    Step "port folder for the phone: $Edition"
+    $need = @('analysis\main.bin', 'analysis\sdk.bin', 'romfs_source.bin', 'spirv\results.tsv', 'fonts\shared_0.ttf')
+    foreach ($f in $need) {
+        if (-not (Test-Path -LiteralPath (Under $data $f))) {
+            Fail "$(Under $data $f) does not exist: recompile the edition first (tools\recomp_tsukihime.ps1 -Edition $Edition)"
+        }
+    }
+    $copied = 0
+    foreach ($f in @('analysis\main.bin', 'analysis\sdk.bin', 'analysis\main_source.txt', 'romfs_source.bin', 'language.txt', 'title.ini')) {
+        if (Test-Path -LiteralPath (Under $data $f)) { $copied += SyncFile (Under $data $f) (Under $outData $f) }
+    }
+    # Side-bar images: the user's own (data root) first; for a side with none, the default of the repo.
+    # border.* (one image, split in two by the game) has priority in the game, so with it the defaults are not needed.
+    $ownBars = @()
+    foreach ($stem in 'border', 'left_border', 'right_border') {
+        foreach ($x in 'png', 'jpg', 'jpeg') {
+            if (Test-Path -LiteralPath (Under $data "$stem.$x") -PathType Leaf) { $copied += SyncFile (Under $data "$stem.$x") (Under $outData "$stem.$x"); $ownBars += $stem }
+        }
+    }
+    if ($ownBars -notcontains 'border') {
+        foreach ($side in 'left_border', 'right_border') {
+            $def = Under $Root "media\$side.png"
+            if ($ownBars -contains $side) { continue }
+            if (Test-Path -LiteralPath $def -PathType Leaf) { $copied += SyncFile $def (Under $outData "$side.png") }
+            else { Warn "no media\$side.png: the side bars of that side stay blurred" }
+        }
+    }
+    # the game's library (tools\android\build_game.ps1): the app installs it from data\<...>\android\
+    $gameLib = Under $Root "_android\$Edition\lib$($ed.Game).so"
+    if (Test-Path -LiteralPath $gameLib) { $copied += SyncFile $gameLib (Under $outData "android\lib$($ed.Game).so") }
+    else { Warn "no $gameLib (tools\android\build_game.ps1 -Edition $Edition): the folder goes without the game's library" }
+    foreach ($d in @('spirv', 'fonts', 'hud')) {
+        if (Test-Path -LiteralPath (Under $data $d) -PathType Container) { $copied += SyncDir (Under $data $d) (Under $outData $d) }
+        elseif ($d -eq 'hud') { Warn 'no hud\ (HUD icons by device): the game shows the Switch ones' }
+    }
+    # The folder is ours: what was put in it by an earlier run with -Mods / -Saves goes away when they are not given now
+    # (otherwise old saves could be copied to the phone by mistake).
+    $stMods = Under $out $ed.Mods
+    if (-not $Mods -and (Test-Path -LiteralPath $stMods)) { Remove-Item -LiteralPath $stMods -Recurse -Force; Info 'mods\ of an earlier run removed from the folder (no -Mods)' }
+    if (-not $Saves -and (Test-Path -LiteralPath (Under $outData 'user'))) { Remove-Item -LiteralPath (Under $outData 'user') -Recurse -Force; Info 'user\ of an earlier run removed from the folder (no -Saves)' }
+    if ($Mods) {
+        $m = Under $Root $ed.Mods
+        $layers = @()
+        if (Test-Path -LiteralPath $m -PathType Container) {
+            $layers = @(Get-ChildItem -LiteralPath $m -Directory | Where-Object { -not $_.Name.StartsWith('_') -and -not $_.Name.StartsWith('.') })
+        }
+        if (-not $layers.Count) { Warn "no active layers in $m" }
+        if (Test-Path -LiteralPath $stMods) {   # layers no longer active on the PC
+            foreach ($o in @(Get-ChildItem -LiteralPath $stMods -Directory)) {
+                if (-not @($layers | Where-Object { $_.Name -eq $o.Name }).Count) { Remove-Item -LiteralPath $o.FullName -Recurse -Force; Info "layer $($o.Name) removed from the folder (not active)" }
+            }
+        }
+        foreach ($l in $layers) {
+            $copied += SyncDir $l.FullName (Under $out "$($ed.Mods)\$($l.Name)")
+            Info "mod layer: $($l.Name)"
+            $req = Join-Path $l.FullName 'requires_main.txt'
+            if (Test-Path -LiteralPath $req) {
+                $main = Under $data 'analysis\main_source.txt'
+                if (-not (Test-Path -LiteralPath $main) -or (Get-Content -LiteralPath $req -Raw).Trim() -ne (Get-Content -LiteralPath $main -Raw).Trim()) {
+                    Warn "$($l.Name) needs another main (requires_main.txt): the game will skip it unless the APK is built from that main"
+                }
+            }
+        }
+    }
+    if ($Saves) {
+        if (Test-Path -LiteralPath (Under $data 'user') -PathType Container) {
+            $copied += SyncDir (Under $data 'user') (Under $outData 'user')
+            Warn 'your saves of this PC are in the folder: on the phone they replace the ones there'
+        } else { Warn "no saves in $(Under $data 'user')" }
+    }
+    $mb = [math]::Round((SizeOf $out) / 1MB, 1)
+    Info "$out ($mb MB; $copied files copied or updated now)"
+
+    if ($InternalStorage -and $ExternalStorage) { Fail '-InternalStorage or -ExternalStorage: one of them' }
+    if ($Dump -and -not ($InternalStorage -or $ExternalStorage)) { Fail '-Dump goes with -InternalStorage or -ExternalStorage' }
+    $Push = $InternalStorage -or $ExternalStorage
+    $target = $null
+    if ($Push) {
+        $adb = NeedAdb $Adb $Sdk ([bool]$GetAdb)
+        Info "adb: $adb"
+        AdbDevice $adb
+        if ($InternalStorage) { $target = "/storage/emulated/0/$PhoneFolder" }
+        else {
+            # SD cards are mounted as /storage/<id> (e.g. 1A2B-3C4D); "emulated" and "self" are the internal storage
+            $vols = @((AdbText $adb @('shell', 'ls', '/storage')) -split '\s+' | Where-Object { $_ -and $_ -ne 'emulated' -and $_ -ne 'self' -and $_ -notmatch '^ls:' })
+            if ($Volume) {
+                if (-not ($vols | Where-Object { $_ -eq $Volume })) { Fail "no volume $Volume on the phone (it has: $(if ($vols.Count) { $vols -join ', ' } else { 'no SD card' }))" }
+                $vol = $Volume
+            } elseif ($vols.Count -eq 1) { $vol = $vols[0] }
+            elseif (-not $vols.Count) { Fail 'the phone has no SD card (no /storage/<id>): use -InternalStorage, or copy the folder by hand' }
+            else { Fail "several external volumes ($($vols -join ', ')): choose one with -Volume <id>" }
+            $target = "/storage/$vol/$PhoneFolder"
+        }
+        Step "copy to the phone: $target (adb)"
+        RunNative $adb @('shell', 'mkdir', '-p', $target) 'adb shell mkdir'
+        if ($Mods) {   # layers on the phone that are no longer active here
+            $remoteMods = "$target/$($ed.Mods.Replace('\', '/'))"
+            $have = @((AdbText $adb @('shell', "ls -1 $(ShQ $remoteMods) 2>/dev/null")) -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+            foreach ($h in $have) {
+                if (-not (Test-Path -LiteralPath (Join-Path $stMods $h) -PathType Container)) {
+                    [void](AdbText $adb @('shell', "rm -rf $(ShQ "$remoteMods/$h")"))
+                    Info "layer $h removed from the phone (not active on this PC)"
+                }
+            }
+        }
+        # The dump (if asked) is chosen first so that the space check covers the folder and the dump together, before sending anything.
+        $dumpFile = $null
+        $dumpDest = $null
+        $dumpSame = $false
+        $dumpNeed = [int64]0
+        if ($Dump) {
+            $dumps = @(Get-ChildItem -LiteralPath $Root -File | Where-Object { $_.Extension -match '^\.(xci|nsp)$' })
+            $hint = $null
+            try {
+                $b = [IO.File]::ReadAllBytes((Under $data 'romfs_source.bin'))
+                $n = [BitConverter]::ToInt32($b, 336)
+                if ($n -gt 0 -and $n -lt 4096) { $hint = [Text.Encoding]::UTF8.GetString($b, 340, $n) }
+            } catch { $hint = $null }
+            $pick = @($dumps | Where-Object { $_.Name -eq $hint })
+            if (-not $pick.Count) { $pick = $dumps }
+            if ($pick.Count -ne 1) { Fail "-Dump: $($dumps.Count) .xci/.nsp in $Root and none named ${hint}: copy the dump by hand" }
+            $dumpFile = $pick[0]
+            $dumpDest = "$target/$($dumpFile.Name)"
+            $onPhone = "$(AdbText $adb @('shell', 'stat', '-c', '%s', $dumpDest))".Trim()
+            $partial = [int64]0
+            [void][int64]::TryParse($onPhone, [ref]$partial)   # a file left by an interrupted copy is overwritten: its space comes back
+            $dumpSame = ($onPhone -eq "$($dumpFile.Length)")
+            if (-not $dumpSame) { $dumpNeed = [Math]::Max([int64]0, [int64]$dumpFile.Length - $partial) }
+        }
+        AdbPushTree $adb $out $target $dumpNeed
+        if ($Dump) {
+            if ($dumpSame) { Info "$($dumpFile.Name) is already on the phone (same size)" }
+            else {
+                AdbRequireSpace $adb $target $dumpNeed   # again: the folder just sent took its share
+                Info "copying $($dumpFile.Name) ($([math]::Round($dumpFile.Length / 1GB, 1)) GB): this takes a while"
+                AdbPushBig $adb $dumpFile.FullName $dumpDest $dumpFile.Length 0 $dumpFile.Length
+                # adb push said it was fine; the size on the phone is the proof (adb shell can fail for a moment right after a big push)
+                $want = "$($dumpFile.Length)"
+                $got = ''
+                for ($attempt = 1; $attempt -le 5 -and $got -ne $want; $attempt++) {
+                    if ($attempt -gt 1) { Start-Sleep -Seconds 3 }
+                    $got = "$(AdbText $adb @('shell', 'stat', '-c', '%s', $dumpDest))".Trim()
+                }
+                if ($got -ne $want) { Fail "$($dumpFile.Name) on the phone is '$got' (expected $want bytes): the copy is not complete (free space on the phone?); run it again" }
+                Info "$($dumpFile.Name): $want bytes on the phone, checked"
+            }
+        }
+        Info "on the phone: $target"
+    }
+    Write-Host ''
+    if ($Push) { Write-Host "Done. In the app: Port folder -> $target -> Use this folder, then Play." }
+    else {
+        Write-Host "Done. Copy the CONTENTS of $out to a folder of the phone (for example Internal storage\$PhoneFolder),"
+        Write-Host 'put the .xci/.nsp in that folder (or choose it in the app with "Dump") and choose the folder in the app.'
+    }
+    # Explicit success: android_port.ps1 (RunScript) reads $LASTEXITCODE after this script, and the last `adb shell` of a
+    # copy (the progress poll, the stat of a file not on the phone yet) can leave a 1 there even though everything worked.
+    exit 0
+} catch {
+    Write-Host ''
+    Write-Host "ERROR in phone_data: $($_.Exception.Message)" -ForegroundColor Red
+    exit 1
+}

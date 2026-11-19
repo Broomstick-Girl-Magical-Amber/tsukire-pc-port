@@ -23,6 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _patch import run  # noqa: E402
 
 MARK = "AP_SDL_PAD"
+CONSOLIDATED = "later patches build on its text: it stays in the tree (2026-11-16)"
 INPUT = "games/tsukihime_common/input_tsuki.cpp"
 CMAKE = "games/tsukihime_common/tsukihime_common.cmake"
 RECOMP = "../tools/recomp_tsukihime.ps1"

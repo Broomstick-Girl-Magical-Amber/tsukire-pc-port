@@ -29,6 +29,7 @@
 namespace nx {
 void svc_profile_mark(int role);
 void svc_profile_report(uint64_t frames, int role);
+void frame_profile_threads(uint64_t frames);  // AP_FRAME_PROFILE (kernel.cpp)
 uint64_t display_period_ns();
 extern std::atomic<uint64_t> g_tick_calls, g_yield_calls, g_sleep_calls;
 }
@@ -503,6 +504,66 @@ void pace_present(int interval) {
     next = (next > now || now - next < period ? next : now) + period;
 }
 
+// AP_FRAME_PROFILE (apply_frame_profile.py): NX_SVC_PROFILE=2, where the presenting thread's frame goes, per 600
+// presents. Stage 0: the present starts (the game's work since the last one ends here); 1: the wait for the replay is
+// over, the pacing sleep starts; 2: the present returns.
+void frame_profile(int stage) {
+    static const bool on = [] {
+        const char* e = std::getenv("NX_SVC_PROFILE");
+        return e && std::atoi(e) >= 2;
+    }();
+    if (!on) return;
+    static uint64_t n = 0, t_end = 0, cpu_end = 0, t_in = 0, t_pace = 0, proc_from = 0;
+    static uint64_t work = 0, cpu = 0, queue = 0, pace = 0, bins[6] = {};
+    auto thread_cpu = [] {
+        uint64_t ns = 0;
+        long f[2], s[2];
+        plat::thread_counters(ns, f, s);
+        return ns;
+    };
+    auto process_cpu = []() -> uint64_t {
+#if defined(_WIN32)
+        return 0;  // not measured on Windows
+#else
+        timespec ts{};
+        clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &ts);
+        return uint64_t(ts.tv_sec) * 1'000'000'000ull + uint64_t(ts.tv_nsec);
+#endif
+    };
+    const uint64_t now = plat::monotonic_ns();
+    if (stage == 0) {
+        t_in = now, t_pace = 0;
+        if (t_end) {
+            const uint64_t w = now - t_end;
+            const double ms = double(w) / 1e6;
+            work += w, cpu += thread_cpu() - cpu_end;
+            bins[ms < 8 ? 0 : ms < 12 ? 1 : ms < 16 ? 2 : ms < 20 ? 3 : ms < 33 ? 4 : 5]++;
+        }
+    } else if (stage == 1) {
+        t_pace = now, queue += now - t_in;
+    } else {
+        if (t_pace) pace += now - t_pace;
+        else queue += now - t_in;
+        t_end = now, cpu_end = thread_cpu();
+        if (!proc_from) proc_from = process_cpu(), frame_profile_threads(1);  // the first call only takes the starting values
+        if (++n % 600 == 0) {
+            const double f = 600.0 * 1e6;
+            const uint64_t proc = process_cpu();
+            log("frame profile: per frame %.2f ms = game work %.2f (on a CPU %.2f, not running %.2f) + waiting for the "
+                "replay %.2f + pacing sleep %.2f; all threads of the process %.2f ms of CPU",
+                double(work + queue + pace) / f, double(work) / f, double(cpu) / f,
+                double(work > cpu ? work - cpu : 0) / f, double(queue) / f, double(pace) / f, double(proc - proc_from) / f);
+            log("frame profile: game work per frame: <8 ms %llu, 8-12 %llu, 12-16 %llu, 16-20 %llu, 20-33 %llu, more %llu",
+                (unsigned long long)bins[0], (unsigned long long)bins[1], (unsigned long long)bins[2],
+                (unsigned long long)bins[3], (unsigned long long)bins[4], (unsigned long long)bins[5]);
+            frame_profile_threads(600);
+            work = cpu = queue = pace = 0, proc_from = proc;
+            for (auto& b : bins) b = 0;
+            t_end = plat::monotonic_ns(), cpu_end = thread_cpu();  // the report itself is not the game's work
+        }
+    }
+}
+
 void QueuePresentTexture(CPU& c) {
     // The frame's work, from the end of the last present's pacing to now (perf_hint.cpp: ADPF on Android).
     static uint64_t work_from = 0;
@@ -516,6 +577,7 @@ void QueuePresentTexture(CPU& c) {
     }
     plat::perf_hint_thread();
     if (work_from) plat::perf_hint_frame(int64_t(t_in - work_from));
+    frame_profile(0);  // AP_FRAME_PROFILE
     if (auto* w = get<Window>(c.x[1])) {
         // At most two presents queued: the game runs at most two frames ahead of the replay.
         static uint64_t queued[2] = {};
@@ -527,9 +589,11 @@ void QueuePresentTexture(CPU& c) {
             queued[next_slot] = worker_run([texture, crop] { gpu_present(texture, crop.data()); });
             next_slot ^= 1;
         }
+        frame_profile(1);  // AP_FRAME_PROFILE
         pace_present(w->interval);
     }
     work_from = plat::monotonic_ns();
+    frame_profile(2);  // AP_FRAME_PROFILE
     uint64_t n = ++g_presents;
     uw_scan(n);
     uw_cameras(n);
