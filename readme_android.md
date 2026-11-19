@@ -7,7 +7,7 @@ It works on Snapdragon and Mali phones. Some phones with other GPUs **may show a
 ## Requirements
 
 - The edition you want, **already recompiled on your PC** (see [Rebuild on Windows](readme.md#rebuild-on-windows) or [Rebuild on Linux](readme.md#rebuild-on-linux-and-play-with-proton)). Android uses that same recompilation.
-- A phone with **Android 11 or newer**, an arm64 CPU and a GPU with **Vulkan 1.1** or newer.
+- A phone with **Android 11 or newer**, and a GPU with **Vulkan 1.1** or newer.
 - The space required on the phone is the dump (about 21–23 GB), plus about **85 MB** for the port folder.
 - To send by USB (optional): **Enable USB debugging** on the phone (Settings > About phone > Software information > tap *Build number* 7 times; then Developer options > USB debugging). If the PC has no `adb`, Google's Platform-Tools are downloaded to `%LOCALAPPDATA%\tsuki-tools`.
 
