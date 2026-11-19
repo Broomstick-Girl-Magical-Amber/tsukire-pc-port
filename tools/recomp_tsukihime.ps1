@@ -176,6 +176,8 @@ $Markers = @(
     @('both', 'framework\games\tsukihime_common\hle_carga.cpp', 'AP_CARGA', 'hle_carga.cpp (copy it to games\tsukihime_common)', $false),
     @('both', 'framework\games\tsukihime_common\tsukihime_common.cmake', 'AP_SDL_PAD', 'apply_sdl_pad.py', $false),
     @('both', 'framework\games\tsukihime_common\input_tsuki.cpp', 'AP_SDL_PAD', 'apply_sdl_pad.py', $false),
+    @('both', 'framework\runtime\src\platform_linux.cpp', 'AP_LINUX_INPUT', 'apply_linux_input.py', $false),
+    @('both', 'framework\games\tsukihime_common\hle_hid_tsuki.cpp', 'AP_LINUX_INPUT', 'apply_linux_input.py', $false),
     @('both', 'framework\games\tsukihime_common\pad_sdl.cpp', 'AP_SDL_PAD', 'pad_sdl.cpp and pad_sdl.h (copy them to games\tsukihime_common)', $false),
     @('both', 'framework\games\tsukihime_common\input_tsuki.cpp', 'AP_MOUSE_INI', 'apply_mouse_ini.py', $false),
     @('both', 'framework\games\tsukihime_common\hle_movie.cpp', 'AP_TITLE_BG', 'apply_title_bg.py', $false),

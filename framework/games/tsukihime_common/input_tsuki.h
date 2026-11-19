@@ -33,6 +33,12 @@ const Target& mouse_target(MouseSource s);
 // del Npad (el mismo nombre que en input.ini: A, UP, SUP...); 0 si ninguna. Para los iconos del HUD (hud_glyphs.cpp).
 int first_key(const std::string& npad_name);
 
+#if defined(__linux__) && !defined(__ANDROID__)  // AP_LINUX_INPUT (apply_linux_input.py)
+// The keyboard (plat::read_keys) through [teclado] of input.ini or the defaults, as on Windows; also switches the HUD to
+// the keyboard icons when an assigned key goes down. From the pad source (input_tsuki.cpp).
+void keyboard_pad(plat::PadState& p);
+#endif
+
 #if defined(__ANDROID__)  // AP_ANDROID_KEYBOARD (apply_android_keyboard.py)
 // The physical keyboard (plat::read_keys) through [teclado] of input.ini or the defaults: presses its buttons in p and
 // switches the HUD to the keyboard icons when an assigned key goes down. From the pad hook (hle_hid_tsuki.cpp).

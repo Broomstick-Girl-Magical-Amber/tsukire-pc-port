@@ -337,7 +337,121 @@ float default_render_scale() { return 1.0f; }
 
 // ---- input: first SDL gamepad + keyboard (sampled on the main thread) -----------------------------------------
 
+// AP_LINUX_INPUT (apply_linux_input.py): the keyboard by Windows virtual-key code and the mouse, from the SDL events of
+// the main thread, for the game's own reading (plat::read_keys / read_pointer; Tsukihime: input.ini).
+SdlEventHook sdl_event_hook = nullptr;
+namespace {
+std::mutex g_input_lock;
+KeyState g_keys{};
+PointerState g_pointer{};
+
+int key_vk(const SDL_KeyboardEvent& k) {
+    // Letters and digits follow the keyboard layout, as Windows' virtual keys; the rest by position.
+    if (k.key >= SDLK_A && k.key <= SDLK_Z) return 'A' + int(k.key - SDLK_A);
+    if (k.key >= SDLK_0 && k.key <= SDLK_9) return '0' + int(k.key - SDLK_0);
+    const SDL_Scancode s = k.scancode;
+    if (s >= SDL_SCANCODE_F1 && s <= SDL_SCANCODE_F12) return 0x70 + int(s - SDL_SCANCODE_F1);
+    if (s >= SDL_SCANCODE_F13 && s <= SDL_SCANCODE_F24) return 0x7C + int(s - SDL_SCANCODE_F13);
+    if (s >= SDL_SCANCODE_KP_1 && s <= SDL_SCANCODE_KP_9) return 0x61 + int(s - SDL_SCANCODE_KP_1);
+    switch (s) {
+    case SDL_SCANCODE_KP_0: return 0x60;
+    case SDL_SCANCODE_SPACE: return 0x20;
+    case SDL_SCANCODE_RETURN:
+    case SDL_SCANCODE_KP_ENTER: return 0x0D;
+    case SDL_SCANCODE_ESCAPE: return 0x1B;
+    case SDL_SCANCODE_TAB: return 0x09;
+    case SDL_SCANCODE_BACKSPACE: return 0x08;
+    case SDL_SCANCODE_LSHIFT: return 0xA0;
+    case SDL_SCANCODE_RSHIFT: return 0xA1;
+    case SDL_SCANCODE_LCTRL: return 0xA2;
+    case SDL_SCANCODE_RCTRL: return 0xA3;
+    case SDL_SCANCODE_LALT: return 0xA4;
+    case SDL_SCANCODE_RALT: return 0xA5;
+    case SDL_SCANCODE_LEFT: return 0x25;
+    case SDL_SCANCODE_UP: return 0x26;
+    case SDL_SCANCODE_RIGHT: return 0x27;
+    case SDL_SCANCODE_DOWN: return 0x28;
+    case SDL_SCANCODE_PAGEUP: return 0x21;
+    case SDL_SCANCODE_PAGEDOWN: return 0x22;
+    case SDL_SCANCODE_END: return 0x23;
+    case SDL_SCANCODE_HOME: return 0x24;
+    case SDL_SCANCODE_INSERT: return 0x2D;
+    case SDL_SCANCODE_DELETE: return 0x2E;
+    case SDL_SCANCODE_COMMA: return 0xBC;
+    case SDL_SCANCODE_PERIOD: return 0xBE;
+    default: return 0;
+    }
+}
+
+void set_key(int vk, bool down) {  // g_input_lock held
+    if (down && !g_keys.held[vk]) g_keys.downs[vk]++;
+    g_keys.held[vk] = down;
+}
+
+void input_event(const SDL_Event& e) {
+    switch (e.type) {
+    case SDL_EVENT_KEY_DOWN:
+    case SDL_EVENT_KEY_UP: {
+        const bool down = e.type == SDL_EVENT_KEY_DOWN;
+        if (down && e.key.repeat) break;
+        const int vk = key_vk(e.key);
+        if (!vk || (down && vk == 0x0D && (e.key.mod & SDL_KMOD_ALT))) break;  // Alt+Enter: full screen, not Enter
+        std::lock_guard lk(g_input_lock);
+        set_key(vk, down);
+        const int either = vk == 0xA0 || vk == 0xA1 ? 0x10 : vk == 0xA2 || vk == 0xA3 ? 0x11 : vk == 0xA4 || vk == 0xA5 ? 0x12 : 0;
+        if (either) set_key(either, down || g_keys.held[vk ^ 1]);
+        break;
+    }
+    case SDL_EVENT_WINDOW_FOCUS_LOST: {
+        std::lock_guard lk(g_input_lock);
+        std::memset(g_keys.held, 0, sizeof g_keys.held);
+        g_pointer.buttons = 0;
+        break;
+    }
+    case SDL_EVENT_MOUSE_MOTION:
+    case SDL_EVENT_MOUSE_BUTTON_DOWN:
+    case SDL_EVENT_MOUSE_BUTTON_UP: {
+        // SDL gives window coordinates; the client pixels are those times the pixel density (HiDPI / Wayland scale).
+        const float density = g_window ? SDL_GetWindowPixelDensity(g_window) : 1.0f;
+        const bool motion = e.type == SDL_EVENT_MOUSE_MOTION;
+        const float x = motion ? e.motion.x : e.button.x, y = motion ? e.motion.y : e.button.y;
+        std::lock_guard lk(g_input_lock);
+        g_pointer.x = int32_t(x * (density > 0 ? density : 1.0f)), g_pointer.y = int32_t(y * (density > 0 ? density : 1.0f));
+        if (motion) break;
+        const int b = e.button.button == SDL_BUTTON_LEFT ? 0 : e.button.button == SDL_BUTTON_RIGHT ? 1
+                    : e.button.button == SDL_BUTTON_MIDDLE ? 2 : -1;
+        if (b < 0) break;
+        if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN)
+            g_pointer.buttons |= 1u << b, g_pointer.downs[b]++;
+        else
+            g_pointer.buttons &= ~(1u << b);
+        break;
+    }
+    case SDL_EVENT_MOUSE_WHEEL: {  // whole notches, 120 each, positive away from the user (as Windows' WHEEL_DELTA)
+        const int n = e.wheel.direction == SDL_MOUSEWHEEL_FLIPPED ? -e.wheel.integer_y : e.wheel.integer_y;
+        std::lock_guard lk(g_input_lock);
+        g_pointer.wheel += n * 120;
+        break;
+    }
+    default:
+        break;
+    }
+}
+}  // namespace
+
+void read_keys(KeyState& k) {
+    std::lock_guard lk(g_input_lock);
+    k = g_keys;
+}
+
+void read_pointer(PointerState& p) {
+    std::lock_guard lk(g_input_lock);
+    p = g_pointer;
+    p.w = g_pixel_w, p.h = g_pixel_h;
+}
+
 static void sample_input() {
+    if (pad_source) return;  // AP_LINUX_INPUT: the game reads keyboard and controllers itself (read_pad below)
     PadState p;
     static SDL_Gamepad* pad = nullptr;
     if (!pad) {
@@ -403,6 +517,11 @@ static void sample_input() {
 }
 
 void read_pad(PadState& p) {
+    if (pad_source) {  // AP_LINUX_INPUT: the game's own reading (Tsukihime: input.ini), as on Windows
+        pad_source(p);
+        input_script(p);
+        return;
+    }
     {
         std::lock_guard lk(g_pad_lock);
         p.buttons |= g_pad.buttons;
@@ -691,6 +810,8 @@ int main() {
     for (;;) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
+            input_event(e);  // AP_LINUX_INPUT: keyboard and mouse state; then the game's own reader of SDL events
+            if (sdl_event_hook) sdl_event_hook(&e);
             switch (e.type) {
             case SDL_EVENT_QUIT:
                 nx::log("platform: quit requested (window closed)");
@@ -724,6 +845,7 @@ int main() {
                 break;
             }
         }
+        if (sdl_event_hook) sdl_event_hook(nullptr);  // AP_LINUX_INPUT: a round of events is over
         std::deque<std::function<void()>> work;
         {
             std::lock_guard lk(g_main_lock);
