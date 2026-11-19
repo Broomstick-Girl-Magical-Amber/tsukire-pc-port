@@ -47,7 +47,23 @@
 
 namespace nx {
 void boot();
+#ifdef NX_CUSTOM_WINDOW_TITLE  // AP_LINUX_PLATFORM: the game's window title (games/<game>/game.cpp), as on Windows
+namespace game {
+extern const wchar_t* const kWindowTitle;
 }
+#endif
+}
+#ifdef NX_TITLE_LIVE  // AP_LINUX_PLATFORM: F5 / F6 change the title video (title_bg.cpp), as on Windows
+namespace tsuki_title {
+void hotkey(int dir);
+}
+#endif
+#ifdef NX_LINUX_WINDOW_ICON  // AP_LINUX_PLATFORM: the game's .ico (CMakeLists.txt) and the PNG decoder of hle_carga.cpp
+extern "C" const unsigned char nx_window_icon[];
+extern "C" const size_t nx_window_icon_size;
+extern "C" __attribute__((weak)) int tsuki_decode_image(const uint8_t* data, size_t size, uint32_t max_side,
+                                                        uint32_t* width, uint32_t* height, uint8_t** rgba);
+#endif
 
 namespace nx::plat {
 
@@ -207,6 +223,21 @@ void log_line(const char* line) { std::fprintf(stderr, "%s\n", line); }
 
 std::string data_root() {
     const char* r = std::getenv("NX_DATA_ROOT");
+#ifdef NX_DATA_ROOT_EXE
+    // AP_LINUX_PLATFORM: a relative pc_data_root is taken from the binary's folder (not the current one), so the game
+    // starts from any folder, a shortcut or a file manager; an absolute one, or NX_DATA_ROOT, as before.
+    if (!r) {
+        static const std::string root = [] {
+            const char* rel = nx::game::kInfo.pc_data_root;
+            if (!rel || !*rel || rel[0] == '/') return std::string(rel ? rel : "");
+            std::error_code ec;
+            const std::filesystem::path exe = std::filesystem::read_symlink("/proc/self/exe", ec);
+            if (ec) return std::string(rel);
+            return (exe.parent_path() / rel).lexically_normal().string();
+        }();
+        return root;
+    }
+#endif
     return r ? r : nx::game::kInfo.pc_data_root;
 }
 
@@ -237,6 +268,50 @@ void* create_window() {
             log_line(SDL_GetError());
             return;
         }
+#ifdef NX_CUSTOM_WINDOW_TITLE  // AP_LINUX_PLATFORM: the game's title (UTF-32 wchar_t -> UTF-8)
+        {
+            std::string t;
+            for (const wchar_t* p = nx::game::kWindowTitle; p && *p; ++p) {
+                const uint32_t c = uint32_t(*p);
+                if (c < 0x80) t += char(c);
+                else if (c < 0x800) t += char(0xC0 | (c >> 6)), t += char(0x80 | (c & 0x3F));
+                else if (c < 0x10000) t += char(0xE0 | (c >> 12)), t += char(0x80 | ((c >> 6) & 0x3F)), t += char(0x80 | (c & 0x3F));
+                else t += char(0xF0 | (c >> 18)), t += char(0x80 | ((c >> 12) & 0x3F)), t += char(0x80 | ((c >> 6) & 0x3F)), t += char(0x80 | (c & 0x3F));
+            }
+            if (!t.empty()) SDL_SetWindowTitle(g_window, t.c_str());
+        }
+#endif
+#ifdef NX_LINUX_WINDOW_ICON  // AP_LINUX_PLATFORM: the largest PNG image of the game's .ico
+        if (tsuki_decode_image && nx_window_icon_size > 6) {
+            const uint8_t* ico = nx_window_icon;
+            const uint32_t count = ico[4] | (ico[5] << 8);
+            uint32_t best_w = 0, best_off = 0, best_size = 0;
+            for (uint32_t k = 0; k < count && 6 + 16 * (k + 1) <= nx_window_icon_size; k++) {
+                const uint8_t* d = ico + 6 + 16 * k;
+                const uint32_t w = d[0] ? d[0] : 256;
+                const uint32_t size = d[8] | (d[9] << 8) | (d[10] << 16) | (uint32_t(d[11]) << 24);
+                const uint32_t off = d[12] | (d[13] << 8) | (d[14] << 16) | (uint32_t(d[15]) << 24);
+                if (off + size > nx_window_icon_size || size < 8 || std::memcmp(ico + off, "\x89PNG", 4) != 0) continue;
+                if (w > best_w) best_w = w, best_off = off, best_size = size;
+            }
+            uint32_t iw = 0, ih = 0;
+            uint8_t* rgba = nullptr;
+            if (best_size && tsuki_decode_image(ico + best_off, best_size, 256, &iw, &ih, &rgba) == 0 && rgba) {
+                if (SDL_Surface* s = SDL_CreateSurfaceFrom(int(iw), int(ih), SDL_PIXELFORMAT_RGBA32, rgba, int(iw * 4))) {
+                    SDL_SetWindowIcon(g_window, s);
+                    SDL_DestroySurface(s);
+                }
+                std::free(rgba);
+            }
+        }
+#endif
+#ifdef NX_FIXED_ASPECT  // AP_LINUX_PLATFORM: the window keeps the picture's aspect and is at least 640 px wide
+        {
+            const float aspect = float(std::max(w, 1)) / float(std::max(h, 1));
+            SDL_SetWindowAspectRatio(g_window, aspect, aspect);
+            SDL_SetWindowMinimumSize(g_window, 640, int(640.0f / aspect + 0.5f));
+        }
+#endif
         if (!headless()) {
             SDL_RaiseWindow(g_window);
             if (setting("fullscreen") == "1") SDL_SetWindowFullscreen(g_window, true);
@@ -454,6 +529,46 @@ int vulkan_create_surface(void* instance, void* native_window, uint64_t* surface
     return ok ? VK_SUCCESS : VK_ERROR_INITIALIZATION_FAILED;
 }
 
+// AP_LINUX_PLATFORM: an error box that blocks until it is closed (shown by the main thread, which owns SDL's windows).
+void message_box(const char* title, const char* text) {
+    std::fprintf(stderr, "%s: %s\n", title, text);
+    std::fflush(stderr);
+    if (headless()) return;
+    run_on_main([&] {
+        if (!SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, title, text, g_window))
+            std::fprintf(stderr, "(no message box: %s)\n", SDL_GetError());
+    });
+}
+
+#ifdef NX_FIXED_ASPECT
+// AP_LINUX_PLATFORM: Ctrl+1/2/3: the window at pct % of 1920 px wide (in the window's aspect), inside the usable area
+// of its display, centred where it was. Not in fullscreen.
+static void set_window_width(int pct) {
+    if (!g_window || (SDL_GetWindowFlags(g_window) & SDL_WINDOW_FULLSCREEN)) return;
+    if (SDL_GetWindowFlags(g_window) & SDL_WINDOW_MAXIMIZED) SDL_RestoreWindow(g_window);
+    int cw = 0, ch = 0, x = 0, y = 0;
+    SDL_GetWindowSize(g_window, &cw, &ch);
+    SDL_GetWindowPosition(g_window, &x, &y);
+    const float aspect = ch > 0 ? float(cw) / float(ch) : 16.0f / 9.0f;
+    const float scale = std::max(0.25f, SDL_GetWindowPixelDensity(g_window));  // 1920 px, not 1920 points
+    int w = int(1920.0f * float(pct) / 100.0f / scale), h = int(float(w) / aspect + 0.5f);
+    SDL_Rect area{};
+    if (SDL_GetDisplayUsableBounds(SDL_GetDisplayForWindow(g_window), &area)) {
+        if (w > area.w) w = area.w, h = int(float(w) / aspect + 0.5f);
+        if (h > area.h) h = area.h, w = int(float(h) * aspect + 0.5f);
+    }
+    w = std::max(w, 640), h = int(float(w) / aspect + 0.5f);
+    SDL_SetWindowSize(g_window, w, h);
+    int nx_ = x + (cw - w) / 2, ny = y + (ch - h) / 2;
+    if (area.w > 0) {
+        nx_ = std::max(area.x, std::min(nx_, area.x + area.w - w));
+        ny = std::max(area.y, std::min(ny, area.y + area.h - h));
+    }
+    SDL_SetWindowPosition(g_window, nx_, ny);
+    log("window: %dx%d (%d%% of 1920 px wide)", w, h, pct);
+}
+#endif
+
 }  // namespace nx::plat
 
 // ---- crash handler and entry ----------------------------------------------------------------------------------
@@ -493,8 +608,56 @@ void game_thread() {
 
 }  // namespace
 
+#ifdef NX_CONFIG_ENV
+// AP_LINUX_PLATFORM: the NX_* lines of <data root>/config.txt become environment variables before anything reads
+// them, as AP_CONFIG_ENV on Windows (the launcher writes that file; it can be edited by hand). A variable already set
+// wins (terminal, shortcut, launch options). Comments with ; or #. An empty value sets nothing, and so does 0 for the
+// switches that are only tested for existence. Read once: a change needs the game started again.
+static void load_config_env() {
+    const std::string path = nx::plat::data_root() + "/config.txt";
+    FILE* f = nx::plat::fopen_utf8(path, "rb");
+    if (!f) return;
+    std::string text;
+    char buf[4096];
+    for (size_t n; (n = std::fread(buf, 1, sizeof buf, f)) > 0;) text.append(buf, n);
+    std::fclose(f);
+    if (text.compare(0, 3, "\xEF\xBB\xBF") == 0) text.erase(0, 3);
+    auto trim = [](const std::string& s) {
+        size_t a = s.find_first_not_of(" \t\r"), b = s.find_last_not_of(" \t\r");
+        return a == std::string::npos ? std::string() : s.substr(a, b - a + 1);
+    };
+    static const char* const kExistence[] = {"NX_HANDHELD", "NX_MUTE", "NX_FIFO", "NX_NO_FRAME_LIMIT"};
+    std::string set, kept;
+    size_t pos = 0;
+    while (pos < text.size()) {
+        size_t end = text.find('\n', pos);
+        std::string line = text.substr(pos, end == std::string::npos ? std::string::npos : end - pos);
+        pos = end == std::string::npos ? text.size() : end + 1;
+        if (size_t c = line.find_first_of(";#"); c != std::string::npos) line.erase(c);
+        size_t eq = line.find('=');
+        if (eq == std::string::npos) continue;
+        const std::string name = trim(line.substr(0, eq)), value = trim(line.substr(eq + 1));
+        if (name.size() < 4 || name.compare(0, 3, "NX_") != 0 || value.empty() || name == "NX_DATA_ROOT") continue;
+        if (name.find_first_not_of("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_") != std::string::npos) continue;
+        bool existence = false;
+        for (const char* k : kExistence) existence |= name == k;
+        if (existence && value == "0") continue;
+        if (std::getenv(name.c_str())) {
+            kept += " " + name;
+            continue;
+        }
+        if (setenv(name.c_str(), value.c_str(), 0) == 0) set += " " + name;
+    }
+    nx::log("config: %s:%s%s%s", path.c_str(), set.empty() ? " nothing set" : set.c_str(),
+            kept.empty() ? "" : "; already in the environment (kept):", kept.c_str());
+}
+#endif
+
 int main() {
     nx::plat::g_main_thread = pthread_self();
+#ifdef NX_CONFIG_ENV
+    load_config_env();  // AP_LINUX_PLATFORM: first, so every NX_* of config.txt is seen (the log, the memory guard...)
+#endif
 
     // The crash handler runs on its own stack: a guest stack overflow would leave it none.
     static std::vector<uint8_t> alt(1 << 20);
@@ -510,10 +673,13 @@ int main() {
     sigaction(SIGILL, &sa, nullptr);
     sigaction(SIGFPE, &sa, nullptr);
 
-    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_AUDIO)) {
+    // AP_LINUX_AUDIO_OPT (apply_linux_audio_opt.py): audio is optional; without a device the game runs silent
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
         std::fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
         return 1;
     }
+    if (!SDL_InitSubSystem(SDL_INIT_AUDIO))
+        std::fprintf(stderr, "SDL audio: %s (the game runs without sound)\n", SDL_GetError());
 
     nx::plat::start_memory_guard();  // before anything can grow: a leak must never freeze the machine
 
@@ -544,6 +710,15 @@ int main() {
                 if ((e.key.scancode == SDL_SCANCODE_F11 ||
                      (e.key.scancode == SDL_SCANCODE_RETURN && (e.key.mod & SDL_KMOD_ALT))) && g_window)
                     SDL_SetWindowFullscreen(g_window, !(SDL_GetWindowFlags(g_window) & SDL_WINDOW_FULLSCREEN));
+#ifdef NX_TITLE_LIVE  // AP_LINUX_PLATFORM: F5 / F6 change the title video and music (title_bg.cpp)
+                if ((e.key.scancode == SDL_SCANCODE_F5 || e.key.scancode == SDL_SCANCODE_F6) && !e.key.repeat)
+                    tsuki_title::hotkey(e.key.scancode == SDL_SCANCODE_F6 ? 1 : -1);
+#endif
+#ifdef NX_FIXED_ASPECT  // AP_LINUX_PLATFORM: Ctrl+1/2/3, the window at 50/75/100% of 1920 px wide
+                if ((e.key.mod & SDL_KMOD_CTRL) && !e.key.repeat && e.key.scancode >= SDL_SCANCODE_1 &&
+                    e.key.scancode <= SDL_SCANCODE_3)
+                    set_window_width(e.key.scancode == SDL_SCANCODE_1 ? 50 : e.key.scancode == SDL_SCANCODE_2 ? 75 : 100);
+#endif
                 break;
             default:
                 break;

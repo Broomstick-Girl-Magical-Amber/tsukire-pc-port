@@ -115,6 +115,7 @@ $FontSha256 = '8EA2D3ECEECB43A55F2567F7A8ABF85A5BB1F4FCA9A53E4786B7773F2C6F9D56'
 # Ed: both | japan | global. Created = file created by step 4 (checked after that step).
 $Markers = @(
     @('both', 'tools\recomp_tsukihime.ps1', 'AP_NINJA_LOG_FORCE', 'apply_ninja_log_force.py', $false),
+    @('both', 'framework\games\tsukihime_common\tsukihime_common.cmake', 'AP_LINUX_BUILD', 'apply_linux_build.py', $false),
     @('both', 'framework\recomp\analysis.py', '_JT_LSR = ', 'apply_jt_lsr.py (version 2)', $false),
     @('both', 'framework\runtime\src\kernel.cpp', 'CancelSynchronization that arrived before', 'apply_cancel_sync.py', $false),
     @('japan', 'tools\internal\regen_tsuki.ps1', 'AP_HOOK_NAME_TABLE', 'apply_hook_name_table.py', $false),
@@ -167,6 +168,7 @@ $Markers = @(
     @('both', 'framework\runtime\src\platform_android.cpp', 'AP_LANGUAGE_CACHE', 'apply_language_cache.py', $false),
     @('both', 'framework\games\tsukihime_common\tsukihime_common.cmake', 'NX_TSUKI_COMMON', 'games\tsukihime_common (shared code, in the repo)', $false),
     @('both', 'framework\games\tsukihime_common\hle_movie.cpp', 'write_frame_to_texture', 'apply_movie_texture.py', $false),
+    @('both', 'framework\runtime\src\platform_linux.cpp', 'AP_LINUX_PLATFORM', 'apply_linux_platform.py', $false),
     @('both', 'framework\runtime\src\platform_win.cpp', 'AP_DATA_ROOT_EXE', 'apply_data_root_exe.py', $false),
     @('both', 'framework\games\tsukihime_common\hle_movie.cpp', 'AP_DISCORD', 'apply_discord.py', $false),
     @('both', 'framework\games\tsukihime_common\discord_tsuki.cpp', 'AP_DISCORD', 'discord_tsuki.cpp (copy it to games\tsukihime_common)', $false),
@@ -294,6 +296,7 @@ $Markers = @(
     @('global', 'framework\games\tsukihime_global\game.cmake', 'NX_DATA_ROOT_EXE', 'apply_data_root_exe.py', $true),
     @('global', 'framework\games\tsukihime_global\game.cpp', '"../../../data/tsuki_global",', 'apply_data_root_exe.py', $true),
     @('global', 'tools\internal\regen_tsuki_global.ps1', 'AP_JT_FUERA', 'apply_jt_outside.py', $true),
+    @('both', 'framework\runtime\src\platform_linux.cpp', 'AP_LINUX_AUDIO_OPT', 'apply_linux_audio_opt.py', $false),
     @('global', 'tools\internal\regen_tsuki_global.ps1', 'AP_RELR', 'apply_relr.py', $true),
     @('global', 'tools\internal\regen_tsuki_global.ps1', 'AP_JT_MOV', 'apply_jt_mov.py', $true)
 )

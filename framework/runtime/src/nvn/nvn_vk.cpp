@@ -168,6 +168,15 @@ const char* vk_result_name(int r) {
                   what, rw);
     // MB_ICONERROR | MB_SETFOREGROUND | MB_TOPMOST: not hidden behind the game window
     ::MessageBoxW(nullptr, msg, L"Vulkan unavailable", 0x10 | 0x10000 | 0x40000);
+#elif defined(__linux__) && !defined(__ANDROID__)  // AP_LINUX_PLATFORM: the same message in a window (SDL)
+    {
+        std::string text = "The game needs Vulkan to draw, and it cannot be used.\n\n";
+        for (const wchar_t* p = what; p && *p; ++p) text += *p < 0x80 ? char(*p) : '?';
+        if (has_result) text += std::string("\nVkResult: ") + std::to_string(result) + " (" + vk_result_name(result) + ")";
+        text += "\n\nInstall the Vulkan driver of your distribution (Mesa: mesa-vulkan-drivers, vulkan-radeon or "
+                "vulkan-intel; NVIDIA: its own driver) and start the game again.";
+        plat::message_box("Vulkan unavailable", text.c_str());
+    }
 #endif
     _exit(6);
 }

@@ -194,6 +194,12 @@ std::vector<std::filesystem::path> ini_candidates() {
 #if defined(_WIN32)
     wchar_t exe[MAX_PATH] = {};
     if (GetModuleFileNameW(nullptr, exe, MAX_PATH)) v.push_back(std::filesystem::path(exe).parent_path() / "title.ini");
+#elif defined(__linux__) && !defined(__ANDROID__)  // AP_LINUX_PLATFORM: next to the binary too
+    {
+        std::error_code ec;
+        const std::filesystem::path exe = std::filesystem::read_symlink("/proc/self/exe", ec);
+        if (!ec) v.push_back(exe.parent_path() / "title.ini");
+    }
 #endif
     v.push_back(std::filesystem::u8path(nx::plat::data_root()) / "title.ini");
     return v;

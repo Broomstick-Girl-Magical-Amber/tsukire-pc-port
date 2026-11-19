@@ -468,7 +468,7 @@ function Step11 {
     }
     Write-Host ('     {0,-36} {1}' -f 'Windows CRT/SDK (xwin)', $(if (XwinOk) { 'OK' } else { 'MISSING' }))
     foreach ($l in $script:Done) { Write-Host "     $l" }
-    if ($null -ne $script:GpuOk) { Write-Host ('     GPU to play (Proton): {0}' -f $(if ($script:GpuOk) { 'OK' } else { 'NO (see the warning of step 9)' })) }
+    if ($null -ne $script:GpuOk) { Write-Host ('     GPU to play{0}: {1}' -f $(if ((Test-Path variable:NativeLinux) -and $NativeLinux) { '' } else { ' (Proton)' }), $(if ($script:GpuOk) { 'OK' } else { 'NO (see the warning of step 9)' })) }   # AP_LINUX_PLATFORM
     Write-Host ''
     Write-Host '   By hand (the script does not touch it):' -ForegroundColor Yellow
     $keys = Join-Path $Root 'data/prod.keys'
