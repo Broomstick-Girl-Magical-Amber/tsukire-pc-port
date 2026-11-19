@@ -1,6 +1,7 @@
 # tsukire-pc-port on Android
 
 The Android version of the port. The game's code is built on your PC from your own dump, and the phone gets a small app plus a folder with the data.
+It works on Snapdragon and Mali phones. Some phones with other GPUs may show a known graphical bug (small black squares flickering on screen), and a fix is being worked on.
 
 ## Requirements
 
