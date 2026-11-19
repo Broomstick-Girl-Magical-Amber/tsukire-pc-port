@@ -9,6 +9,8 @@ patches. This brings the ones that are not input (input is the next step):
 - window: the game's title (kWindowTitle, NX_CUSTOM_WINDOW_TITLE) and icon (the PNG images of the game's .ico, embedded
   by CMakeLists.txt, decoded by hle_carga.cpp's tsuki_decode_image); with NX_FIXED_ASPECT the window keeps 16:9 (or
   NX_RESOLUTION's aspect) while resized, is at least 640 px wide, and Ctrl+1/2/3 set it to 50/75/100 % of 1920 px.
+  The application id (Wayland app_id, X11 WM_CLASS) is the binary's name: GNOME on Wayland has no protocol for a
+  window icon and takes it from the .desktop file of that name (tools/linux/make_desktop_entry.py).
 - F5 / F6 change the title screen video and music (NX_TITLE_LIVE, title_bg.cpp), as on Windows.
 - the messages of "Vulkan cannot be used" (nvn_vk.cpp) and "game data not found" (romfs_direct.cpp) also in a window
   (plat::message_box, SDL), not only in the terminal; Linux text (the GPU driver of the distribution).
@@ -165,7 +167,10 @@ extern "C" __attribute__((weak)) int tsuki_decode_image(const uint8_t* data, siz
             uint8_t* rgba = nullptr;
             if (best_size && tsuki_decode_image(ico + best_off, best_size, 256, &iw, &ih, &rgba) == 0 && rgba) {
                 if (SDL_Surface* s = SDL_CreateSurfaceFrom(int(iw), int(ih), SDL_PIXELFORMAT_RGBA32, rgba, int(iw * 4))) {
-                    SDL_SetWindowIcon(g_window, s);
+                    if (SDL_SetWindowIcon(g_window, s))
+                        nx::log("window: icon %ux%u", iw, ih);
+                    else  // GNOME on Wayland (no xdg-toplevel-icon): the icon of the .desktop file named as the app id
+                        nx::log("window: icon not set (%s); make_desktop_entry.py gives it", SDL_GetError());
                     SDL_DestroySurface(s);
                 }
                 std::free(rgba);
@@ -291,6 +296,13 @@ int main() {
 #ifdef NX_CONFIG_ENV
     load_config_env();  // AP_LINUX_PLATFORM: first, so every NX_* of config.txt is seen (the log, the memory guard...)
 #endif
+    // AP_LINUX_PLATFORM: the application id (Wayland app_id, X11 WM_CLASS) is the binary's name, the same as the .desktop
+    // file of tools/linux/make_desktop_entry.py: the desktop takes the icon of the window and the taskbar from it.
+    {
+        std::error_code ec;
+        const std::string id = std::filesystem::read_symlink("/proc/self/exe", ec).stem().string();
+        if (!ec && !id.empty()) SDL_SetHint(SDL_HINT_APP_ID, id.c_str());
+    }
 '''),
     (PL,
      '''                if ((e.key.scancode == SDL_SCANCODE_F11 ||

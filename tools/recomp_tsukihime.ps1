@@ -78,12 +78,18 @@ param(
     [switch]$TrimXci,   # AP_ROMFS_DIRECT: trim the 0xFF padding of this edition's .xci (in place, checked first)
     [switch]$NoTrimXci,   # the .xci is trimmed by default whenever steps 1-2 read it: this keeps it as it is
     [ValidateRange(2, 600)][int]$ProgressSeconds = 30,
-    [ValidateRange(0, 512)][int]$Jobs = 0   # AP_RECOMP_PARALLEL: compile jobs of step 9 (0 = ninja's default, CPUs + 2)
+    [ValidateRange(0, 512)][int]$Jobs = 0,   # AP_RECOMP_PARALLEL: compile jobs of step 9 (0 = ninja's default, CPUs + 2)
+    # AP_LINUX_TARGET (apply_linux_target.py), Linux only: step 9 builds the Windows exe (windows, the default: clang-cl +
+    # xwin, played with Proton) or a native x86_64 binary (linux: framework/build/<game>/<game>, next to the exe)
+    [ValidateSet('windows', 'linux')][string]$Target = 'windows'
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2
 $OnLinux = [bool]((Test-Path variable:IsLinux) -and $IsLinux)   # PowerShell 7 on Linux (in 5.1 the variable does not exist)
+$NativeLinux = $OnLinux -and $Target -eq 'linux'   # AP_LINUX_TARGET
+if ($Target -eq 'linux' -and -not $OnLinux) { throw '-Target linux is for Linux (tools/linux/recomp_linux.sh)' }
+if ($OnLinux) { $env:NX_TARGET = $Target }   # AP_LINUX_TARGET: dev_env.ps1 does not ask for xwin with linux
 
 # ---------------------------------------------------------------------------------------------- root
 # Without -Root: the folder above tools\ (where this script is); if the script is not in tools\, its folder or the
@@ -254,6 +260,10 @@ $Markers = @(
     @('both', 'framework\games\tsukihime_common\tsukihime_common.cmake', 'AP_FFMPEG_PREBUILT', 'apply_ffmpeg_prebuilt.py', $false),
     @('both', 'tools\install_requirements.ps1', 'AP_FFMPEG_PREBUILT', 'apply_ffmpeg_prebuilt.py', $false),
     @('both', 'tools\install_requirements.ps1', 'AP_INSTALL_YES', 'apply_install_yes.py', $false),
+    @('both', 'tools\recomp_tsukihime.ps1', 'AP_LINUX_TARGET', 'apply_linux_target.py', $false),
+    @('both', 'tools\install_requirements.ps1', 'AP_LINUX_TARGET', 'apply_linux_target.py', $false),
+    @('both', 'tools\linux\install_requirements_linux.ps1', 'AP_LINUX_TARGET', 'apply_linux_target.py', $false),
+    @('both', 'tools\dev_env.ps1', 'AP_LINUX_TARGET', 'apply_linux_target.py', $false),
     @('both', 'framework\runtime\src\hle_fs.cpp', 'AP_ROMFS_DIRECT', 'apply_romfs_direct.py', $false),
     @('both', 'framework\games\tsukihime_common\tsukihime_common.cmake', 'AP_ROMFS_DIRECT', 'apply_romfs_direct.py', $false),
     @('both', 'framework\games\tsukihime_common\romfs_direct.cpp', 'AP_ROMFS_DIRECT', 'romfs_direct.cpp (copy it to games\tsukihime_common)', $false),
@@ -301,6 +311,7 @@ $Markers = @(
     @('global', 'tools\internal\regen_tsuki_global.ps1', 'AP_JT_FUERA', 'apply_jt_outside.py', $true),
     @('both', 'framework\runtime\src\platform_linux.cpp', 'AP_LINUX_AUDIO_OPT', 'apply_linux_audio_opt.py', $false),
     @('global', 'tools\internal\regen_tsuki_global.ps1', 'AP_RELR', 'apply_relr.py', $true),
+    @('both', 'tools\recomp_tsukihime.ps1', 'AP_LINUX_INSTALL', 'apply_linux_install.py', $false),
     @('global', 'tools\internal\regen_tsuki_global.ps1', 'AP_JT_MOV', 'apply_jt_mov.py', $true)
 )
 
@@ -318,6 +329,11 @@ $Stage = Under $Data '_recomp'                      # intermediate files of this
 $StageStamp = Under $Stage 'CREATED_BY_recomp_tsukihime.txt'
 $Build = Under $Framework "build\$($V.Game)"
 $BuildOther = Under $Framework "build\$($Editions[$V.Other].Game)"
+# AP_LINUX_TARGET: -Target linux: CMake works in build\<game>\linux and the binary goes to build\<game>\ (NX_OUTPUT_DIR),
+# next to <game>.exe (other names: no clash), so the game finds data\ the same way
+$BinDir = $Build
+$ExeName = if ($NativeLinux) { $V.Game } else { "$($V.Game).exe" }
+if ($NativeLinux) { $Build = Under $Build 'linux'; $BuildOther = Under $BuildOther 'linux' }
 $Python = if ($OnLinux) { Under $Framework 'private\venv\bin\python' } else { Under $Framework 'private\venv\Scripts\python.exe' }
 $Nso2bin = Under $Framework 'tools\nso2bin.py'
 $Maxwell = Under $Framework 'tools\maxwell'
@@ -637,7 +653,8 @@ function Step0 {
         if ($DevLocal) {
             Info "loading $DevLocal"
             LoadDevLocal
-            if ($builds -and $OnLinux -and (-not $env:NX_XWIN -or -not $env:VCPKG_ROOT)) { Warn 'after loading the environment NX_XWIN or VCPKG_ROOT are still empty: step 9 may fail' }
+            if ($builds -and $NativeLinux -and -not $env:VCPKG_ROOT) { Warn 'after loading the environment VCPKG_ROOT is still empty: step 9 may fail' }   # AP_LINUX_TARGET
+            elseif ($builds -and $OnLinux -and -not $NativeLinux -and (-not $env:NX_XWIN -or -not $env:VCPKG_ROOT)) { Warn 'after loading the environment NX_XWIN or VCPKG_ROOT are still empty: step 9 may fail' }
             elseif ($builds -and -not $OnLinux -and $Toolchain -and -not $env:NX_XWIN) { Warn 'after loading the environment NX_XWIN is still empty (_prepare\toolchain.json): step 9 may fail' }   # AP_TOOLCHAIN_XWIN
             elseif ($builds -and -not $OnLinux -and -not $Toolchain -and (-not $env:INCLUDE -or -not $env:VCPKG_ROOT)) { Warn 'after loading the environment INCLUDE or VCPKG_ROOT are still empty: step 9 may fail' }
         } elseif ($toolsMissing) {
@@ -1366,6 +1383,18 @@ function VulkanView {
     return ($view -replace '\\', '/')
 }
 
+# AP_LINUX_TARGET: with -Target linux the FFmpeg of step 9 is the BtbN build for linux64 (lib/libavcodec.so) that
+# install_requirements.ps1 -Target linux leaves in _prepare/ffmpeg; this replaces FfmpegPrebuilt (above) only then.
+if ($NativeLinux) {
+    function FfmpegPrebuilt {
+        $base = InRoot '_prepare\ffmpeg'
+        if (-not (Test-Path -LiteralPath $base)) { return '' }
+        $d = @(Get-ChildItem -LiteralPath $base -Directory | Where-Object { Test-Path -LiteralPath (Under $_.FullName 'lib/libavcodec.so') -PathType Leaf } | Sort-Object LastWriteTime -Descending)
+        if (-not $d.Count) { return '' }
+        return ($d[0].FullName -replace '\\', '/')
+    }
+}
+
 # HUD button icons by device (AP_HUD_GLYPHS, hud_glyphs.cpp): <data>\hud from the romfs and its mod layers (only hashes
 # of the game's atlas) and from the icon packs in utils\. Never fatal: without them the game keeps its own icons.
 # AP_RECOMP_PARALLEL: the HUD icons need only the romfs, the mod layers (final after step 3) and utils\: when the run goes
@@ -1468,7 +1497,7 @@ function Step9 {
                 Info "NX_FFMPEG_ROOT -> $ffRoot (reconfiguring; the rest of the cache stays the same)"
                 RunVisible 'cmake' @('-B', $Build, "-DNX_FFMPEG_ROOT=$ffRoot") 'cmake (reconfigure NX_FFMPEG_ROOT)'
             }
-            if ($OnLinux) {
+            if ($OnLinux -and -not $NativeLinux) {   # AP_LINUX_TARGET: native: NX_VULKAN_SDK is VULKAN_SDK itself
                 $vk = VulkanView
                 if ((CacheValue $cache 'NX_VULKAN_SDK') -ne $vk) {
                     Info "NX_VULKAN_SDK -> $vk (reconfiguring; the rest of the cache stays the same)"
@@ -1483,6 +1512,7 @@ function Step9 {
                 $why = CacheProblem $other
                 if ($why) { Info "not copying the parameters of $other ($why): defaults of this PC"; $other = $null }
             }
+            if ($NativeLinux) { $other = $null }   # AP_LINUX_TARGET: a native build is always configured with the values below
             $a = @('-B', $Build, "-DNX_GAME=$($V.Game)", "-DNX_GEN_DIR=$gen")
             if ($other) {
                 Info "parameters from $other"
@@ -1513,7 +1543,20 @@ function Step9 {
                 if (-not $env:VCPKG_ROOT) { Fail 'no CMakeCache.txt to copy the toolchain from and no VCPKG_ROOT (load dev.local.ps1)' }
                 $vcpkg = ($env:VCPKG_ROOT -replace '\\', '/').TrimEnd('/')
                 $cc = (Get-Command clang-cl -ErrorAction Stop).Source -replace '\\', '/'
-                if ($OnLinux) {
+                if ($NativeLinux) {
+                    # AP_LINUX_TARGET: native Linux: clang/clang++ and lld of the LLVM of install_requirements (the folder of
+                    # clang-cl), vcpkg x64-linux (static, Release only) and the BtbN FFmpeg for linux64 (NX_FFMPEG_ROOT, below)
+                    $llvm = Split-Path -Parent $cc
+                    foreach ($f in @("$vcpkg/scripts/buildsystems/vcpkg.cmake", "$vcpkg/installed/x64-linux/include/SDL3/SDL.h", "$llvm/clang++", "$llvm/ld.lld")) {
+                        if (-not (Test-Path -LiteralPath $f)) { Fail "$f does not exist (tools/linux/install_requirements_linux.sh -Target linux)" }
+                    }
+                    if (-not $env:VULKAN_SDK -or -not (Test-Path -LiteralPath (Under $env:VULKAN_SDK 'include/vulkan/vulkan.h'))) { Fail 'VULKAN_SDK has no include/vulkan/vulkan.h (tools/dev_env.ps1; tools/linux/install_requirements_linux.sh)' }
+                    if (-not (FfmpegPrebuilt)) { Fail 'the FFmpeg for Linux is missing in _prepare/ffmpeg (tools/linux/install_requirements_linux.sh -Target linux -From 5)' }
+                    Info 'no previous CMakeCache: native Linux build (Ninja, Release, clang + lld, vcpkg x64-linux)'
+                    $a += @('-G', 'Ninja', "-DCMAKE_TOOLCHAIN_FILE=$vcpkg/scripts/buildsystems/vcpkg.cmake", '-DVCPKG_TARGET_TRIPLET=x64-linux',
+                            '-DCMAKE_BUILD_TYPE=Release', "-DCMAKE_C_COMPILER=$llvm/clang", "-DCMAKE_CXX_COMPILER=$llvm/clang++",
+                            '-DCMAKE_LINKER_TYPE=LLD', "-DNX_VULKAN_SDK=$($env:VULKAN_SDK -replace '\\', '/')", "-DNX_OUTPUT_DIR=$($BinDir -replace '\\', '/')")
+                } elseif ($OnLinux) {
                     # Cross build: the tools/linux toolchain sets up clang-cl/lld-link/llvm-rc against the xwin CRT and
                     # SDK (NX_XWIN); the libraries are the x64-windows ones built by install_requirements_linux.sh with
                     # the triplet of _prepare/triplets.
@@ -1552,17 +1595,33 @@ function Step9 {
         BuildTimes $nlog $nOff
         if ($Toolchain) { CopyVcRuntime $Build }   # AP_XWIN_RUNTIME
     } finally { Pop-Location }
-    $exe = Under $Build "$($V.Game).exe"
+    $exe = Under $BinDir $ExeName   # AP_LINUX_TARGET
     if (-not (Test-Path -LiteralPath $exe)) { Fail "$exe does not appear" }
     $Summary['Exe'] = "$exe ($((Get-Item -LiteralPath $exe).LastWriteTime))"
     HudAssets
+}
+
+# AP_LINUX_INSTALL (apply_linux_install.py): -Target linux: after step 9, the application menu entry and its icon
+# (tools/linux/make_desktop_entry.py, in ~/.local/share): the way to start the game without a terminal, and where GNOME
+# on Wayland takes the window icon from. NX_DESKTOP_ENTRY=0 skips it. Step 9 is wrapped, not edited.
+if ($NativeLinux -and $env:NX_DESKTOP_ENTRY -ne '0') {
+    $Step9Build = ${function:Step9}
+    function Step9 {
+        & $Step9Build
+        $py = Get-Command python3 -ErrorAction SilentlyContinue
+        $script = InRoot 'tools\linux\make_desktop_entry.py'
+        if (-not $py -or -not (Test-Path -LiteralPath $script)) { Warn 'no python3 or make_desktop_entry.py: no application menu entry'; return }
+        & $py.Source $script --edition $Edition | Out-Host
+        if ($LASTEXITCODE -eq 0) { $Summary['Menu'] = "$($V.Game).desktop (application menu; NX_DESKTOP_ENTRY=0 skips it)" }
+        else { Warn 'make_desktop_entry.py failed: the game still starts from framework/build' }
+    }
 }
 
 function Step10 {
     if (-not $Summary.Contains('Build ID') -and (Test-Path -LiteralPath (Under $Data 'exefs\main'))) { $Summary['Build ID'] = BuildIdOf (Under $Data 'exefs\main') }
     $Summary['Functions'] = "main $(FunctionCount main), sdk $(FunctionCount sdk)"
     if (-not $Summary.Contains('Exe')) {
-        $exe = Under $Build "$($V.Game).exe"
+        $exe = Under $BinDir $ExeName   # AP_LINUX_TARGET
         $Summary['Exe'] = if (Test-Path -LiteralPath $exe) { "$exe ($((Get-Item -LiteralPath $exe).LastWriteTime))" } else { '(not built)' }
     }
     if (-not $Summary.Contains('Shaders') -and (Test-Path -LiteralPath (Under $Data 'analysis\main.bin')) -and (Test-Path -LiteralPath (Under (BuildRomfsDir) 'shader'))) {   # AP_ROMFS_DIRECT

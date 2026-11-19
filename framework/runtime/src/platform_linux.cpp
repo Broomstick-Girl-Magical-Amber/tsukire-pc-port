@@ -298,7 +298,10 @@ void* create_window() {
             uint8_t* rgba = nullptr;
             if (best_size && tsuki_decode_image(ico + best_off, best_size, 256, &iw, &ih, &rgba) == 0 && rgba) {
                 if (SDL_Surface* s = SDL_CreateSurfaceFrom(int(iw), int(ih), SDL_PIXELFORMAT_RGBA32, rgba, int(iw * 4))) {
-                    SDL_SetWindowIcon(g_window, s);
+                    if (SDL_SetWindowIcon(g_window, s))
+                        nx::log("window: icon %ux%u", iw, ih);
+                    else  // GNOME on Wayland (no xdg-toplevel-icon): the icon of the .desktop file named as the app id
+                        nx::log("window: icon not set (%s); make_desktop_entry.py gives it", SDL_GetError());
                     SDL_DestroySurface(s);
                 }
                 std::free(rgba);
@@ -777,6 +780,13 @@ int main() {
 #ifdef NX_CONFIG_ENV
     load_config_env();  // AP_LINUX_PLATFORM: first, so every NX_* of config.txt is seen (the log, the memory guard...)
 #endif
+    // AP_LINUX_PLATFORM: the application id (Wayland app_id, X11 WM_CLASS) is the binary's name, the same as the .desktop
+    // file of tools/linux/make_desktop_entry.py: the desktop takes the icon of the window and the taskbar from it.
+    {
+        std::error_code ec;
+        const std::string id = std::filesystem::read_symlink("/proc/self/exe", ec).stem().string();
+        if (!ec && !id.empty()) SDL_SetHint(SDL_HINT_APP_ID, id.c_str());
+    }
 
     // The crash handler runs on its own stack: a guest stack overflow would leave it none.
     static std::vector<uint8_t> alt(1 << 20);

@@ -26,7 +26,8 @@ if ((Test-Path variable:IsLinux) -and $IsLinux) {
     $nxVk = Join-Path $nxT "$($nxPin.vulkan)/x86_64"
     if (-not $env:VULKAN_SDK -and (Test-Path -LiteralPath $nxVk)) { $env:VULKAN_SDK = $nxVk }
     if (-not $env:NX_XWIN) { $env:NX_XWIN = Join-Path $nxT 'xwin' }
-    if (-not (Test-Path -LiteralPath (Join-Path $env:NX_XWIN 'VC/Tools/MSVC'))) { Write-Warning "$env:NX_XWIN does not exist (Windows CRT/SDK): tools/linux/install_requirements_linux.sh -From 2" }
+    # AP_LINUX_TARGET: recomp_tsukihime.ps1 -Target linux (NX_TARGET=linux) does not use the Windows CRT/SDK
+    if ($env:NX_TARGET -ne 'linux' -and -not (Test-Path -LiteralPath (Join-Path $env:NX_XWIN 'VC/Tools/MSVC'))) { Write-Warning "$env:NX_XWIN does not exist (Windows CRT/SDK): tools/linux/install_requirements_linux.sh -From 2" }
     $nxVcpkg = if ($env:NX_VCPKG) { $env:NX_VCPKG } else { Join-Path $HOME 'dev/vcpkg' }
     if (-not (Test-Path -LiteralPath $nxVcpkg)) { Write-Warning "$nxVcpkg does not exist (vcpkg): tools/linux/install_requirements_linux.sh -From 4, or set NX_VCPKG." }
     $env:VCPKG_ROOT = $nxVcpkg

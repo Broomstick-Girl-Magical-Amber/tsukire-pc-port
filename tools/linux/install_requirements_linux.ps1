@@ -66,6 +66,32 @@ $SystemPkgs = [ordered]@{
     nasm = @{ apt = 'nasm'; dnf = 'nasm'; pacman = 'nasm' }
     python3 = @{ apt = 'python3'; dnf = 'python3'; pacman = 'python' }
 }
+# AP_LINUX_TARGET: -Target linux also builds SDL3 (vcpkg, step 5), which needs the headers of the window systems, audio
+# servers, udev and EGL of the distribution: "pc:<module>" = a pkg-config module (the other keys are commands).
+# Fedora and Arch names: not tried yet.
+if ($NativeLinux) {
+    $NativePkgs = [ordered]@{
+        'wayland-scanner' = @{ apt = 'libwayland-bin'; dnf = 'wayland-devel'; pacman = 'wayland' }
+        'pc:x11' = @{ apt = 'libx11-dev'; dnf = 'libX11-devel'; pacman = 'libx11' }
+        'pc:xext' = @{ apt = 'libxext-dev'; dnf = 'libXext-devel'; pacman = 'libxext' }
+        'pc:xrandr' = @{ apt = 'libxrandr-dev'; dnf = 'libXrandr-devel'; pacman = 'libxrandr' }
+        'pc:xcursor' = @{ apt = 'libxcursor-dev'; dnf = 'libXcursor-devel'; pacman = 'libxcursor' }
+        'pc:xfixes' = @{ apt = 'libxfixes-dev'; dnf = 'libXfixes-devel'; pacman = 'libxfixes' }
+        'pc:xi' = @{ apt = 'libxi-dev'; dnf = 'libXi-devel'; pacman = 'libxi' }
+        'pc:xscrnsaver' = @{ apt = 'libxss-dev'; dnf = 'libXScrnSaver-devel'; pacman = 'libxss' }
+        'pc:xtst' = @{ apt = 'libxtst-dev'; dnf = 'libXtst-devel'; pacman = 'libxtst' }   # SDL 3.4 requires XTest
+        'pc:xkbcommon' = @{ apt = 'libxkbcommon-dev'; dnf = 'libxkbcommon-devel'; pacman = 'libxkbcommon' }
+        'pc:wayland-client' = @{ apt = 'libwayland-dev'; dnf = 'wayland-devel'; pacman = 'wayland' }
+        'pc:wayland-egl' = @{ apt = 'libwayland-dev'; dnf = 'wayland-devel'; pacman = 'wayland' }
+        'pc:wayland-protocols' = @{ apt = 'wayland-protocols'; dnf = 'wayland-protocols-devel'; pacman = 'wayland-protocols' }
+        'pc:libdecor-0' = @{ apt = 'libdecor-0-dev'; dnf = 'libdecor-devel'; pacman = 'libdecor' }
+        'pc:egl' = @{ apt = 'libegl-dev'; dnf = 'libglvnd-devel'; pacman = 'libglvnd' }
+        'pc:libpulse' = @{ apt = 'libpulse-dev'; dnf = 'pulseaudio-libs-devel'; pacman = 'libpulse' }
+        'pc:libpipewire-0.3' = @{ apt = 'libpipewire-0.3-dev'; dnf = 'pipewire-devel'; pacman = 'libpipewire' }
+        'pc:libudev' = @{ apt = 'libudev-dev'; dnf = 'systemd-devel'; pacman = 'systemd-libs' }
+    }
+    foreach ($k in $NativePkgs.Keys) { $SystemPkgs[$k] = $NativePkgs[$k] }
+}
 $SpaceT = 10GB   # AP_LINUX_PARALLEL: LLVM 1.9 GB (+ its 2 GB archive while installing) + .NET + Vulkan SDK + xwin
 
 # Tool table used by Status, Step0 and Step11 (on Linux: those of the tarballs + git from the system).
@@ -89,6 +115,8 @@ $ToolSpecs['python'].Detect = 'DetectPython'
 $ToolSpecs['python'].Meets = { param($v) $v.Major -eq 3 -and $v.Minor -eq 12 }
 $ToolSpecs['dotnet'].Meets = { param($v) $v.Major -eq 10 -and $v.Minor -eq 0 }
 $ToolSpecs['git'] = @{ Name = 'Git (from the system)'; Pin = ''; Rule = '>= 2.40'; Detect = 'DetectGit'; Meets = { param($v) $v -ge [version]'2.40' } }
+if ($NativeLinux) { $ToolSpecs.Remove('xwin') }   # AP_LINUX_TARGET: -Target linux does not use xwin (nor the Windows CRT/SDK)
+function TarKeys { @($Tarballs.Keys | Where-Object { -not ($NativeLinux -and $_ -eq 'xwin') }) }   # AP_LINUX_TARGET
 
 # ---------------------------------------------------------------------------------------------- redefinitions
 function RefreshEnv {
@@ -234,7 +262,11 @@ function SystemCommand([string]$g, [string[]]$packages) {
         'pacman' { return @('pacman', '-S', '--needed', '--noconfirm') + $packages }
     }
 }
-function MissingSystem { @($SystemPkgs.Keys | Where-Object { -not (InPath $_) }) }
+function MissingSystem {   # AP_LINUX_TARGET: a "pc:<module>" key is a pkg-config module (headers of -Target linux)
+    @($SystemPkgs.Keys | Where-Object {
+        if ($_ -like 'pc:*') { (-not (InPath 'pkg-config')) -or (RunCapture 'pkg-config' @('--exists', $_.Substring(3))).Code -ne 0 } else { -not (InPath $_) }
+    })
+}
 # Inventory of a clone (without .git or bin/obj), like TreeInventory.
 function CloneInventory([string]$dir) {
     $base = [IO.Path]::GetFullPath($dir).TrimEnd('/')
@@ -310,7 +342,8 @@ function Step0 {
         $t = switch ($e.State) { 'ok' { "OK $($e.Det.Text)" } 'missing' { 'not present' } default { "$($e.Det.Text): does not meet the rule" } }
         Info ('  {0,-36} {1,-20} rule: {2}' -f $ToolSpecs[$c].Name, $t, $ToolSpecs[$c].Rule)
     }
-    Info ('  {0,-36} {1}' -f 'Windows CRT/SDK (xwin)', $(if (XwinOk) { "OK ($(XwinRequest))" } else { "not present ($(XwinRequest))" }))
+    if ($NativeLinux) { Info ('  {0,-36} {1}' -f 'Windows CRT/SDK (xwin)', 'not needed (-Target linux)') }   # AP_LINUX_TARGET
+    else { Info ('  {0,-36} {1}' -f 'Windows CRT/SDK (xwin)', $(if (XwinOk) { "OK ($(XwinRequest))" } else { "not present ($(XwinRequest))" })) }
 }
 
 function Step1 {
@@ -456,6 +489,58 @@ function Step2 {
     }
 }
 
+# AP_LINUX_TARGET: step 2 of -Target linux: the same tarballs and parallel chains (llvm | misc) without xwin: no Windows
+# CRT/SDK and no Microsoft license. Replaces Step2 (above) only with -Target linux.
+if ($NativeLinux) {
+    function Step2 {
+        New-Item -ItemType Directory -Path $script:T -Force -ErrorAction SilentlyContinue | Out-Null
+        if ($Check) {
+            foreach ($k in (TarKeys)) {
+                $e = Status $k
+                if ($e.State -eq 'ok') { Info ('{0,-36} {1} OK ({2})' -f $Tarballs[$k].Name, $e.Det.Text, $e.Det.Path) }
+                else { Problem "$($Tarballs[$k].Name) $($Tarballs[$k].Pin): not present in $(TarDir $k)" }
+            }
+            RefreshEnv
+            return
+        }
+        $todo = @(@('llvm', 'misc') | Where-Object { ChainPending $_ })
+        if (-not $todo.Count) { Info 'everything already in place' }
+        elseif ($env:NX_SERIAL_INSTALL) { foreach ($c in $todo) { & $LinuxChains[$c] } }
+        else {
+            $main = Join-Path (Split-Path -Parent $PSScriptRoot) 'install_requirements.ps1'   # $PSCommandPath here would be this file
+            $runs = @()
+            foreach ($c in $todo) {
+                $out = Join-Path $WorkDir "chain_${c}_$(Stamp).log"
+                $a = @('-NoProfile', '-File', $main, '-Chain', $c, '-NonInteractive', '-Root', $Root, '-Edition', $Edition,
+                       '-From', "$From", '-To', "$To", '-Target', $Target)
+                $p = Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList (($a | ForEach-Object { Quote $_ }) -join ' ') -NoNewWindow -PassThru `
+                     -RedirectStandardOutput $out -RedirectStandardError "$out.err"
+                $null = $p.Handle
+                $runs += @{ C = $c; P = $p; Out = $out }
+            }
+            Info "in parallel: $($todo -join ', ') (the output of each one is shown when it finishes)"
+            $failed = @()
+            foreach ($r in $runs) {
+                $r.P.WaitForExit()
+                $code = -1; try { $code = $r.P.ExitCode } catch { }
+                if ($null -eq $code) { $code = -1 }
+                Write-Host "   -- $($r.C)$(if ($code -ne 0) { ' FAILED' })" -ForegroundColor $(if ($code -ne 0) { 'Red' } else { 'Gray' })
+                foreach ($f in @($r.Out, "$($r.Out).err")) {
+                    if (Test-Path -LiteralPath $f) { Get-Content -LiteralPath $f | Where-Object { $_ -match '\S' } | ForEach-Object { Write-Host "      $_" }; Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue }
+                }
+                if ($code -ne 0) { $failed += $r.C }
+            }
+            if ($failed.Count) { Fail "step 2: $($failed -join ', ') failed (output above); run again: what is done is kept" }
+        }
+        foreach ($k in (TarKeys)) {
+            $e = Status $k
+            if ($e.State -ne 'ok') { Fail "$($Tarballs[$k].Name): not present after step 2" }
+            $script:Done.Add("$($Tarballs[$k].Name) $($e.Det.Text)")
+        }
+        RefreshEnv
+    }
+}
+
 # AP_DROP_UNUSED: the Linux step 7 (nstool built from source) removed: step 7 is the one of install_requirements.ps1
 
 function Step11 {
@@ -466,7 +551,7 @@ function Step11 {
         $t = switch ($e.State) { 'ok' { "OK $($e.Det.Text)" } 'missing' { 'MISSING' } default { "$($e.Det.Text) (does not meet $($ToolSpecs[$c].Rule))" } }
         Write-Host ('     {0,-36} {1}' -f $ToolSpecs[$c].Name, $t)
     }
-    Write-Host ('     {0,-36} {1}' -f 'Windows CRT/SDK (xwin)', $(if (XwinOk) { 'OK' } else { 'MISSING' }))
+    if (-not $NativeLinux) { Write-Host ('     {0,-36} {1}' -f 'Windows CRT/SDK (xwin)', $(if (XwinOk) { 'OK' } else { 'MISSING' })) }   # AP_LINUX_TARGET
     foreach ($l in $script:Done) { Write-Host "     $l" }
     if ($null -ne $script:GpuOk) { Write-Host ('     GPU to play{0}: {1}' -f $(if ((Test-Path variable:NativeLinux) -and $NativeLinux) { '' } else { ' (Proton)' }), $(if ($script:GpuOk) { 'OK' } else { 'NO (see the warning of step 9)' })) }   # AP_LINUX_PLATFORM
     Write-Host ''
@@ -477,7 +562,7 @@ function Step11 {
     Write-Host ("     dumps       {0}" -f $(if ($dumps.Count) { "in ${Root}: " + ($dumps -join ', ') } else { "copy the .xci or .nsp of each edition to $Root (the root, not data/)" }))
     Write-Host ''
     Write-Host '   Next:' -ForegroundColor Cyan
-    foreach ($ed in (Editions)) { Write-Host "     bash tools/linux/recomp_linux.sh -Edition $ed" }
+    foreach ($ed in (Editions)) { Write-Host "     bash tools/linux/recomp_linux.sh -Edition $ed$(if ($NativeLinux) { ' -Target linux' })" }   # AP_LINUX_TARGET
     if ($script:Problems.Count) {
         Write-Host ''
         Write-Host '   Problems:' -ForegroundColor Yellow
