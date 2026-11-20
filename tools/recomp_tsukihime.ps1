@@ -287,6 +287,7 @@ $Markers = @(
     @('both', 'tools\linux\install_requirements_linux.sh', 'AP_LINUX_PREFLIGHT', 'apply_linux_preflight.py', $false),
     @('both', 'tools\linux\recomp_linux.sh', 'AP_LINUX_PREFLIGHT', 'apply_linux_preflight.py', $false),
     @('both', 'framework\CMakeLists.txt', 'AP_LINUX_PREFLIGHT', 'apply_linux_preflight.py', $false),
+    @('both', 'tools\linux\install_requirements_linux.sh', 'AP_LINUX_VULKAN', 'apply_linux_vulkan.py', $false),
     @('both', 'tools\recomp_tsukihime.ps1', 'AP_FIND_INPUTS', 'apply_find_inputs.py', $false),
     @('both', 'tools\recomp_tsukihime.ps1', 'AP_CACHE_MOVED', 'apply_cache_moved.py', $false),
     @('japan', 'tools\internal\regen_tsuki.ps1', 'AP_CACHE_MOVED', 'apply_cache_moved.py', $false),
