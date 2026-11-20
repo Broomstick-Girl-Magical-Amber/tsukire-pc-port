@@ -242,7 +242,7 @@ struct Model {
 };
 
 static const char* const kEd[2] = {"japan", "global"};
-static const char* const kEdName[2] = {"Japanese (cartridge)", "Global (eShop)"};
+static const char* const kEdName[2] = {"Japanese", "Global"};
 
 static void refresh(Model& m, int e) {
     Model n;

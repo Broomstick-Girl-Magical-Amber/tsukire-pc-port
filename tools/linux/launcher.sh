@@ -34,7 +34,7 @@ say() { echo "$*"; }
 # ---- editions ------------------------------------------------------------------------------------------------
 ed_game() { case "$1" in japan) echo tsukihime ;; global) echo tsukihime_global ;; *) return 1 ;; esac; }
 ed_data() { case "$1" in japan) echo tsuki ;; global) echo tsuki_global ;; *) return 1 ;; esac; }
-ed_name() { case "$1" in japan) echo "Japanese (cartridge)" ;; global) echo "Global (eShop)" ;; esac; }
+ed_name() { case "$1" in japan) echo "Japanese" ;; global) echo "Global" ;; esac; }
 ed_valid() { case "$1" in japan|global) return 0 ;; *) return 1 ;; esac; }
 bin_of()   { local g; g="$(ed_game "$1")"; echo "$ROOT/framework/build/$g/$g"; }
 data_of()  { echo "$ROOT/data/$(ed_data "$1")"; }

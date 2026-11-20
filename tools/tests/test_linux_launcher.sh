@@ -29,8 +29,8 @@ echo A > "$W/data/tsuki/user/save/save00/slot1.bin"; echo B > "$W/data/tsuki/use
 cd "$W" || exit 1
 L() { bash tools/linux/launcher.sh "$@" 2>&1; }
 
-out="$(L status)"; echo "$out" | grep -q 'Japanese (cartridge): ready' && echo "$out" | grep -q 'saves: 3 file' && ok "status: ready, 3 saves" || bad "status: $out"
-out="$(L status -e global)"; echo "$out" | grep -q 'Global (eShop): not built' && ok "status: global not built" || bad "status global"
+out="$(L status)"; echo "$out" | grep -q 'Japanese: ready' && echo "$out" | grep -q 'saves: 3 file' && ok "status: ready, 3 saves" || bad "status: $out"
+out="$(L status -e global)"; echo "$out" | grep -q 'Global: not built' && ok "status: global not built" || bad "status global"
 out="$(L play --gpu-hang 5000 -- a b)"; echo "$out" | grep -q 'gh=5000 args=2' && ok "play: env and args reach the game" || bad "play: $out"
 out="$(L play --gpu-hang 7000ms)"; echo "$out" | grep -q 'gh=7000 ' && ok "play: --gpu-hang accepts the ms suffix" || bad "ms suffix: $out"
 out="$(L play --gpu-hang 12x)"; echo "$out" | grep -q 'needs a number' && ok "play: --gpu-hang rejects text" || bad "gpu-hang text"
