@@ -32,10 +32,14 @@ NINJA="$(pick ninja 'ninja-*/ninja')" || die "ninja not found: run bash tools/li
 CXX="$(pick clang++ 'llvm-*/bin/clang++' || command -v g++ || true)"; [ -n "$CXX" ] || die "no C++ compiler (clang++ or g++): run bash tools/linux/launcher.sh install first"
 
 PREFIX=""
-V="${NX_VCPKG_ROOT:-$HOME/dev/vcpkg}/installed/x64-linux"
-if [ -f "$V/lib/cmake/SDL3/SDL3Config.cmake" ]; then PREFIX="$V"
-elif command -v pkg-config >/dev/null 2>&1 && pkg-config --exists sdl3 2>/dev/null; then PREFIX=""
-else die "SDL3 not found (the one of vcpkg in $V, or the system's): run bash tools/linux/launcher.sh install first"; fi
+# vcpkg keeps SDL3Config.cmake under share/sdl3 (or lib/cmake/SDL3): the header is the reliable test, as in recomp_tsukihime.ps1
+for R in "${NX_VCPKG_ROOT:-}" "${VCPKG_ROOT:-}" "$HOME/dev/vcpkg"; do
+    [ -n "$R" ] && [ -f "$R/installed/x64-linux/include/SDL3/SDL.h" ] && { PREFIX="$R/installed/x64-linux"; break; }
+done
+if [ -z "$PREFIX" ]; then
+    if command -v pkg-config >/dev/null 2>&1 && pkg-config --exists sdl3 2>/dev/null; then PREFIX=""
+    else die "SDL3 not found (vcpkg x64-linux in ${NX_VCPKG_ROOT:-${VCPKG_ROOT:-$HOME/dev/vcpkg}}, or the system's): run bash tools/linux/launcher.sh install first, or set NX_VCPKG_ROOT"; fi
+fi
 
 IM="$ROOT/_prepare/imgui-${IMGUI_TAG#v}"
 if [ ! -f "$IM/imgui.h" ]; then
