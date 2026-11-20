@@ -9,4 +9,7 @@ set -euo pipefail
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/common.sh"
 [ "$(uname -s)" = Linux ] || { echo "ERROR: this is for Linux (on Windows: tools\\recomp_tsukihime.ps1)"; exit 1; }
 pwsh_ok || { echo "ERROR: PowerShell $PWSH_VER is missing in $PWSH_DIR: run tools/linux/install_requirements_linux.sh first"; exit 1; }
+# AP_LINUX_PREFLIGHT (apply_linux_preflight.py): OpenSSL 3 for .NET (tools/linux/preflight.sh)
+. "$HERE/preflight.sh"
+preflight_openssl
 run_ps1 "$ROOT/tools/recomp_tsukihime.ps1" "$@"
