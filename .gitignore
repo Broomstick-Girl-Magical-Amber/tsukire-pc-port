@@ -53,6 +53,11 @@
 !/tools/linux/*.sh
 !/tools/linux/*.cmake
 !/tools/linux/*.ps1
+# AP_LINUX_GUI (apply_linux_gui.py): the graphical launcher of native Linux, sources only.
+!/tools/linux/gui/
+/tools/linux/gui/*
+!/tools/linux/gui/CMakeLists.txt
+!/tools/linux/gui/*.cpp
 !/tools/linux/*.py
 # AP_ANDROID_BUILD (apply_android_build.py): the Android port. tools\android: its scripts; <root>\android: the
 # launcher (Java), the manifest template and its resources. What they build (<root>\_android: APKs with the game's

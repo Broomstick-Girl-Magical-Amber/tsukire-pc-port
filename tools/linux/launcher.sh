@@ -2,18 +2,24 @@
 # launcher.sh - Command-line launcher of the native Linux build: the same things as the Windows launcher
 # (play, saves, install/recompile, status), as one script. No GUI, no dependencies beyond bash and coreutils.
 #
+# In this help, [ ] means optional and | means "one of": do not type them. Example: launcher.sh play -e global --gpu-hang 120000
+#
 #   bash tools/linux/launcher.sh status   [-e japan|global]     what is ready (build, data, dump, keys, Vulkan)
 #   bash tools/linux/launcher.sh play     [-e ...] [--gpu-hang MS] [-- game args]
 #   bash tools/linux/launcher.sh log                            last lines of data/nx.log (or --prev for the old one)
 #   bash tools/linux/launcher.sh saves list|backup|restore [N|name]|import <file>   [-e ...]
+#   bash tools/linux/launcher.sh mods     list|enable <name>|disable <name>|add <folder>|remove <name>   [-e ...]
+#   bash tools/linux/launcher.sh updates  list|add <file.nsp>|remove <file.nsp>
 #   bash tools/linux/launcher.sh open data|saves|backups        open a folder with xdg-open
 #   bash tools/linux/launcher.sh install  [-e ...|both] [options of install_requirements.ps1]
 #   bash tools/linux/launcher.sh recomp   [-e ...]              recompile one edition (the tools must be installed)
 #   bash tools/linux/launcher.sh edition  [japan|global]        show / set the default edition (launcher.ini)
+#   bash tools/linux/launcher.sh gui                            the graphical launcher (Dear ImGui + SDL3; built the first time)
 #
 # The default edition is the one of launcher.ini (key "edition", the file the Windows launcher uses), else the first
 # one that is built, else japan. Everything is relative to the repository: the root is two folders above this script.
 # Saves: data/<edition>/user/save; copies in save_backups/<edition>/<yyyy-mm-dd_hhmmss>[_before_restore|_before_import].
+# status, saves list and mods list also take --tsv (tab-separated lines for the GUI: tools/linux/gui).
 # Nothing here reads prod.keys or the content of a dump (only the container header, as the installer does).
 set -uo pipefail
 
@@ -64,11 +70,12 @@ running() {
 }
 
 # ---- argument parsing shared by the commands ---------------------------------------------------------------------
-EDITION=""; REST=()
-parse_ed() {   # parse_ed args...: sets EDITION (-e/--edition) and REST (the other arguments)
-    EDITION=""; REST=()
+EDITION=""; REST=(); TSV=0
+parse_ed() {   # parse_ed args...: sets EDITION (-e/--edition), TSV (--tsv: tab-separated output for the GUI) and REST
+    EDITION=""; REST=(); TSV=0
     while [ $# -gt 0 ]; do
         case "$1" in
+            --tsv) TSV=1; shift ;;
             -e|--edition) [ $# -ge 2 ] || die "$1 needs japan or global"; EDITION="$2"; shift 2 ;;
             *) REST+=("$1"); shift ;;
         esac
@@ -87,32 +94,40 @@ dump_kind() {   # container header of the dump: .nsp = PFS0 at 0, .xci = HEAD at
     esac
 }
 
+kv() { if [ "$TSV" = 1 ]; then printf '%s\t%s\n' "$1" "$2"; else say "$3"; fi; }
+
+# "<state>|<text>" of an edition: running, ready, nodata, notbuilt, winonly
+edition_state() {
+    local e="$1"
+    if running "$e"; then echo "running|running"
+    elif built "$e" && data_ready "$e"; then echo "ready|ready"
+    elif built "$e"; then echo "nodata|built, but data/$(ed_data "$e") has no romfs_source.bin: recompile it"
+    elif [ -f "$ROOT/framework/build/$(ed_game "$e")/$(ed_game "$e").exe" ]; then echo "winonly|only the Windows .exe is built (recompile with -Target linux)"
+    else echo "notbuilt|not built (launcher.sh install -e $e)"; fi
+}
+
 cmd_status() {
     parse_ed "$@"
     local e f n=0 list=("$EDITION"); [ "$EDITION" = both ] && list=(japan global)
-    say "Folder: $ROOT"
-    if [ -f "$ROOT/data/prod.keys" ]; then say "prod.keys: data/prod.keys"
-    elif [ -f "$ROOT/prod.keys" ]; then say "prod.keys: in the root (the recompile moves it to data/)"
-    else say "prod.keys: MISSING (put it in data/ or in the root)"; fi
+    kv folder "$ROOT" "Folder: $ROOT"
+    if [ -f "$ROOT/data/prod.keys" ]; then kv keys data "prod.keys: data/prod.keys"
+    elif [ -f "$ROOT/prod.keys" ]; then kv keys root "prod.keys: in the root (the recompile moves it to data/)"
+    else kv keys none "prod.keys: MISSING (put it in data/ or in the root)"; fi
     shopt -s nullglob nocaseglob
-    for f in "$ROOT"/*.nsp "$ROOT"/*.xci; do dump_kind "$f" && { say "dump: ${f##*/}"; n=$((n+1)); }; done
+    for f in "$ROOT"/*.nsp "$ROOT"/*.xci; do dump_kind "$f" && { kv dump "${f##*/}" "dump: ${f##*/}"; n=$((n+1)); }; done
     shopt -u nullglob nocaseglob
-    [ "$n" -gt 0 ] || say "dump: none (.xci for the Japanese edition, .nsp for the Global one, in the root)"
+    [ "$n" -gt 0 ] || kv dump "" "dump: none (.xci for the Japanese edition, .nsp for the Global one, in the root)"
     if [ -x "$ROOT/framework/private/venv/bin/python" ] || [ -x "$ROOT/framework/private/venv/bin/python3" ]; then
-        say "tools: installed (venv)"; else say "tools: not installed (launcher.sh install)"; fi
+        kv tools yes "tools: installed (venv)"; else kv tools no "tools: not installed (launcher.sh install)"; fi
     if declare -F vulkan_present >/dev/null; then
-        if vulkan_present; then say "Vulkan: loader and driver found"; else say "Vulkan: no loader or no driver (launcher.sh install asks to install it)"; fi
+        if vulkan_present; then kv vulkan yes "Vulkan: loader and driver found"; else kv vulkan no "Vulkan: no loader or no driver (launcher.sh install asks to install it)"; fi
     fi
     for e in "${list[@]}"; do
-        local st="not built (launcher.sh install -e $e)"
-        if running "$e"; then st="running"
-        elif built "$e" && data_ready "$e"; then st="ready"
-        elif built "$e"; then st="built, but data/$(ed_data "$e") has no romfs_source.bin: recompile it"
-        elif [ -f "$ROOT/framework/build/$(ed_game "$e")/$(ed_game "$e").exe" ]; then st="only the Windows .exe is built (recompile with -Target linux)"; fi
-        say "$(ed_name "$e"): $st"
+        local r st txt; r="$(edition_state "$e")"; st="${r%%|*}"; txt="${r#*|}"
+        if [ "$TSV" = 1 ]; then printf 'edition\t%s\t%s\t%s\n' "$e" "$st" "$txt"; else say "$(ed_name "$e"): $txt"; fi
         if [ -d "$(save_of "$e")" ]; then
             local c; c="$(find "$(save_of "$e")" -type f 2>/dev/null | wc -l)"
-            say "   saves: $c file(s)"
+            if [ "$TSV" = 1 ]; then printf 'saves\t%s\t%s\n' "$e" "$c"; else say "   saves: $c file(s)"; fi
         fi
     done
 }
@@ -134,7 +149,7 @@ cmd_play() {
     parse_ed "$@"; set -- "${REST[@]+"${REST[@]}"}"
     while [ $# -gt 0 ]; do
         case "$1" in
-            --gpu-hang) [ $# -ge 2 ] || die "--gpu-hang needs milliseconds"; gh="$2"; shift 2 ;;
+            --gpu-hang) [ $# -ge 2 ] || die "--gpu-hang needs milliseconds"; gh="${2%[mM][sS]}"; shift 2 ;;   # 120000 or 120000ms
             --) shift; args=("$@"); break ;;
             *) die "unknown option '$1' (play [-e ed] [--gpu-hang MS] [-- game args])" ;;
         esac
@@ -146,7 +161,7 @@ cmd_play() {
     built "$e" || die "$(ed_name "$e") is not built: bash tools/linux/launcher.sh install -e $e"
     data_ready "$e" || die "data/$(ed_data "$e") has no romfs_source.bin: recompile $(ed_name "$e") (launcher.sh recomp -e $e)"
     running "$e" && die "$(ed_name "$e") is already running"
-    case "$gh" in ""|*[!0-9]*) [ -z "$gh" ] || die "--gpu-hang needs a number of milliseconds" ;; esac
+    case "$gh" in ""|*[!0-9]*) [ -z "$gh" ] || die "--gpu-hang needs a number of milliseconds, like 120000 (not '$gh')" ;; esac
     [ -n "$gh" ] && export NX_GPU_HANG_MS="$gh"
     say "Starting $(ed_name "$e")  (log: data/nx.log)"
     "$b" "${args[@]+"${args[@]}"}"
@@ -198,12 +213,21 @@ cmd_saves() {
     local e="$EDITION" save; save="$(save_of "$e")"
     case "$sub" in
         list|"")
+            local cnt=0 last=""
             if [ -d "$save" ]; then
-                say "Saves of $(ed_name "$e"): $(find "$save" -type f | wc -l) file(s), last change $(find "$save" -type f -printf '%TY-%Tm-%Td %TH:%TM\n' 2>/dev/null | sort | tail -1)"
-            else say "Saves of $(ed_name "$e"): none yet"; fi
+                cnt="$(find "$save" -type f | wc -l)"
+                last="$(find "$save" -type f -printf '%TY-%Tm-%Td %TH:%TM\n' 2>/dev/null | sort | tail -1)"
+            fi
             local i=0 b
-            while read -r b; do [ -n "$b" ] || continue; i=$((i+1)); printf '  %2d) %s\n' "$i" "$b"; done < <(list_backups "$e")
-            [ "$i" -gt 0 ] && say "Restore: launcher.sh saves restore <number|name> -e $e" || say "No copies yet (launcher.sh saves backup)" ;;
+            if [ "$TSV" = 1 ]; then
+                printf 'save\t%s\t%s\n' "$cnt" "$last"
+                while read -r b; do [ -n "$b" ] || continue; i=$((i+1)); printf 'copy\t%s\t%s\n' "$i" "$b"; done < <(list_backups "$e")
+            else
+                if [ -d "$save" ]; then say "Saves of $(ed_name "$e"): $cnt file(s), last change $last"
+                else say "Saves of $(ed_name "$e"): none yet"; fi
+                while read -r b; do [ -n "$b" ] || continue; i=$((i+1)); printf '  %2d) %s\n' "$i" "$b"; done < <(list_backups "$e")
+                if [ "$i" -gt 0 ]; then say "Restore: launcher.sh saves restore <number|name> -e $e"; else say "No copies yet (launcher.sh saves backup)"; fi
+            fi ;;
         backup)
             [ -d "$save" ] || die "there are no saves yet"
             local d; d="$(backup_saves "$e" "")" || die "the copy failed"
@@ -259,6 +283,192 @@ import_save() {
     say "Imported."
 }
 
+# ---- mods and updates ---------------------------------------------------------------------------------------------
+# Same rules as the Windows launcher (docs of the port: updates/*.nsp are the inbox of patches, mods/<edition>/<name> are
+# the layers the game reads, "_" or "." at the start = ignored). Nothing here reads a dump or prod.keys.
+mods_of()  { echo "$ROOT/mods/$1"; }
+upd_in()   { echo "$ROOT/updates"; }
+layer_kind() {   # own main, update, or manual
+    if [ -f "$1/requires_main.txt" ]; then echo "update (own main)"
+    elif [ -f "$1/from_update.txt" ]; then echo "update"
+    else echo "manual"; fi
+}
+lc() { tr 'A-Z' 'a-z'; }
+trim_hex() { tr -d ' \r\n\t' | lc; }
+
+# Layer folder names of an edition, in the order the game reads them (active ones, then the disabled ones).
+layers_of() {
+    local d; d="$(mods_of "$1")"; [ -d "$d" ] || return 0
+    ( cd "$d" && for n in *; do [ -d "$n" ] && echo "$n"; done ) | LC_ALL=C sort -f
+}
+
+# Resolves a name given by the user (with or without the leading "_") to the folder name that exists.
+resolve_layer() {
+    local e="$1" n="$2" d; d="$(mods_of "$e")"
+    case "$n" in */*|.|..|"") return 1 ;; esac
+    if [ -d "$d/$n" ]; then echo "$n"; elif [ -d "$d/_$n" ]; then echo "_$n"; else return 1; fi
+}
+
+# 100-ns ticks of .NET (DateTime UTC) of a file's modification time: what the installer writes to source.txt.
+dotnet_ticks() {
+    local t sec ns; t="$(stat -c %.9Y -- "$1")" || return 1
+    sec="${t%%.*}"; ns="${t##*.}"; ns=$((10#$ns))
+    echo $(( sec * 10000000 + ns / 100 + 621355968000000000 ))
+}
+
+nsp_state() {   # pending | done | ignored for updates/<file>
+    local f="$1" b n san d line
+    b="$(basename -- "$f")"
+    case "$b" in _*) echo ignored; return ;; esac
+    n="${b%.*}"
+    san="$(printf '%s' "$n" | LC_ALL=C sed 's/[^A-Za-z0-9._()\[\] +-]/_/g')"
+    local want="$b|$(stat -c %s -- "$f")|$(dotnet_ticks "$f")"
+    for d in tsuki tsuki_global; do
+        line="$(head -1 "$ROOT/data/$d/updates/$san/source.txt" 2>/dev/null | tr -d '\r')"
+        [ -n "$line" ] && [ "${line%|*}" = "$want" ] && { echo done; return; }
+    done
+    echo pending
+}
+
+nsp_files() { shopt -s nullglob nocaseglob; local f; for f in "$ROOT"/updates/*.nsp; do echo "$f"; done; shopt -u nullglob nocaseglob; }
+
+# Lines "<level>|<message>" about what the next recompile of an edition will do.
+mods_check() {
+    local e="$1" d n m ms cur next="" first="" conflict="" shas="" f pending=0 bad=0
+    d="$(mods_of "$e")"
+    while read -r n; do
+        [ -n "$n" ] || continue
+        case "$n" in _*|.*) continue ;; esac
+        if [ -f "$d/$n/requires_main.txt" ]; then
+            m="$(trim_hex < "$d/$n/requires_main.txt")"
+            if [ -z "$first" ]; then first="$m"; fi
+            case " $shas " in *" $m "*) ;; *) shas="$shas $m" ;; esac
+            conflict="$conflict $n"
+        fi
+    done < <(layers_of "$e")
+    if [ "$(echo $shas | wc -w)" -gt 1 ]; then
+        echo "error|two active updates need a different main ($(echo $conflict)): the recompile would fail; disable one"; bad=1
+    fi
+    while read -r f; do [ -n "$f" ] || continue; [ "$(nsp_state "$f")" = pending ] && pending=$((pending+1)); done < <(nsp_files)
+    if [ "$pending" -gt 0 ]; then echo "warn|$pending file(s) in updates/ not processed yet (each recompile reads the ones of its own edition): recompile"; bad=1; fi
+    ms="$ROOT/data/$(ed_data "$e")/analysis/main_source.txt"
+    if [ ! -f "$ms" ]; then echo "info|$(ed_name "$e") has not been recompiled yet"; return 0; fi
+    cur="$(trim_hex < "$ms")"
+    if [ -n "$first" ]; then next="$first"
+    elif [ -f "$ROOT/data/$(ed_data "$e")/exefs/main" ]; then next="$(sha256sum "$ROOT/data/$(ed_data "$e")/exefs/main" | cut -d' ' -f1 | lc)"; fi
+    if [ -n "$next" ] && [ "$next" != "$cur" ]; then echo "warn|the main of the active mods/updates is not the one this build was made with: recompile before playing"; bad=1; fi
+    [ "$bad" -eq 0 ] && echo "ok|nothing to recompile"
+    return 0
+}
+
+cmd_mods() {
+    local sub="${1:-}"; [ $# -gt 0 ] && shift
+    parse_ed "$@"; set -- "${REST[@]+"${REST[@]}"}"
+    [ "$EDITION" != both ] || die "mods needs one edition (-e japan or -e global)"
+    local e="$EDITION" d; d="$(mods_of "$e")"
+    case "$sub" in
+        list|"")
+            local n state note f any=0
+            while read -r n; do
+                [ -n "$n" ] || continue; any=1
+                case "$n" in _*|.*) state=off ;; *) state=on ;; esac
+                note="$(layer_kind "$d/$n")"; [ -d "$d/$n/romfs/shader" ] && note="$note, has shaders"
+                if [ "$TSV" = 1 ]; then printf 'layer\t%s\t%s\t%s\n' "$n" "$state" "$note"
+                else printf '  [%s] %-40s %s\n' "$([ "$state" = on ] && echo x || echo ' ')" "$n" "$note"; fi
+            done < <(layers_of "$e")
+            [ "$any" = 1 ] || { [ "$TSV" = 1 ] || say "  (no layers in mods/$e)"; }
+            while read -r f; do
+                [ -n "$f" ] || continue
+                if [ "$TSV" = 1 ]; then printf 'nsp\t%s\t%s\t%s\n' "$(basename -- "$f")" "$(nsp_state "$f")" "$(stat -c %s -- "$f")"
+                else printf '  update: %-40s %s\n' "$(basename -- "$f")" "$(nsp_state "$f")"; fi
+            done < <(nsp_files)
+            local lv msg
+            while IFS='|' read -r lv msg; do
+                [ -n "$lv" ] || continue
+                if [ "$TSV" = 1 ]; then printf 'check\t%s\t%s\n' "$lv" "$msg"; else say "$lv: $msg"; fi
+            done < <(mods_check "$e") ;;
+        enable|disable)
+            local n r new; n="${1:-}"; [ -n "$n" ] || die "which one? (launcher.sh mods list)"
+            r="$(resolve_layer "$e" "$n")" || die "no such layer '$n' in mods/$e"
+            running "$e" && die "$(ed_name "$e") is running: close it first"
+            if [ "$sub" = enable ]; then
+                case "$r" in _*) new="${r#_}" ;; *) say "Already active: $r"; return 0 ;; esac
+            else
+                case "$r" in _*) say "Already disabled: $r"; return 0 ;; *) new="_$r" ;; esac
+            fi
+            [ -e "$d/$new" ] && die "mods/$e/$new already exists"
+            mv -- "$d/$r" "$d/$new" || die "could not rename it"
+            say "$sub: $r -> $new   (recompile if it is an update or has shaders)" ;;
+        add)
+            local src="${1:-}"; [ -d "$src" ] || die "add needs the mod's FOLDER (launcher.sh mods add <folder>)"
+            running "$e" && die "$(ed_name "$e") is running: close it first"
+            src="$(readlink -f -- "$src")"
+            local name; name="$(basename -- "$src")"
+            case "$name" in .*|_*) name="${name#[._]}" ;; esac
+            [ -n "$name" ] || die "cannot name the layer"
+            [ -e "$d/$name" ] || [ -e "$d/_$name" ] && die "mods/$e/$name already exists"
+            mkdir -p "$d" || die "cannot create mods/$e"
+            local tmp="$d/.adding_$name"; [ -e "$tmp" ] && die "$tmp exists (an interrupted add): remove it by hand"
+            if [ -d "$src/romfs" ]; then
+                mv -- "$src" "$tmp" || die "could not move the folder"
+                say "Moved the folder as a layer."
+            else
+                local deep; deep="$(find "$src" -maxdepth 5 -type d -name romfs 2>/dev/null | head -1)"
+                [ -n "$deep" ] || die "no 'romfs' folder inside $src: nothing to add"
+                mkdir -p "$tmp" && mv -- "$deep" "$tmp/romfs" || { rm -rf -- "$tmp"; die "could not move the romfs folder"; }
+                say "Moved only its romfs folder (what else came with it stays in $src)."
+            fi
+            mv -- "$tmp" "$d/$name" || die "could not finish: the files are in $tmp"
+            say "Added mods/$e/$name (it is read the next time the game starts; recompile only if it has shaders or an update)" ;;
+        remove)
+            local n r; n="${1:-}"; [ -n "$n" ] || die "which one? (launcher.sh mods list)"
+            r="$(resolve_layer "$e" "$n")" || die "no such layer '$n' in mods/$e"
+            running "$e" && die "$(ed_name "$e") is running: close it first"
+            [ -f "$d/$r/from_update.txt" ] && say "It is the layer of an update: the next recompile deletes that update's data too."
+            to_trash "$d/$r" || die "no trash tool (gio, trash-put): remove mods/$e/$r by hand"
+            say "Moved to the trash: mods/$e/$r" ;;
+        *) die "mods: list | enable <name> | disable <name> | add <folder> | remove <name>" ;;
+    esac
+}
+
+to_trash() {
+    if command -v gio >/dev/null 2>&1 && gio trash -- "$1" >/dev/null 2>&1; then return 0; fi
+    if command -v trash-put >/dev/null 2>&1 && trash-put -- "$1" >/dev/null 2>&1; then return 0; fi
+    return 1
+}
+
+cmd_updates() {
+    local sub="${1:-}"; [ $# -gt 0 ] && shift
+    parse_ed "$@"; set -- "${REST[@]+"${REST[@]}"}"
+    local d; d="$ROOT/updates"
+    case "$sub" in
+        list|"")
+            local f any=0
+            while read -r f; do
+                [ -n "$f" ] || continue; any=1
+                if [ "$TSV" = 1 ]; then printf 'nsp\t%s\t%s\t%s\n' "$(basename -- "$f")" "$(nsp_state "$f")" "$(stat -c %s -- "$f")"
+                else printf '  %-44s %s\n' "$(basename -- "$f")" "$(nsp_state "$f")"; fi
+            done < <(nsp_files)
+            [ "$any" = 1 ] || { [ "$TSV" = 1 ] || say "  (no .nsp in updates/)"; } ;;
+        add)
+            local f="${1:-}"; [ -f "$f" ] || die "add needs a .nsp FILE (launcher.sh updates add <file.nsp>)"
+            case "${f,,}" in *.nsp) ;; *) die "it is not a .nsp" ;; esac
+            [ "$(head -c4 -- "$f")" = PFS0 ] || die "it is not a valid .nsp (no PFS0 header)"
+            local b; b="$(basename -- "$f")"
+            [ -e "$d/$b" ] && die "updates/$b already exists"
+            mkdir -p "$d" || die "cannot create updates/"
+            mv -- "$f" "$d/$b.partial" && mv -- "$d/$b.partial" "$d/$b" || die "could not move it (a copy may be left as $d/$b.partial)"
+            say "Moved to updates/$b: the next recompile of its edition processes it (launcher.sh recomp -e <edition>)" ;;
+        remove)
+            local n="${1:-}"; [ -n "$n" ] || die "which one? (launcher.sh updates list)"
+            case "$n" in */*|.|..) die "invalid name" ;; esac
+            [ -f "$d/$n" ] || die "no such file updates/$n"
+            to_trash "$d/$n" || die "no trash tool (gio, trash-put): remove updates/$n by hand"
+            say "Moved to the trash: updates/$n" ;;
+        *) die "updates: list | add <file.nsp> | remove <file.nsp>" ;;
+    esac
+}
+
 # ---- open / install / recomp / edition ----------------------------------------------------------------------------
 cmd_open() {
     local what="${1:-}"; [ $# -gt 0 ] && shift
@@ -295,6 +505,12 @@ cmd_recomp() {
     exec bash "$HERE/recomp_linux.sh" -Target linux -Edition "$EDITION" "${REST[@]+"${REST[@]}"}"
 }
 
+cmd_gui() {
+    local g="$ROOT/framework/build/launcher/tsukihime_launcher"
+    [ -x "$g" ] || bash "$HERE/build_gui.sh" || die "could not build the graphical launcher"
+    exec "$g" --root "$ROOT" "$@"
+}
+
 cmd_edition() {
     if [ $# -eq 0 ]; then say "$(default_edition)"; return 0; fi
     ed_valid "$1" || die "unknown edition '$1' (japan, global)"
@@ -309,10 +525,13 @@ case "$cmd" in
     play) cmd_play "$@" ;;
     log) cmd_log "$@" ;;
     saves) cmd_saves "$@" ;;
+    mods) cmd_mods "$@" ;;
+    updates) cmd_updates "$@" ;;
     open) cmd_open "$@" ;;
     install) cmd_install "$@" ;;
     recomp) cmd_recomp "$@" ;;
     edition) cmd_edition "$@" ;;
+    gui) cmd_gui "$@" ;;
     ""|-h|--help|help) usage ;;
     *) echo "unknown command '$cmd'" >&2; usage >&2; exit 1 ;;
 esac

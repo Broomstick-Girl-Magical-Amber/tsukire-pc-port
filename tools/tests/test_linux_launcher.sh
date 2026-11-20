@@ -32,6 +32,8 @@ L() { bash tools/linux/launcher.sh "$@" 2>&1; }
 out="$(L status)"; echo "$out" | grep -q 'Japanese (cartridge): ready' && echo "$out" | grep -q 'saves: 3 file' && ok "status: ready, 3 saves" || bad "status: $out"
 out="$(L status -e global)"; echo "$out" | grep -q 'Global (eShop): not built' && ok "status: global not built" || bad "status global"
 out="$(L play --gpu-hang 5000 -- a b)"; echo "$out" | grep -q 'gh=5000 args=2' && ok "play: env and args reach the game" || bad "play: $out"
+out="$(L play --gpu-hang 7000ms)"; echo "$out" | grep -q 'gh=7000 ' && ok "play: --gpu-hang accepts the ms suffix" || bad "ms suffix: $out"
+out="$(L play --gpu-hang 12x)"; echo "$out" | grep -q 'needs a number' && ok "play: --gpu-hang rejects text" || bad "gpu-hang text"
 out="$(FAKE_RC=6 L play)"; echo "$out" | grep -q 'code 6' && echo "$out" | grep -q 'Vulkan is not available' && ok "exit 6 explained" || bad "exit 6"
 out="$(FAKE_RC=4 L play)"; echo "$out" | grep -q 'GPU stopped responding' && ok "exit 4 explained" || bad "exit 4"
 FAKE_RC=5 L play >/dev/null; [ $? -eq 5 ] && ok "play returns the game's exit code" || bad "rc"
@@ -68,4 +70,64 @@ printf '#!/bin/bash\necho install "$@"\n' > tools/linux/install_requirements_lin
 [ "$(L recomp -e japan)" = "recomp -Target linux -Edition japan" ] && ok "recomp: -Target linux added" || bad "recomp"
 L install -Target windows 2>&1 | grep -q 'already uses' && ok "install: -Target refused" || bad "install target"
 out="$(L bogus)"; echo "$out" | grep -q "unknown command" && ok "unknown command" || bad "unknown"
+
+# ---- mods and updates
+M1=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+M2=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+mkdir -p mods/japan/tsukihimates mods/japan/_spanish mods/japan/manual1/romfs/shader data/tsuki/analysis updates
+echo x > mods/japan/tsukihimates/from_update.txt; echo "$M1" > mods/japan/tsukihimates/requires_main.txt
+echo x > mods/japan/_spanish/from_update.txt; echo "$M2" > mods/japan/_spanish/requires_main.txt
+echo "$M1" > data/tsuki/analysis/main_source.txt
+out="$(L mods list)"
+echo "$out" | grep -q '\[x\] tsukihimates .*update (own main)' && echo "$out" | grep -q '\[ \] _spanish' && echo "$out" | grep -q 'manual1 .*manual, has shaders' \
+    && ok "mods list: state and kind" || bad "mods list: $out"
+echo "$out" | grep -q 'ok: nothing to recompile' && ok "mods check: main matches the build" || bad "check ok: $out"
+out="$(L mods list --tsv)"; echo "$out" | grep -q "^layer	tsukihimates	on	update (own main)" && echo "$out" | grep -q "^check	ok	" && ok "mods list --tsv" || bad "tsv: $out"
+
+L mods enable spanish >/dev/null
+[ -d mods/japan/spanish ] && [ ! -d mods/japan/_spanish ] && ok "enable: _ removed" || bad "enable"
+out="$(L mods list)"; echo "$out" | grep -q 'error: two active updates need a different main' && ok "check: two different mains is an error" || bad "conflict: $out"
+L mods disable tsukihimates >/dev/null; out="$(L mods list)"
+echo "$out" | grep -q 'warn: the main of the active' && ok "check: other main than the build: recompile" || bad "main change: $out"
+L mods disable spanish >/dev/null; L mods enable tsukihimates >/dev/null
+[ -d mods/japan/tsukihimates ] && ok "disable/enable by name round trip" || bad "round trip"
+out="$(L mods enable nothere)"; echo "$out" | grep -q 'no such layer' && ok "enable: unknown layer" || bad "unknown layer"
+out="$(L mods enable ../x)"; echo "$out" | grep -q 'no such layer' && ok "enable: path in the name refused" || bad "path name"
+
+# updates: pending / done by source.txt (ticks of .NET) / ignored
+printf 'PFS0....' > updates/patch.nsp; printf 'PFS0....' > updates/_old.nsp
+out="$(L updates list)"; echo "$out" | grep -q 'patch.nsp .*pending' && echo "$out" | grep -q '_old.nsp .*ignored' && ok "updates list: pending, ignored" || bad "updates list: $out"
+out="$(L mods list)"; echo "$out" | grep -q 'warn: 1 file(s) in updates/ not processed' && ok "check: pending update" || bad "pending check: $out"
+tk="$(python3 -c "import os;print(os.stat('updates/patch.nsp').st_mtime_ns//100+621355968000000000)")"
+mkdir -p data/tsuki/updates/patch; printf 'patch.nsp|8|%s|9999\n' "$tk" > data/tsuki/updates/patch/source.txt
+out="$(L updates list)"; echo "$out" | grep -q 'patch.nsp .*done' && ok "updates: done when source.txt matches size and ticks" || bad "done: $out"
+touch -d '2020-01-01' updates/patch.nsp; out="$(L updates list)"; echo "$out" | grep -q 'patch.nsp .*pending' && ok "updates: pending again when the file changed" || bad "changed"
+
+# add a mod folder
+mkdir -p src1/romfs/x src2/atmosphere/contents/0100/romfs/y src2/atmosphere/contents/0100/exefs src3/nothing
+echo a > src1/romfs/x/f; echo b > src2/atmosphere/contents/0100/romfs/y/g; echo c > src2/atmosphere/contents/0100/exefs/e
+out="$(L mods add src1)"; [ -f mods/japan/src1/romfs/x/f ] && [ ! -e src1 ] && ok "mods add: folder with romfs moved whole" || bad "add1: $out"
+out="$(L mods add src2)"; [ -f mods/japan/src2/romfs/y/g ] && [ -f src2/atmosphere/contents/0100/exefs/e ] && [ ! -e src2/atmosphere/contents/0100/romfs ] \
+    && ok "mods add: deep romfs moved, the rest stays" || bad "add2: $out"
+out="$(L mods add src3)"; echo "$out" | grep -q "no 'romfs' folder" && [ -d src3 ] && ok "mods add: no romfs, nothing changed" || bad "add3: $out"
+mkdir -p src1/romfs; out="$(L mods add src1)"; echo "$out" | grep -q 'already exists' && ok "mods add: name taken" || bad "add dup: $out"
+
+# remove goes to the trash tool (fake gio)
+mkdir -p "$W/trash" "$W/bin"
+printf '#!/bin/sh\n[ "$1" = trash ] && shift; [ "$1" = -- ] && shift; mv "$1" "%s/trash/"\n' "$W" > "$W/bin/gio"
+chmod +x "$W/bin/gio"
+out="$(PATH="$W/bin:$PATH" L mods remove src1)"; [ ! -e mods/japan/src1 ] && [ -d "$W/trash/src1" ] && ok "mods remove: to the trash" || bad "remove: $out"
+out="$(PATH="$W/bin:$PATH" L updates remove _old.nsp)"; [ ! -e updates/_old.nsp ] && [ -f "$W/trash/_old.nsp" ] && ok "updates remove: to the trash" || bad "updates remove: $out"
+
+# updates add
+printf 'PFS0xxxx' > "$W/new.nsp"; printf 'not a nsp' > "$W/bad.nsp"
+out="$(L updates add "$W/bad.nsp")"; echo "$out" | grep -q 'not a valid .nsp' && [ -f "$W/bad.nsp" ] && ok "updates add: bad header refused" || bad "add bad: $out"
+out="$(L updates add "$W/new.nsp")"; [ -f updates/new.nsp ] && [ ! -e "$W/new.nsp" ] && [ ! -e updates/new.nsp.partial ] && ok "updates add: moved" || bad "add nsp: $out"
+FAKE_SLEEP=1 framework/build/tsukihime/tsukihime >/dev/null 2>&1 & sp=$!; sleep 0.4
+out="$(L mods disable tsukihimates)"; echo "$out" | grep -q 'close it first' && ok "mods: blocked while the game runs" || bad "mods running: $out"
+kill "$sp" 2>/dev/null; wait "$sp" 2>/dev/null
+
+out="$(L status --tsv)"; echo "$out" | grep -q "^edition	japan	ready	ready" && echo "$out" | grep -q "^keys	none" && ok "status --tsv" || bad "status tsv: $out"
+out="$(L saves list --tsv)"; echo "$out" | grep -q "^save	" && echo "$out" | grep -q "^copy	1	" && ok "saves list --tsv" || bad "saves tsv: $out"
+
 [ "$fail" = 0 ] && echo "all OK" || { echo "FAILED"; exit 1; }
