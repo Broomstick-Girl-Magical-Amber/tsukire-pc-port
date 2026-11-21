@@ -14,7 +14,8 @@
 #   bash tools/linux/launcher.sh install  [-e ...|both] [options of install_requirements.ps1]
 #   bash tools/linux/launcher.sh recomp   [-e ...]              recompile one edition (the tools must be installed)
 #   bash tools/linux/launcher.sh edition  [japan|global]        show / set the default edition (launcher.ini)
-#   bash tools/linux/launcher.sh gui                            the graphical launcher (Dear ImGui + SDL3; built the first time)
+#   bash tools/linux/launcher.sh gui [--build]                  the graphical launcher (Dear ImGui + SDL3; the prebuilt one of the
+#                                                               release zip, else built the first time; --build forces a build)
 #
 # The default edition is the one of launcher.ini (key "edition", the file the Windows launcher uses), else the first
 # one that is built, else japan. Everything is relative to the repository: the root is two folders above this script.
@@ -506,8 +507,15 @@ cmd_recomp() {
 }
 
 cmd_gui() {
-    local g="$ROOT/framework/build/launcher/tsukihime_launcher"
-    [ -x "$g" ] || bash "$HERE/build_gui.sh" || die "could not build the graphical launcher"
+    # Order: tools/linux/bin/tsukihime_launcher (prebuilt, from the release zip), then the one built here
+    # (framework/build/launcher/), else build it. "gui --build" skips the prebuilt one and compiles.
+    local g="$ROOT/tools/linux/bin/tsukihime_launcher" b="$ROOT/framework/build/launcher/tsukihime_launcher"
+    if [ "${1:-}" = "--build" ]; then shift; g=""; bash "$HERE/build_gui.sh" || die "could not build the graphical launcher"; fi
+    if [ -n "$g" ] && [ -f "$g" ]; then
+        [ -x "$g" ] || chmod +x "$g" 2>/dev/null || die "$g is not executable (the zip does not keep the permission): chmod +x it"
+    else
+        g="$b"; [ -x "$g" ] || bash "$HERE/build_gui.sh" || die "could not build the graphical launcher"
+    fi
     exec "$g" --root "$ROOT" "$@"
 }
 

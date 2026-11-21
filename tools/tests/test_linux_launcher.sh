@@ -130,4 +130,11 @@ kill "$sp" 2>/dev/null; wait "$sp" 2>/dev/null
 out="$(L status --tsv)"; echo "$out" | grep -q "^edition	japan	ready	ready" && echo "$out" | grep -q "^keys	none" && ok "status --tsv" || bad "status tsv: $out"
 out="$(L saves list --tsv)"; echo "$out" | grep -q "^save	" && echo "$out" | grep -q "^copy	1	" && ok "saves list --tsv" || bad "saves tsv: $out"
 
+# gui: the prebuilt binary of the release zip (tools/linux/bin) is used first, even without the execute bit (zips lose it)
+mkdir -p tools/linux/bin
+printf '#!/bin/sh\necho "prebuilt gui: $*"\n' > tools/linux/bin/tsukihime_launcher
+out="$(L gui)"; echo "$out" | grep -q "^prebuilt gui: --root $W\$" && [ -x tools/linux/bin/tsukihime_launcher ] && ok "gui: prebuilt used, made executable" || bad "gui prebuilt: $out"
+out="$(L gui --foo)"; echo "$out" | grep -q -- "--root $W --foo" && ok "gui: extra args go to the binary" || bad "gui args: $out"
+rm -rf tools/linux/bin
+
 [ "$fail" = 0 ] && echo "all OK" || { echo "FAILED"; exit 1; }

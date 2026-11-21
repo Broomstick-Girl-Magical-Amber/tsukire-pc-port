@@ -3,6 +3,7 @@
 #
 #   bash tools/linux/build_gui.sh          # builds framework/build/launcher/tsukihime_launcher
 #   bash tools/linux/build_gui.sh --clean  # from scratch
+#   bash tools/linux/build_gui.sh --static # libstdc++/libgcc inside the binary (what package_gui.sh uses for releases)
 #   bash tools/linux/launcher.sh gui       # builds it if it is missing, then opens it
 #
 # Needs what install_requirements_linux.sh already leaves: CMake and Ninja and LLVM in NX_TOOLS_DIR (default
@@ -19,7 +20,8 @@ OUT="$ROOT/framework/build/launcher"
 die() { echo "ERROR: $*" >&2; exit 1; }
 
 [ "$(uname -s)" = Linux ] || die "this is for Linux"
-clean=0; for a in "$@"; do case "$a" in --clean) clean=1 ;; *) die "unknown option '$a' (--clean)" ;; esac; done
+clean=0; static=OFF
+for a in "$@"; do case "$a" in --clean) clean=1 ;; --static) static=ON ;; *) die "unknown option '$a' (--clean, --static)" ;; esac; done
 
 pick() {   # pick <tool> <glob inside NX_TOOLS_DIR>: the tool of the tools folder, else the one of PATH
     local g f
@@ -53,7 +55,7 @@ if [ ! -f "$IM/imgui.h" ]; then
 fi
 
 [ "$clean" = 1 ] && rm -rf "$OUT"
-args=(-S "$HERE/gui" -B "$OUT" -G Ninja -DCMAKE_MAKE_PROGRAM="$NINJA" -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER="$CXX" -DNX_IMGUI_DIR="$IM")
+args=(-S "$HERE/gui" -B "$OUT" -G Ninja -DCMAKE_MAKE_PROGRAM="$NINJA" -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER="$CXX" -DNX_IMGUI_DIR="$IM" -DNX_STATIC_RUNTIME="$static")
 [ -n "$PREFIX" ] && args+=(-DCMAKE_PREFIX_PATH="$PREFIX")
 "$CMAKE" "${args[@]}" >/dev/null || { "$CMAKE" "${args[@]}"; die "configure failed"; }
 "$CMAKE" --build "$OUT" 2>&1 | tail -n 3
