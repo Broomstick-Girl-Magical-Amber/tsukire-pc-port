@@ -569,3 +569,47 @@ function Step11 {
         foreach ($p in $script:Problems) { Write-Host "     $p" }
     }
 }
+
+# AP_LINUX_POLISH (apply_linux_polish.py): the summary of step 11 again (this definition wins over the one above): the tools are
+# not listed twice, the GPU line says what NO means, and after -Recomp "Next" says how to play.
+function Step11 {
+    $nl = ((Test-Path variable:NativeLinux) -and $NativeLinux)
+    Write-Host ''
+    Write-Host '   Status:' -ForegroundColor Green
+    $toolNames = @()
+    foreach ($c in $ToolSpecs.Keys) {
+        $e = Status $c
+        $t = switch ($e.State) { 'ok' { "OK $($e.Det.Text)" } 'missing' { 'MISSING' } default { "$($e.Det.Text) (does not meet $($ToolSpecs[$c].Rule))" } }
+        Write-Host ('     {0,-36} {1}' -f $ToolSpecs[$c].Name, $t)
+        $toolNames += $ToolSpecs[$c].Name
+    }
+    if (-not $nl) { Write-Host ('     {0,-36} {1}' -f 'Windows CRT/SDK (xwin)', $(if (XwinOk) { 'OK' } else { 'MISSING' })) }
+    foreach ($l in $script:Done) {
+        $dup = $false
+        foreach ($n in $toolNames) { if ($l.StartsWith($n)) { $dup = $true; break } }
+        if (-not $dup) { Write-Host "     $l" }
+    }
+    if ($null -ne $script:GpuOk) {
+        $g = if ($script:GpuOk) { 'OK' } elseif ($nl) { 'NO, only a CPU driver (llvmpipe) or none: it builds, but it plays slowly or not at all' } else { 'NO (see the warning of step 9)' }
+        Write-Host ('     GPU to play{0}: {1}' -f $(if ($nl) { '' } else { ' (Proton)' }), $g)
+    }
+    Write-Host ''
+    Write-Host '   By hand (the script does not touch it):' -ForegroundColor Yellow
+    $keys = Join-Path $Root 'data/prod.keys'
+    Write-Host ("     prod.keys   {0}" -f $(if (Test-Path -LiteralPath $keys) { "present in $keys (not read)" } else { "copy your keys to $keys" }))
+    $dumps = @(Get-ChildItem -LiteralPath $Root -File | Where-Object { $_.Extension -in '.xci', '.nsp' } | ForEach-Object { $_.Name })
+    Write-Host ("     dumps       {0}" -f $(if ($dumps.Count) { "in ${Root}: " + ($dumps -join ', ') } else { "copy the .xci or .nsp of each edition to $Root (the root, not data/)" }))
+    Write-Host ''
+    Write-Host '   Next:' -ForegroundColor Cyan
+    if ($Recomp -and -not $script:Problems.Count) {
+        Write-Host '     bash tools/linux/launcher.sh gui      (the graphical launcher)'
+        Write-Host '     bash tools/linux/launcher.sh play     (or play from the terminal)'
+    } else {
+        foreach ($ed in (Editions)) { Write-Host "     bash tools/linux/recomp_linux.sh -Edition $ed$(if ($nl) { ' -Target linux' })" }
+    }
+    if ($script:Problems.Count) {
+        Write-Host ''
+        Write-Host '   Problems:' -ForegroundColor Yellow
+        foreach ($p in $script:Problems) { Write-Host "     $p" }
+    }
+}

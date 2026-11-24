@@ -218,12 +218,23 @@ function ParseVersion([string]$s) {
     return [version]$m.Value
 }
 function Sha256([string]$p) { (Get-FileHash -Algorithm SHA256 -LiteralPath $p).Hash }
-function Download([string]$url, [string]$dst) {
+function Download([string]$url, [string]$dst, [int]$Retries = 0, [int]$TimeoutSec = 0) {   # AP_LINUX_POLISH: optional retries and timeout
     if ($OnWindows) { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 }
     Info "downloading $url"
     $tmp = "$dst.partial"
     if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force }
-    Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $tmp
+    for ($attempt = 0; ; $attempt++) {
+        try {
+            if ($TimeoutSec -gt 0) { Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $tmp -TimeoutSec $TimeoutSec }
+            else { Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $tmp }
+            break
+        } catch {
+            if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+            if ($attempt -ge $Retries) { throw }
+            Warn "download failed: $($_.Exception.Message). Attempt $($attempt + 2) of $($Retries + 1) in 5 s"
+            Start-Sleep -Seconds 5
+        }
+    }
     Move-Item -LiteralPath $tmp -Destination $dst -Force
 }
 # AP_CLEAN_DOWNLOADS (apply_clean_downloads.py): an installer or archive kept in <root>\_prepare only to be reused is deleted once its
@@ -1117,7 +1128,7 @@ function Step8 {
         else {
             $dl = PathOf $WorkDir 'downloads'; New-Item -ItemType Directory -Path $dl -Force | Out-Null
             $tgz = PathOf $dl 'ryubing-a82350bb77.tar.gz'
-            if (-not (Test-Path -LiteralPath $tgz)) { Download $RyubingUrl $tgz }
+            if (-not (Test-Path -LiteralPath $tgz)) { Download $RyubingUrl $tgz -Retries 3 -TimeoutSec 60 }   # AP_LINUX_POLISH
             $tmp = PathOf $WorkDir 'ryubing.tmp'
             if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Recurse -Force }
             New-Item -ItemType Directory -Path $tmp | Out-Null

@@ -193,7 +193,7 @@ if (Test-Path $cache) {
             if ($k -eq 'CMAKE_GENERATOR') { $args2 += "-G ""$v""" } else { $args2 += "-D$k=""$v""" }
         }
     }
-} else { Write-Host "Warning: no $cache; the command below has no generator or toolchain" }
+} else { Write-Host "Note: no $cache yet (normal in a first build): step 9 of recomp_tsukihime.ps1 configures the build; the command below is only a reference" }   # AP_LINUX_POLISH
 Write-Host ''
 Write-Host "Next (in $Framework, with the build environment loaded):"
 Write-Host "  $RegenGl main, sdk"
