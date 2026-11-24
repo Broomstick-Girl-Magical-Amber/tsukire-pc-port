@@ -20,7 +20,7 @@ sudo dnf install -y git curl tar coreutils                         # Fedora
 sudo pacman -S --needed git curl tar coreutils base-devel          # Arch
 ```
 
-Use `git clone`, because GitHub's *Download ZIP* has no `.git` folder. Put your dump in the cloned folder and `prod.keys` in `data/`.
+Clone it, or download `tsukire-pc-port.zip` from [Releases](https://github.com/Broomstick-Girl-Magical-Amber/tsukire-pc-port/releases) and extract it in an empty folder. Put your dump in that folder and `prod.keys` in `data/`.
 
 ```bash
 git clone https://github.com/Broomstick-Girl-Magical-Amber/tsukire-pc-port.git
