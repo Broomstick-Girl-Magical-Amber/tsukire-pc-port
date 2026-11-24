@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """make_desktop_entry.py - application menu entry and icon for the native Linux build.
 
-Writes, for every built edition (or the one given with --edition):
+Writes, for every built edition (or the one given with --edition) and for the graphical launcher (tools/linux/launcher.sh gui,
+when it is there: prebuilt in tools/linux/bin/ or built in framework/build/launcher/):
   $XDG_DATA_HOME/applications/<game>.desktop                  (default ~/.local/share/applications)
   $XDG_DATA_HOME/icons/hicolor/256x256/apps/<game>.png        (the largest image of the game's .ico)
-<game> is the binary's name (tsukihime, tsukihime_global), which is also the window's application id (Wayland app_id,
-X11 WM_CLASS): GNOME on Wayland has no protocol for a window icon and shows the icon of this .desktop file.
+<game> is the binary's name (tsukihime, tsukihime_global, tsukihime_launcher), which is also the window's application id
+(Wayland app_id, X11 WM_CLASS): GNOME on Wayland has no protocol for a window icon and shows the icon of this .desktop file.
 
   python3 tools/linux/make_desktop_entry.py                   all built editions
-  python3 tools/linux/make_desktop_entry.py --edition global  only one
+  python3 tools/linux/make_desktop_entry.py --edition global  only one edition
+  python3 tools/linux/make_desktop_entry.py --launcher        only the launcher
   python3 tools/linux/make_desktop_entry.py --remove          take the entries and icons away
 
 Nothing is written inside the repository. Run it again if the repository folder moves (the entry points at the binary).
@@ -25,6 +27,16 @@ EDITIONS = {
     "japan": ("tsukihime", "Tsukihime -A piece of blue glass moon-"),
     "global": ("tsukihime_global", "TSUKIHIME -A piece of blue glass moon- (Global)"),
 }
+
+
+LAUNCHER = ("tsukihime_launcher", "Tsukihime PC port launcher")
+
+
+def launcher_binary():
+    for p in (ROOT / "tools" / "linux" / "bin" / "tsukihime_launcher", ROOT / "framework" / "build" / "launcher" / "tsukihime_launcher"):
+        if p.is_file():
+            return p
+    return None
 
 
 def data_home() -> Path:
@@ -75,14 +87,52 @@ def refresh(apps: Path, icons: Path) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser(description="Application menu entry and icon for the native Linux build.")
     ap.add_argument("--edition", choices=sorted(EDITIONS), help="only this edition (default: every built one)")
+    ap.add_argument("--launcher", action="store_true", help="only the graphical launcher")
     ap.add_argument("--remove", action="store_true", help="remove the entries and icons")
     args = ap.parse_args()
 
     apps = data_home() / "applications"
     icons = data_home() / "icons" / "hicolor"
-    names = [args.edition] if args.edition else sorted(EDITIONS)
+    names = [] if args.launcher else [args.edition] if args.edition else sorted(EDITIONS)
+    if args.launcher or not args.edition:
+        names.append("launcher")
     done = 0
     for name in names:
+        if name == "launcher":
+            game, title = LAUNCHER
+            desktop = apps / (game + ".desktop")
+            icon = icons / "256x256" / "apps" / (game + ".png")
+            if args.remove:
+                for f in (desktop, icon):
+                    if f.exists():
+                        f.unlink()
+                        print("removed %s" % f)
+                        done += 1
+                continue
+            if launcher_binary() is None:
+                if args.launcher:
+                    print("the launcher is not built: run bash tools/linux/launcher.sh gui --build", file=sys.stderr)
+                    return 1
+                continue
+            icon.parent.mkdir(parents=True, exist_ok=True)
+            icon.write_bytes(ico_png(game))
+            apps.mkdir(parents=True, exist_ok=True)
+            # through launcher.sh: it finds the root, makes the prebuilt binary executable and builds it if it is missing
+            desktop.write_text(
+                "[Desktop Entry]\n"
+                "Type=Application\n"
+                "Name=%s\n"
+                "Exec=bash %s gui\n"
+                "Path=%s\n"
+                "Icon=%s\n"
+                "StartupWMClass=%s\n"
+                "Terminal=false\n"
+                "Categories=Game;\n" % (title, exec_quote(ROOT / "tools" / "linux" / "launcher.sh"), ROOT, game, game),
+                encoding="utf-8")
+            desktop.chmod(0o755)
+            print("launcher: %s" % desktop)
+            done += 1
+            continue
         game, title = EDITIONS[name]
         desktop = apps / (game + ".desktop")
         icon = icons / "256x256" / "apps" / (game + ".png")

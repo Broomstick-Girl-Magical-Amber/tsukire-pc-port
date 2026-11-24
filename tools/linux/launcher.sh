@@ -14,6 +14,16 @@
 #   bash tools/linux/launcher.sh install  [-e ...|both] [options of install_requirements.ps1]
 #   bash tools/linux/launcher.sh recomp   [-e ...]              recompile one edition (the tools must be installed)
 #   bash tools/linux/launcher.sh edition  [japan|global]        show / set the default edition (launcher.ini)
+#   bash tools/linux/launcher.sh controls [show]                keyboard and mouse of the game (input.ini, both editions)
+#   bash tools/linux/launcher.sh controls bind keyboard|mouse ACTION key,key,... [--add] [--move|--share]
+#   bash tools/linux/launcher.sh controls unbind|clear|reset ...   (reset keyboard|mouse|all), controls keys = valid names
+#   bash tools/linux/launcher.sh title [show]                   title screen video and music (title.ini, both editions)
+#   bash tools/linux/launcher.sh title set video|pool|music|hotkeys|click|unlock|fade|swap_delay VALUE | title reset
+#   bash tools/linux/launcher.sh options [show] [-e ed|both]    options of the game (config.txt of that edition)
+#   bash tools/linux/launcher.sh options set NAME VALUE | options reset [NAME] | options gpus
+#   bash tools/linux/launcher.sh vulkan [show|install]          is Vulkan installed? the exact command to install it (install asks first)
+#   bash tools/linux/launcher.sh desktop [add|remove]           applications menu entries (the game and this launcher, with the port's icon)
+#   bash tools/linux/launcher.sh language [auto|en|es]          language of the graphical launcher (launcher.ini, key "language")
 #   bash tools/linux/launcher.sh gui [--build]                  the graphical launcher (Dear ImGui + SDL3; the prebuilt one of the
 #                                                               release zip, else built the first time; --build forces a build)
 #
@@ -506,6 +516,63 @@ cmd_recomp() {
     exec bash "$HERE/recomp_linux.sh" -Target linux -Edition "$EDITION" "${REST[@]+"${REST[@]}"}"
 }
 
+# controls / title / options: the logic is in controls.py (the same files as the Windows launcher, same rules)
+run_controls() {   # run_controls <input|title|options> args... (the default verb is show)
+    local area="$1"; shift
+    parse_ed "$@"
+    command -v python3 >/dev/null 2>&1 || die "python3 is needed for $area (it comes with install_requirements_linux.sh)"
+    [ -f "$HERE/controls.py" ] || die "tools/linux/controls.py is missing"
+    local a=(--root "$ROOT" --edition "$EDITION"); [ "$TSV" = 1 ] && a+=(--tsv)
+    [ ${#REST[@]} -gt 0 ] || REST=(show)
+    python3 -I "$HERE/controls.py" "${a[@]}" "$area" "${REST[@]}"
+}
+cmd_controls() { run_controls input "$@"; }
+cmd_title() { run_controls title "$@"; }
+cmd_options() { run_controls options "$@"; }
+
+cmd_vulkan() {
+    parse_ed "$@"
+    declare -F vulkan_present >/dev/null || die "tools/linux/vulkan_check.sh is missing"
+    local sub="${REST[0]:-show}" r cmd note ans
+    case "$sub" in show|install) ;; *) die "usage: launcher.sh vulkan [show|install]" ;; esac
+    if vulkan_present; then
+        if [ "$TSV" = 1 ]; then printf 'vulkan\tyes\n'; else say "Vulkan: loader and driver found"; fi
+        return 0
+    fi
+    r="$(vulkan_install_cmd)"; cmd="${r%%|*}"; note="${r#*|}"
+    [ -n "$r" ] || { cmd=""; note="this distribution is not known: install the Vulkan loader and the driver of your graphics card with your package manager"; }
+    if [ "$sub" = show ]; then
+        if [ "$TSV" = 1 ]; then printf 'vulkan\tno\nvulkan_cmd\t%s\t%s\n' "$cmd" "$note"
+        else say "Vulkan: no loader or no driver found (the game needs one to run)"; say "$note"; [ -z "$cmd" ] || say "command: $cmd"; fi
+        return 0
+    fi
+    [ -n "$cmd" ] || die "$note"
+    say "$note"; say "command: $cmd"
+    if [ "${LAUNCHER_ASSUME_YES:-0}" = 1 ]; then ans=y
+    elif [ -t 0 ]; then read -r -p "Run it now? [y/N]: " ans || ans=""
+    else die "needs a terminal to ask (or LAUNCHER_ASSUME_YES=1); run the command yourself"; fi
+    case "${ans,,}" in y|yes) ;; *) say "Not run."; return 0 ;; esac
+    sh -c "$cmd" || die "the command failed"
+    if vulkan_present; then say "Vulkan installed."; else say "Done, but no Vulkan driver is seen yet: log out and in, or check the driver of your card."; fi
+}
+
+cmd_desktop() {
+    parse_ed "$@"
+    command -v python3 >/dev/null 2>&1 || die "python3 is needed for desktop"
+    [ -f "$HERE/make_desktop_entry.py" ] || die "tools/linux/make_desktop_entry.py is missing"
+    case "${REST[0]:-add}" in
+        add) python3 -I "$HERE/make_desktop_entry.py" ;;
+        remove) python3 -I "$HERE/make_desktop_entry.py" --remove ;;
+        *) die "usage: launcher.sh desktop [add|remove]" ;;
+    esac
+}
+
+cmd_language() {
+    if [ $# -eq 0 ]; then local v; v="$(ini_get language || true)"; say "${v:-auto}"; return 0; fi
+    case "$1" in auto|en|es) ;; *) die "unknown language '$1' (auto, en, es)" ;; esac
+    ini_set language "$1"; say "Language of the graphical launcher: $1"
+}
+
 cmd_gui() {
     # Order: tools/linux/bin/tsukihime_launcher (prebuilt, from the release zip), then the one built here
     # (framework/build/launcher/), else build it. "gui --build" skips the prebuilt one and compiles.
@@ -539,6 +606,12 @@ case "$cmd" in
     install) cmd_install "$@" ;;
     recomp) cmd_recomp "$@" ;;
     edition) cmd_edition "$@" ;;
+    controls) cmd_controls "$@" ;;
+    title) cmd_title "$@" ;;
+    options) cmd_options "$@" ;;
+    vulkan) cmd_vulkan "$@" ;;
+    desktop) cmd_desktop "$@" ;;
+    language) cmd_language "$@" ;;
     gui) cmd_gui "$@" ;;
     ""|-h|--help|help) usage ;;
     *) echo "unknown command '$cmd'" >&2; usage >&2; exit 1 ;;

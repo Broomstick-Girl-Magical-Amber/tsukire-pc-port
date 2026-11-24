@@ -137,4 +137,33 @@ out="$(L gui)"; echo "$out" | grep -q "^prebuilt gui: --root $W\$" && [ -x tools
 out="$(L gui --foo)"; echo "$out" | grep -q -- "--root $W --foo" && ok "gui: extra args go to the binary" || bad "gui args: $out"
 rm -rf tools/linux/bin
 
+# language of the graphical launcher (launcher.ini, key "language")
+out="$(L language)"; [ "$out" = auto ] && ok "language: auto by default" || bad "language default: $out"
+L language es >/dev/null; out="$(L language)"; [ "$out" = es ] && grep -q '^language=es' launcher.ini && ok "language: es saved in launcher.ini" || bad "language es: $out"
+out="$(L language fr)"; echo "$out" | grep -q 'unknown language' && ok "language: bad value refused" || bad "language bad: $out"
+L language auto >/dev/null
+
+# vulkan: shows the state and, when it is missing, the exact command (the host decides which; both are checked)
+out="$(L vulkan show --tsv)"
+if echo "$out" | grep -q "^vulkan	yes"; then ok "vulkan show --tsv: present"
+elif echo "$out" | grep -q "^vulkan	no" && echo "$out" | grep -q "^vulkan_cmd	"; then ok "vulkan show --tsv: missing, with the command"
+else bad "vulkan show: $out"; fi
+out="$(L vulkan install </dev/null)"
+echo "$out" | grep -qE 'loader and driver found|needs a terminal|not known' && ok "vulkan install: no terminal, nothing is run" || bad "vulkan install: $out"
+out="$(L vulkan bogus)"; echo "$out" | grep -q 'usage: launcher.sh vulkan' && ok "vulkan: bad verb refused" || bad "vulkan verb: $out"
+
+# desktop entries: the launcher gets one with the port's icon when its binary is there
+mkdir -p tools/linux/bin framework/games/tsukihime_common
+cp "$SRC/make_desktop_entry.py" tools/linux/; cp "$SRC/../../framework/games/tsukihime_common/tsukihime.ico" framework/games/tsukihime_common/ 2>/dev/null
+if [ -f framework/games/tsukihime_common/tsukihime.ico ] && command -v python3 >/dev/null; then
+    printf '#!/bin/sh\n' > tools/linux/bin/tsukihime_launcher
+    out="$(XDG_DATA_HOME="$W/xdg" L desktop add)"
+    [ -f "$W/xdg/applications/tsukihime_launcher.desktop" ] && grep -q '^Icon=tsukihime_launcher' "$W/xdg/applications/tsukihime_launcher.desktop" \
+        && grep -q 'launcher.sh" gui' "$W/xdg/applications/tsukihime_launcher.desktop" \
+        && [ -s "$W/xdg/icons/hicolor/256x256/apps/tsukihime_launcher.png" ] && ok "desktop add: launcher entry and icon" || bad "desktop add: $out"
+    XDG_DATA_HOME="$W/xdg" L desktop remove >/dev/null
+    [ ! -e "$W/xdg/applications/tsukihime_launcher.desktop" ] && ok "desktop remove: entry gone" || bad "desktop remove"
+else echo "skip - desktop (no icon or python3)"; fi
+rm -rf tools/linux/bin
+
 [ "$fail" = 0 ] && echo "all OK" || { echo "FAILED"; exit 1; }

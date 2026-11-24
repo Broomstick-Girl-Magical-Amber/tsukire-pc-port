@@ -43,7 +43,7 @@ vulkan_install_cmd() {
     fi
     vend="$(vulkan_vendors)"
     local note
-    if [ -n "$vend" ]; then note="graphics card: $vend"; else note="no GPU found (virtual machine?): the CPU driver (llvmpipe) is installed"; fi
+    if [ -n "$vend" ]; then note="graphics card: $vend"; else note="no GPU found, virtual machine?: the CPU driver llvmpipe is installed"; fi
     case " $id $like " in
         *" arch "*)
             pk="vulkan-icd-loader"
@@ -53,9 +53,9 @@ vulkan_install_cmd() {
             [ -n "$vend" ] || pk="$pk vulkan-swrast"
             echo "sudo pacman -S --needed $pk|$note" ;;
         *" fedora "*|*" rhel "*)
-            echo "sudo dnf install -y vulkan-loader mesa-vulkan-drivers|$note (NVIDIA proprietary: its own driver)" ;;
+            echo "sudo dnf install -y vulkan-loader mesa-vulkan-drivers|$note; NVIDIA proprietary: its own driver" ;;
         *" debian "*|*" ubuntu "*)
-            echo "sudo apt install -y libvulkan1 mesa-vulkan-drivers|$note (NVIDIA proprietary: its own driver)" ;;
+            echo "sudo apt install -y libvulkan1 mesa-vulkan-drivers|$note; NVIDIA proprietary: its own driver" ;;
     esac
 }
 

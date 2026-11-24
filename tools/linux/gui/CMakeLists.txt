@@ -18,6 +18,8 @@ find_package(Threads REQUIRED)
 
 add_executable(tsukihime_launcher
     launcher_gui.cpp
+    icon_data.cpp
+    strings_es.cpp
     ${NX_IMGUI_DIR}/imgui.cpp
     ${NX_IMGUI_DIR}/imgui_draw.cpp
     ${NX_IMGUI_DIR}/imgui_tables.cpp
