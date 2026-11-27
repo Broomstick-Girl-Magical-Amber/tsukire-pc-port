@@ -532,9 +532,9 @@ static void game_group(const Model& m) {
     ImGui::Spacing();
     line("prod.keys", m.keys == "data" ? T("found in data/prod.keys") : m.keys == "root" ? T("found in the root, the recompile moves it") : T("MISSING: put it in data/ or in the root"),
          m.keys == "none" ? kRed : kGreen);
-    line(T("Dump"), m.dumps.empty() ? T("none in the root: .xci for Japanese, .nsp for Global") : m.dumps[0] + (m.dumps.size() > 1 ? ", +" + std::to_string(m.dumps.size() - 1) : ""),
+    line(T("Dump"), m.dumps.empty() ? T("none in the root: put your .xci or .nsp there") : m.dumps[0] + (m.dumps.size() > 1 ? ", +" + std::to_string(m.dumps.size() - 1) : ""),
          m.dumps.empty() ? kOrange : kGreen);
-    line(T("Tools"), m.tools ? T("installed") : T("not installed: use the Install tab"), m.tools ? kGreen : kOrange);
+    line(T("Tools"), m.tools ? T("installed") : T("not installed or incomplete: use the Install tab"), m.tools ? kGreen : kOrange);
     line("Vulkan", m.vulkan == "yes" ? T("loader and driver found") : m.vulkan == "no" ? T("no loader or no driver: the game cannot start, Install offers to install it") : "unknown",
          m.vulkan == "yes" ? kGreen : m.vulkan == "no" ? kRed : kGrey);
     line(T(kEdName[g_ui.edition]), ed_text(e), e.state == "ready" || e.state == "running" ? kGreen : kOrange);
@@ -980,7 +980,7 @@ static void tab_install(const Model& m) {
     ImGui::TextWrapped("%s%s", T("Install gets everything ready: the system packages with sudo, the tools and the libraries. Then it builds the native game of this edition. "),
                        T("It asks for your password once, so it opens in a terminal window. Recompile only rebuilds the game, with no password, and is what you need after adding a mod or an update."));
     ImGui::Spacing();
-    line(T("Tools"), m.tools ? T("installed") : T("not installed"), m.tools ? kGreen : kOrange);
+    line(T("Tools"), m.tools ? T("installed") : T("not installed or incomplete"), m.tools ? kGreen : kOrange);
     line("Vulkan", m.vulkan == "yes" ? T("loader and driver found") : T("missing: the installer shows the command to install it and asks"), m.vulkan == "yes" ? kGreen : kOrange);
     line(T(kEdName[g_ui.edition]), ed_text(m.ed[g_ui.edition]), m.ed[g_ui.edition].state == "ready" ? kGreen : kOrange);
     ImGui::Spacing();

@@ -117,6 +117,16 @@ edition_state() {
     else echo "notbuilt|not built (launcher.sh install -e $e)"; fi
 }
 
+# The venv counts only with its packages: python alone says nothing (the venv can exist without lz4, which nso2bin.py
+# needs, and the recompile stops at step 0). Same two packages as step 6 of install_requirements.ps1 imports.
+venv_has_packages() {
+    local d ok=1
+    for d in "$ROOT"/framework/private/venv/lib/python3*/site-packages; do
+        [ -d "$d/lz4" ] && [ -d "$d/capstone" ] && ok=0
+    done
+    return $ok
+}
+
 cmd_status() {
     parse_ed "$@"
     local e f n=0 list=("$EDITION"); [ "$EDITION" = both ] && list=(japan global)
@@ -127,9 +137,12 @@ cmd_status() {
     shopt -s nullglob nocaseglob
     for f in "$ROOT"/*.nsp "$ROOT"/*.xci; do dump_kind "$f" && { kv dump "${f##*/}" "dump: ${f##*/}"; n=$((n+1)); }; done
     shopt -u nullglob nocaseglob
-    [ "$n" -gt 0 ] || kv dump "" "dump: none (.xci for the Japanese edition, .nsp for the Global one, in the root)"
-    if [ -x "$ROOT/framework/private/venv/bin/python" ] || [ -x "$ROOT/framework/private/venv/bin/python3" ]; then
-        kv tools yes "tools: installed (venv)"; else kv tools no "tools: not installed (launcher.sh install)"; fi
+    [ "$n" -gt 0 ] || kv dump "" "dump: none (put your .xci or .nsp in the root)"
+    if [ ! -x "$ROOT/framework/private/venv/bin/python" ] && [ ! -x "$ROOT/framework/private/venv/bin/python3" ]; then
+        kv tools no "tools: not installed (launcher.sh install)"
+    elif ! venv_has_packages; then
+        kv tools no "tools: incomplete, the venv has no lz4/capstone (launcher.sh install fixes it)"
+    else kv tools yes "tools: installed (venv)"; fi
     if declare -F vulkan_present >/dev/null; then
         if vulkan_present; then kv vulkan yes "Vulkan: loader and driver found"; else kv vulkan no "Vulkan: no loader or no driver (launcher.sh install asks to install it)"; fi
     fi

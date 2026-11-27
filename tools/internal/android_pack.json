@@ -1,9 +1,9 @@
 {
   "comment": "What tools/android downloads from the GitHub release when it is not on this PC. The Android pack (made with tools/dev/build_android_pack.ps1): build_game.ps1, when <root>/_prepare/android-pack is missing or has an older version (a pack made here with the same or a newer version is kept). The app (tools/android/build_apk.ps1, _android/tsukihime.apk): android_port.ps1 -InstallApp, when _android/tsukihime.apk is missing; apk_version is its versionName (build_apk.ps1 -Version). Empty url: nothing published yet.",
-  "version": "1.2.3",
-  "url": "https://github.com/Broomstick-Girl-Magical-Amber/tsukire-pc-port/releases/download/1.2.3/tsukire-android-pack-v1.2.3.zip",
-  "sha256": "521852f612d05cab0e232af1ba5b76d16168391c87c7d6484c7dd91d9d843ba5",
-  "apk_version": "1.2.3",
-  "apk_url": "https://github.com/Broomstick-Girl-Magical-Amber/tsukire-pc-port/releases/download/1.2.3/tsukihime.apk",
-  "apk_sha256": "415380b1413b3064b45de35b06c53ce4a049b98965f6c4f27d85327efefdd964"
+  "version": "1.2.4",
+  "url": "https://github.com/Broomstick-Girl-Magical-Amber/tsukire-pc-port/releases/download/1.2.4/tsukire-android-pack-v1.2.4.zip",
+  "sha256": "947ee4792863b2c7f733b94298e3fd366f762834da0d389739e5a9e5d7a342d1",
+  "apk_version": "1.2.4",
+  "apk_url": "https://github.com/Broomstick-Girl-Magical-Amber/tsukire-pc-port/releases/download/1.2.4/tsukihime.apk",
+  "apk_sha256": "122f5a6bb48078d93b8c24b12b116687c1d3dfce25fbef75c5f5245957e31381"
 }

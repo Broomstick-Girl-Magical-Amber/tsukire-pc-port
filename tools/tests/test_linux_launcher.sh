@@ -30,6 +30,15 @@ cd "$W" || exit 1
 L() { bash tools/linux/launcher.sh "$@" 2>&1; }
 
 out="$(L status)"; echo "$out" | grep -q 'Japanese: ready' && echo "$out" | grep -q 'saves: 3 file' && ok "status: ready, 3 saves" || bad "status: $out"
+# tools: python alone is not enough, the venv needs lz4 and capstone (the recompile stops at step 0 without lz4)
+out="$(L status)"; echo "$out" | grep -q 'tools: not installed' && ok "status: no venv -> tools not installed" || bad "status tools none: $out"
+mkdir -p framework/private/venv/bin framework/private/venv/lib/python3.12/site-packages; printf '#!/bin/sh\n' > framework/private/venv/bin/python; chmod +x framework/private/venv/bin/python
+out="$(L status)"; echo "$out" | grep -q 'tools: incomplete' && ok "status: venv without lz4/capstone -> incomplete" || bad "status tools incomplete: $out"
+out="$(L status --tsv)"; echo "$out" | grep -q $'^tools\tno$' && ok "status --tsv: tools no when incomplete" || bad "status tsv incomplete: $out"
+mkdir -p framework/private/venv/lib/python3.12/site-packages/lz4; out="$(L status)"; echo "$out" | grep -q 'tools: incomplete' && ok "status: only lz4 -> still incomplete" || bad "status only lz4: $out"
+mkdir -p framework/private/venv/lib/python3.12/site-packages/capstone
+out="$(L status)"; echo "$out" | grep -q 'tools: installed' && ok "status: lz4 + capstone -> installed" || bad "status tools ok: $out"
+rm -rf framework/private
 out="$(L status -e global)"; echo "$out" | grep -q 'Global: not built' && ok "status: global not built" || bad "status global"
 out="$(L play --gpu-hang 5000 -- a b)"; echo "$out" | grep -q 'gh=5000 args=2' && ok "play: env and args reach the game" || bad "play: $out"
 out="$(L play --gpu-hang 7000ms)"; echo "$out" | grep -q 'gh=7000 ' && ok "play: --gpu-hang accepts the ms suffix" || bad "ms suffix: $out"
