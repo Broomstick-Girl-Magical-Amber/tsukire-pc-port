@@ -20,7 +20,7 @@ sudo dnf install -y git curl tar coreutils                         # Fedora
 sudo pacman -S --needed git curl tar coreutils base-devel          # Arch
 ```
 
-Use `git clone`, because GitHub's *Download ZIP* has no `.git` folder. Put your dump in the cloned folder and `prod.keys` in `data/`.
+Use `git clone`. Put your dump in the cloned folder and `prod.keys` in `data/`.
 
 ```bash
 git clone https://github.com/Broomstick-Girl-Magical-Amber/tsukire-pc-port.git
