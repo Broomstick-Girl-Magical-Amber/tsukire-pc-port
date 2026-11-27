@@ -7,6 +7,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
+#include <atomic>  // AP_MOVIE_HW
+
+#include <nx/runtime.h>  // AP_MOVIE_HW: nx::log
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -471,6 +474,54 @@ static bool park_matches(const AVCodecContext* c, const AVCodecParameters* p) {
            (p->extradata_size == 0 || std::memcmp(c->extradata, p->extradata, size_t(p->extradata_size)) == 0);
 }
 
+// AP_MOVIE_HW (apply_movie_hw.py): H.264 video through the device's hardware decoder (FFmpeg h264_mediacodec, NDK).
+// Android: on unless NX_MOVIE_HW=0. Other systems: off (there is no MediaCodec).
+static std::atomic<bool> g_hw_bad{false};  // a hardware decoder failed: software for the rest of the session
+static bool movie_hw_wanted() {
+    static const bool on = [] {
+#ifdef __ANDROID__
+        const char* e = std::getenv("NX_MOVIE_HW");
+        const bool v = !(e && std::strcmp(e, "0") == 0);
+        if (!v) nx::log("movie: NX_MOVIE_HW=0: videos decoded in software");
+        return v;
+#else
+        return false;
+#endif
+    }();
+    return on;
+}
+static bool is_hw_ctx(const AVCodecContext* c) {
+    return c && c->codec && c->codec->name && std::strcmp(c->codec->name, "h264_mediacodec") == 0;
+}
+static AVCodecContext* open_hw_h264(const AVCodecParameters* par) {
+    const AVCodec* hc = avcodec_find_decoder_by_name("h264_mediacodec");
+    if (!hc) {
+        static std::atomic<bool> said{false};
+        if (!said.exchange(true)) nx::log("movie: this FFmpeg has no h264_mediacodec: videos decoded in software");
+        return nullptr;
+    }
+    AVCodecContext* c = avcodec_alloc_context3(hc);
+    if (!c) return nullptr;
+    if (avcodec_parameters_to_context(c, par) < 0) {
+        avcodec_free_context(&c);
+        return nullptr;
+    }
+    c->pkt_timebase = kMicros;
+    AVDictionary* opts = nullptr;
+    av_dict_set(&opts, "ndk_codec", "1", 0);  // NDK AMediaCodec, no Java VM needed
+    const int r = avcodec_open2(c, hc, &opts);
+    av_dict_free(&opts);
+    if (r < 0) {
+        char e[96];
+        av_strerror(r, e, sizeof e);
+        nx::log("movie: MediaCodec did not open for %dx%d H.264 (%s): software decoder", par->width, par->height, e);
+        avcodec_free_context(&c);
+        return nullptr;
+    }
+    nx::log("movie: video %dx%d decoded by MediaCodec (hardware); NX_MOVIE_HW=0 for software", par->width, par->height);
+    return c;
+}
+
 struct Decoder::Impl {
     mutable std::recursive_mutex m;  // hilos de entrada y de salida del juego, a la vez
     DecoderKind kind;
@@ -502,6 +553,13 @@ struct Decoder::Impl {
     int64_t last_out_us = -1;  // AP_TITLE_SYNC: time of the last output the game acquired
     int width = 0, height = 0;
     uint64_t work_ns = 0;  // tiempo en avcodec_send_packet / receive_frame desde la ultima salida guardada
+    bool hw = false;                // AP_MOVIE_HW: ctx is the hardware decoder
+    bool hw_out = false;            // AP_MOVIE_HW: it already gave a picture
+    std::deque<AVPacket*> hw_sent;  // AP_MOVIE_HW: packets it took before its first picture (sent again on a fallback)
+    void hw_forget() {
+        for (auto* q : hw_sent) av_packet_free(&q);
+        hw_sent.clear();
+    }
     static uint64_t now_ns() {
         return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
                             std::chrono::steady_clock::now().time_since_epoch()).count());
@@ -516,6 +574,8 @@ struct Decoder::Impl {
         av_packet_free(&pkt);
     }
     void close() {
+        hw_forget();  // AP_MOVIE_HW
+        if (ctx && is_hw_ctx(ctx) && g_hw_bad) avcodec_free_context(&ctx);  // AP_MOVIE_HW: not kept
         if (ctx && kind == DecoderKind::Video && ctx->codec_id == AV_CODEC_ID_H264 && avcodec_is_open(ctx)) {  // AP_TITLE_SMOOTH
             avcodec_flush_buffers(ctx);
             std::lock_guard<std::mutex> lk(g_park_m);
@@ -535,6 +595,7 @@ struct Decoder::Impl {
         ready.clear();
         for (auto& i : in) i.free = true;
         for (auto& o : out) o.free = true;
+        hw_forget();  // AP_MOVIE_HW
         eos_in = drain_sent = eos_out = false;
     }
     int free_output() const {
@@ -554,17 +615,55 @@ struct Decoder::Impl {
                 g_parked = nullptr;
             }
         }
+        hw = hw_out = false;  // AP_MOVIE_HW
+        if (ctx && is_hw_ctx(ctx) && g_hw_bad) avcodec_free_context(&ctx);  // AP_MOVIE_HW
         if (ctx) {
             ctx->pkt_timebase = kMicros;
+            hw = is_hw_ctx(ctx);  // AP_MOVIE_HW
             started = true;
             return kOk;
         }
+        if (kind == DecoderKind::Video && par->codec_id == AV_CODEC_ID_H264 && movie_hw_wanted() && !g_hw_bad) {  // AP_MOVIE_HW
+            ctx = open_hw_h264(par);
+            if (ctx) {
+                hw = true;
+                started = true;
+                return kOk;
+            }
+        }
+        return open_sw(codec);
+    }
+    Status open_sw(const AVCodec* codec) {  // AP_MOVIE_HW: the software decoder (what open() always did)
         ctx = avcodec_alloc_context3(codec);
         if (avcodec_parameters_to_context(ctx, par) < 0) return kInvalidArgument;
         ctx->pkt_timebase = kMicros;
         if (avcodec_open2(ctx, codec, nullptr) < 0) return kUnsupported;
         started = true;
         return kOk;
+    }
+    // AP_MOVIE_HW: the hardware decoder failed: software from here on (and for the rest of the session). Before its
+    // first picture its packets go back to the front of the queue, so the software decoder starts from the same place.
+    bool hw_fallback(const char* why) {
+        if (!hw) return false;
+        nx::log("movie: MediaCodec failed (%s): software decoder from now on%s", why,
+                hw_out ? "" : ", its packets are decoded again");
+        g_hw_bad = true;
+        avcodec_free_context(&ctx);
+        hw = false;
+        drain_sent = false;
+        const AVCodec* sc = avcodec_find_decoder(par->codec_id);
+        if (!sc || open_sw(sc) != kOk) {
+            hw_forget();
+            return false;
+        }
+        if (!hw_out) {
+            while (!hw_sent.empty()) {
+                pending.push_front(hw_sent.back());
+                hw_sent.pop_back();
+            }
+        }
+        hw_forget();
+        return true;
     }
 
     // Convierte el frame decodificado al slot de salida `o`.
@@ -631,7 +730,14 @@ struct Decoder::Impl {
             if (r == 0) {
                 Status s = store(o);
                 av_frame_unref(frame);
-                if (s != kOk) return s;
+                if (s != kOk) {
+                    if (hw && hw_fallback("its frames could not be converted")) continue;  // AP_MOVIE_HW
+                    return s;
+                }
+                if (hw && !hw_out) {  // AP_MOVIE_HW: it works, nothing to send again any more
+                    hw_out = true;
+                    hw_forget();
+                }
                 continue;
             }
             if (r == AVERROR(EAGAIN)) {
@@ -640,8 +746,17 @@ struct Decoder::Impl {
                     uint64_t t1 = now_ns();
                     int sr = avcodec_send_packet(ctx, q);
                     work_ns += now_ns() - t1;
-                    if (sr == AVERROR(EAGAIN)) continue;  // primero hay que sacar frames
+                    if (sr == AVERROR(EAGAIN)) {  // primero hay que sacar frames
+                        if (hw) return kTryAgain;  // AP_MOVIE_HW: full and no picture yet: the game asks again
+                        continue;
+                    }
+                    if (sr < 0 && sr != AVERROR_EOF && hw && hw_fallback("it refused a packet")) continue;  // AP_MOVIE_HW
                     pending.pop_front();
+                    if (hw && !hw_out && sr >= 0) {  // AP_MOVIE_HW: kept until its first picture
+                        hw_sent.push_back(q);
+                        if (hw_sent.size() >= 120 && hw_fallback("no picture after 120 packets")) continue;
+                        continue;
+                    }
                     av_packet_free(&q);
                     continue;  // si sr < 0 la muestra estaba corrupta: se descarta
                 }
@@ -663,6 +778,7 @@ struct Decoder::Impl {
                 eos_out = true;
                 continue;
             }
+            if (hw && hw_fallback("decode error")) continue;  // AP_MOVIE_HW
             return kUnknownError;
         }
         return kOk;
@@ -830,6 +946,7 @@ void Decoder::drop_pending() {
     p_->pending.clear();
     if (p_->ctx) avcodec_flush_buffers(p_->ctx);
     p_->drain_sent = false;
+    p_->hw_forget();  // AP_MOVIE_HW
 }
 bool Decoder::is_video() const { return p_->kind == DecoderKind::Video; }
 int64_t Decoder::last_output_us() const {

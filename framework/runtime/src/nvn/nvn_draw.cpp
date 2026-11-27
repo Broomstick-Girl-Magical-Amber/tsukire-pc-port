@@ -10,6 +10,7 @@
 #include <string>
 #include <cstring>
 #include <set>
+#include <map>  // AP_SHADER_CENSUS
 
 #include "nvn_draw_state.h"
 #include "nvn_ultrawide.h"
@@ -233,6 +234,62 @@ static const std::vector<const ShaderInfo*>* bound_shaders(bool compute) {
     return &mixed;
 }
 
+// AP_SHADER_CENSUS (apply_shader_census.py): NX_SHADER_CENSUS=1 logs, every 300 frames, the shaders the replay used
+// in them (fs with the vs of its first draw, cs) and how often; NX_SKIP_CS=<hash>,<hash> drops dispatches with those
+// compute shaders. Both for finding the shader behind a fault seen on one GPU only. Replay thread only.
+namespace {
+struct CensusEntry {
+    uint64_t uses = 0;
+    std::string vs;
+};
+std::map<std::string, CensusEntry> g_census_fs, g_census_cs;
+uint64_t g_census_from = ~0ull;
+
+bool census_on() {
+    static const bool on = [] {
+        const char* e = std::getenv("NX_SHADER_CENSUS");
+        return e && *e && *e != '0';
+    }();
+    return on;
+}
+
+void census_flush(uint64_t frame) {
+    if (g_census_from == ~0ull) g_census_from = frame;
+    if (frame < g_census_from + 300) return;
+    for (const auto& [hash, e] : g_census_fs)
+        log("census: frames %llu..%llu: fs %s x%llu (vs %s)", (unsigned long long)g_census_from,
+            (unsigned long long)(frame - 1), hash.c_str(), (unsigned long long)e.uses, e.vs.c_str());
+    for (const auto& [hash, e] : g_census_cs)
+        log("census: frames %llu..%llu: cs %s x%llu", (unsigned long long)g_census_from, (unsigned long long)(frame - 1),
+            hash.c_str(), (unsigned long long)e.uses);
+    g_census_fs.clear();
+    g_census_cs.clear();
+    g_census_from = frame;
+}
+
+void census_draw(const ShaderInfo* vs, const ShaderInfo* fs) {
+    if (!census_on() || !fs) return;
+    census_flush(g_frame.load(std::memory_order_relaxed));
+    CensusEntry& e = g_census_fs[fs->hash];
+    if (!e.uses++ && vs) e.vs = vs->hash;
+}
+
+// false: the dispatch is dropped (NX_SKIP_CS)
+bool census_dispatch(const ShaderInfo* cs) {
+    static const std::string skip = std::getenv("NX_SKIP_CS") ? std::getenv("NX_SKIP_CS") : "";
+    static bool told = false;
+    if (!skip.empty() && !told) {
+        told = true;
+        log("census: dispatches with compute shaders %s are dropped (NX_SKIP_CS)", skip.c_str());
+    }
+    if (census_on()) {
+        census_flush(g_frame.load(std::memory_order_relaxed));
+        g_census_cs[cs->hash].uses++;
+    }
+    return skip.empty() || skip.find(cs->hash) == std::string::npos;
+}
+}  // namespace
+
 void dispatch(VkCommandBuffer cb, const Cmd& c) {
     static const bool off = std::getenv("NX_NO_COMPUTE") != nullptr;  // debug: skip compute dispatches
     if (off) return;
@@ -242,6 +299,7 @@ void dispatch(VkCommandBuffer cb, const Cmd& c) {
         for (const ShaderInfo* s : *shaders)
             if (s->stage == ShaderStage::Compute) cs = s;
     if (!cs) return;
+    if (!census_dispatch(cs)) return;  // AP_SHADER_CENSUS: NX_SHADER_CENSUS / NX_SKIP_CS
     uint32_t x = uint32_t(c.i[0]), y = uint32_t(c.i[1]), z = uint32_t(c.i[2]);
     const uint8_t* args = c.n == 1 ? guest_bytes(c.a[0]) : nullptr;  // indirect: {x, y, z}
     if (c.n == 1 && !args) return;
@@ -322,6 +380,7 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
     }
     std::vector<const ShaderInfo*> swapped;  // NX_SWAP_FS / NX_SKIP_FS (nvn_draw_trace.cpp)
     if (!debug_shader_overrides(shaders, fs, swapped)) return false;
+    census_draw(vs, fs);  // AP_SHADER_CENSUS: NX_SHADER_CENSUS
     const ProgramLayout& layout = program_layout(*shaders);
 
     // NX_SNAP_FS_BEFORE=<hash>[@<first draw>]: snapshot colour target 0 before draws with that fragment shader
