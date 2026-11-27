@@ -47,7 +47,23 @@
 
 namespace nx {
 void boot();
+#ifdef NX_CUSTOM_WINDOW_TITLE  // AP_LINUX_PLATFORM: the game's window title (games/<game>/game.cpp), as on Windows
+namespace game {
+extern const wchar_t* const kWindowTitle;
 }
+#endif
+}
+#ifdef NX_TITLE_LIVE  // AP_LINUX_PLATFORM: F5 / F6 change the title video (title_bg.cpp), as on Windows
+namespace tsuki_title {
+void hotkey(int dir);
+}
+#endif
+#ifdef NX_LINUX_WINDOW_ICON  // AP_LINUX_PLATFORM: the game's .ico (CMakeLists.txt) and the PNG decoder of hle_carga.cpp
+extern "C" const unsigned char nx_window_icon[];
+extern "C" const size_t nx_window_icon_size;
+extern "C" __attribute__((weak)) int tsuki_decode_image(const uint8_t* data, size_t size, uint32_t max_side,
+                                                        uint32_t* width, uint32_t* height, uint8_t** rgba);
+#endif
 
 namespace nx::plat {
 
@@ -207,6 +223,21 @@ void log_line(const char* line) { std::fprintf(stderr, "%s\n", line); }
 
 std::string data_root() {
     const char* r = std::getenv("NX_DATA_ROOT");
+#ifdef NX_DATA_ROOT_EXE
+    // AP_LINUX_PLATFORM: a relative pc_data_root is taken from the binary's folder (not the current one), so the game
+    // starts from any folder, a shortcut or a file manager; an absolute one, or NX_DATA_ROOT, as before.
+    if (!r) {
+        static const std::string root = [] {
+            const char* rel = nx::game::kInfo.pc_data_root;
+            if (!rel || !*rel || rel[0] == '/') return std::string(rel ? rel : "");
+            std::error_code ec;
+            const std::filesystem::path exe = std::filesystem::read_symlink("/proc/self/exe", ec);
+            if (ec) return std::string(rel);
+            return (exe.parent_path() / rel).lexically_normal().string();
+        }();
+        return root;
+    }
+#endif
     return r ? r : nx::game::kInfo.pc_data_root;
 }
 
@@ -237,6 +268,53 @@ void* create_window() {
             log_line(SDL_GetError());
             return;
         }
+#ifdef NX_CUSTOM_WINDOW_TITLE  // AP_LINUX_PLATFORM: the game's title (UTF-32 wchar_t -> UTF-8)
+        {
+            std::string t;
+            for (const wchar_t* p = nx::game::kWindowTitle; p && *p; ++p) {
+                const uint32_t c = uint32_t(*p);
+                if (c < 0x80) t += char(c);
+                else if (c < 0x800) t += char(0xC0 | (c >> 6)), t += char(0x80 | (c & 0x3F));
+                else if (c < 0x10000) t += char(0xE0 | (c >> 12)), t += char(0x80 | ((c >> 6) & 0x3F)), t += char(0x80 | (c & 0x3F));
+                else t += char(0xF0 | (c >> 18)), t += char(0x80 | ((c >> 12) & 0x3F)), t += char(0x80 | ((c >> 6) & 0x3F)), t += char(0x80 | (c & 0x3F));
+            }
+            if (!t.empty()) SDL_SetWindowTitle(g_window, t.c_str());
+        }
+#endif
+#ifdef NX_LINUX_WINDOW_ICON  // AP_LINUX_PLATFORM: the largest PNG image of the game's .ico
+        if (tsuki_decode_image && nx_window_icon_size > 6) {
+            const uint8_t* ico = nx_window_icon;
+            const uint32_t count = ico[4] | (ico[5] << 8);
+            uint32_t best_w = 0, best_off = 0, best_size = 0;
+            for (uint32_t k = 0; k < count && 6 + 16 * (k + 1) <= nx_window_icon_size; k++) {
+                const uint8_t* d = ico + 6 + 16 * k;
+                const uint32_t w = d[0] ? d[0] : 256;
+                const uint32_t size = d[8] | (d[9] << 8) | (d[10] << 16) | (uint32_t(d[11]) << 24);
+                const uint32_t off = d[12] | (d[13] << 8) | (d[14] << 16) | (uint32_t(d[15]) << 24);
+                if (off + size > nx_window_icon_size || size < 8 || std::memcmp(ico + off, "\x89PNG", 4) != 0) continue;
+                if (w > best_w) best_w = w, best_off = off, best_size = size;
+            }
+            uint32_t iw = 0, ih = 0;
+            uint8_t* rgba = nullptr;
+            if (best_size && tsuki_decode_image(ico + best_off, best_size, 256, &iw, &ih, &rgba) == 0 && rgba) {
+                if (SDL_Surface* s = SDL_CreateSurfaceFrom(int(iw), int(ih), SDL_PIXELFORMAT_RGBA32, rgba, int(iw * 4))) {
+                    if (SDL_SetWindowIcon(g_window, s))
+                        nx::log("window: icon %ux%u", iw, ih);
+                    else  // GNOME on Wayland (no xdg-toplevel-icon): the icon of the .desktop file named as the app id
+                        nx::log("window: icon not set (%s); make_desktop_entry.py gives it", SDL_GetError());
+                    SDL_DestroySurface(s);
+                }
+                std::free(rgba);
+            }
+        }
+#endif
+#ifdef NX_FIXED_ASPECT  // AP_LINUX_PLATFORM: the window keeps the picture's aspect and is at least 640 px wide
+        {
+            const float aspect = float(std::max(w, 1)) / float(std::max(h, 1));
+            SDL_SetWindowAspectRatio(g_window, aspect, aspect);
+            SDL_SetWindowMinimumSize(g_window, 640, int(640.0f / aspect + 0.5f));
+        }
+#endif
         if (!headless()) {
             SDL_RaiseWindow(g_window);
             if (setting("fullscreen") == "1") SDL_SetWindowFullscreen(g_window, true);
@@ -262,7 +340,121 @@ float default_render_scale() { return 1.0f; }
 
 // ---- input: first SDL gamepad + keyboard (sampled on the main thread) -----------------------------------------
 
+// AP_LINUX_INPUT (apply_linux_input.py): the keyboard by Windows virtual-key code and the mouse, from the SDL events of
+// the main thread, for the game's own reading (plat::read_keys / read_pointer; Tsukihime: input.ini).
+SdlEventHook sdl_event_hook = nullptr;
+namespace {
+std::mutex g_input_lock;
+KeyState g_keys{};
+PointerState g_pointer{};
+
+int key_vk(const SDL_KeyboardEvent& k) {
+    // Letters and digits follow the keyboard layout, as Windows' virtual keys; the rest by position.
+    if (k.key >= SDLK_A && k.key <= SDLK_Z) return 'A' + int(k.key - SDLK_A);
+    if (k.key >= SDLK_0 && k.key <= SDLK_9) return '0' + int(k.key - SDLK_0);
+    const SDL_Scancode s = k.scancode;
+    if (s >= SDL_SCANCODE_F1 && s <= SDL_SCANCODE_F12) return 0x70 + int(s - SDL_SCANCODE_F1);
+    if (s >= SDL_SCANCODE_F13 && s <= SDL_SCANCODE_F24) return 0x7C + int(s - SDL_SCANCODE_F13);
+    if (s >= SDL_SCANCODE_KP_1 && s <= SDL_SCANCODE_KP_9) return 0x61 + int(s - SDL_SCANCODE_KP_1);
+    switch (s) {
+    case SDL_SCANCODE_KP_0: return 0x60;
+    case SDL_SCANCODE_SPACE: return 0x20;
+    case SDL_SCANCODE_RETURN:
+    case SDL_SCANCODE_KP_ENTER: return 0x0D;
+    case SDL_SCANCODE_ESCAPE: return 0x1B;
+    case SDL_SCANCODE_TAB: return 0x09;
+    case SDL_SCANCODE_BACKSPACE: return 0x08;
+    case SDL_SCANCODE_LSHIFT: return 0xA0;
+    case SDL_SCANCODE_RSHIFT: return 0xA1;
+    case SDL_SCANCODE_LCTRL: return 0xA2;
+    case SDL_SCANCODE_RCTRL: return 0xA3;
+    case SDL_SCANCODE_LALT: return 0xA4;
+    case SDL_SCANCODE_RALT: return 0xA5;
+    case SDL_SCANCODE_LEFT: return 0x25;
+    case SDL_SCANCODE_UP: return 0x26;
+    case SDL_SCANCODE_RIGHT: return 0x27;
+    case SDL_SCANCODE_DOWN: return 0x28;
+    case SDL_SCANCODE_PAGEUP: return 0x21;
+    case SDL_SCANCODE_PAGEDOWN: return 0x22;
+    case SDL_SCANCODE_END: return 0x23;
+    case SDL_SCANCODE_HOME: return 0x24;
+    case SDL_SCANCODE_INSERT: return 0x2D;
+    case SDL_SCANCODE_DELETE: return 0x2E;
+    case SDL_SCANCODE_COMMA: return 0xBC;
+    case SDL_SCANCODE_PERIOD: return 0xBE;
+    default: return 0;
+    }
+}
+
+void set_key(int vk, bool down) {  // g_input_lock held
+    if (down && !g_keys.held[vk]) g_keys.downs[vk]++;
+    g_keys.held[vk] = down;
+}
+
+void input_event(const SDL_Event& e) {
+    switch (e.type) {
+    case SDL_EVENT_KEY_DOWN:
+    case SDL_EVENT_KEY_UP: {
+        const bool down = e.type == SDL_EVENT_KEY_DOWN;
+        if (down && e.key.repeat) break;
+        const int vk = key_vk(e.key);
+        if (!vk || (down && vk == 0x0D && (e.key.mod & SDL_KMOD_ALT))) break;  // Alt+Enter: full screen, not Enter
+        std::lock_guard lk(g_input_lock);
+        set_key(vk, down);
+        const int either = vk == 0xA0 || vk == 0xA1 ? 0x10 : vk == 0xA2 || vk == 0xA3 ? 0x11 : vk == 0xA4 || vk == 0xA5 ? 0x12 : 0;
+        if (either) set_key(either, down || g_keys.held[vk ^ 1]);
+        break;
+    }
+    case SDL_EVENT_WINDOW_FOCUS_LOST: {
+        std::lock_guard lk(g_input_lock);
+        std::memset(g_keys.held, 0, sizeof g_keys.held);
+        g_pointer.buttons = 0;
+        break;
+    }
+    case SDL_EVENT_MOUSE_MOTION:
+    case SDL_EVENT_MOUSE_BUTTON_DOWN:
+    case SDL_EVENT_MOUSE_BUTTON_UP: {
+        // SDL gives window coordinates; the client pixels are those times the pixel density (HiDPI / Wayland scale).
+        const float density = g_window ? SDL_GetWindowPixelDensity(g_window) : 1.0f;
+        const bool motion = e.type == SDL_EVENT_MOUSE_MOTION;
+        const float x = motion ? e.motion.x : e.button.x, y = motion ? e.motion.y : e.button.y;
+        std::lock_guard lk(g_input_lock);
+        g_pointer.x = int32_t(x * (density > 0 ? density : 1.0f)), g_pointer.y = int32_t(y * (density > 0 ? density : 1.0f));
+        if (motion) break;
+        const int b = e.button.button == SDL_BUTTON_LEFT ? 0 : e.button.button == SDL_BUTTON_RIGHT ? 1
+                    : e.button.button == SDL_BUTTON_MIDDLE ? 2 : -1;
+        if (b < 0) break;
+        if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN)
+            g_pointer.buttons |= 1u << b, g_pointer.downs[b]++;
+        else
+            g_pointer.buttons &= ~(1u << b);
+        break;
+    }
+    case SDL_EVENT_MOUSE_WHEEL: {  // whole notches, 120 each, positive away from the user (as Windows' WHEEL_DELTA)
+        const int n = e.wheel.direction == SDL_MOUSEWHEEL_FLIPPED ? -e.wheel.integer_y : e.wheel.integer_y;
+        std::lock_guard lk(g_input_lock);
+        g_pointer.wheel += n * 120;
+        break;
+    }
+    default:
+        break;
+    }
+}
+}  // namespace
+
+void read_keys(KeyState& k) {
+    std::lock_guard lk(g_input_lock);
+    k = g_keys;
+}
+
+void read_pointer(PointerState& p) {
+    std::lock_guard lk(g_input_lock);
+    p = g_pointer;
+    p.w = g_pixel_w, p.h = g_pixel_h;
+}
+
 static void sample_input() {
+    if (pad_source) return;  // AP_LINUX_INPUT: the game reads keyboard and controllers itself (read_pad below)
     PadState p;
     static SDL_Gamepad* pad = nullptr;
     if (!pad) {
@@ -328,6 +520,11 @@ static void sample_input() {
 }
 
 void read_pad(PadState& p) {
+    if (pad_source) {  // AP_LINUX_INPUT: the game's own reading (Tsukihime: input.ini), as on Windows
+        pad_source(p);
+        input_script(p);
+        return;
+    }
     {
         std::lock_guard lk(g_pad_lock);
         p.buttons |= g_pad.buttons;
@@ -454,6 +651,46 @@ int vulkan_create_surface(void* instance, void* native_window, uint64_t* surface
     return ok ? VK_SUCCESS : VK_ERROR_INITIALIZATION_FAILED;
 }
 
+// AP_LINUX_PLATFORM: an error box that blocks until it is closed (shown by the main thread, which owns SDL's windows).
+void message_box(const char* title, const char* text) {
+    std::fprintf(stderr, "%s: %s\n", title, text);
+    std::fflush(stderr);
+    if (headless()) return;
+    run_on_main([&] {
+        if (!SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, title, text, g_window))
+            std::fprintf(stderr, "(no message box: %s)\n", SDL_GetError());
+    });
+}
+
+#ifdef NX_FIXED_ASPECT
+// AP_LINUX_PLATFORM: Ctrl+1/2/3: the window at pct % of 1920 px wide (in the window's aspect), inside the usable area
+// of its display, centred where it was. Not in fullscreen.
+static void set_window_width(int pct) {
+    if (!g_window || (SDL_GetWindowFlags(g_window) & SDL_WINDOW_FULLSCREEN)) return;
+    if (SDL_GetWindowFlags(g_window) & SDL_WINDOW_MAXIMIZED) SDL_RestoreWindow(g_window);
+    int cw = 0, ch = 0, x = 0, y = 0;
+    SDL_GetWindowSize(g_window, &cw, &ch);
+    SDL_GetWindowPosition(g_window, &x, &y);
+    const float aspect = ch > 0 ? float(cw) / float(ch) : 16.0f / 9.0f;
+    const float scale = std::max(0.25f, SDL_GetWindowPixelDensity(g_window));  // 1920 px, not 1920 points
+    int w = int(1920.0f * float(pct) / 100.0f / scale), h = int(float(w) / aspect + 0.5f);
+    SDL_Rect area{};
+    if (SDL_GetDisplayUsableBounds(SDL_GetDisplayForWindow(g_window), &area)) {
+        if (w > area.w) w = area.w, h = int(float(w) / aspect + 0.5f);
+        if (h > area.h) h = area.h, w = int(float(h) * aspect + 0.5f);
+    }
+    w = std::max(w, 640), h = int(float(w) / aspect + 0.5f);
+    SDL_SetWindowSize(g_window, w, h);
+    int nx_ = x + (cw - w) / 2, ny = y + (ch - h) / 2;
+    if (area.w > 0) {
+        nx_ = std::max(area.x, std::min(nx_, area.x + area.w - w));
+        ny = std::max(area.y, std::min(ny, area.y + area.h - h));
+    }
+    SDL_SetWindowPosition(g_window, nx_, ny);
+    log("window: %dx%d (%d%% of 1920 px wide)", w, h, pct);
+}
+#endif
+
 }  // namespace nx::plat
 
 // ---- crash handler and entry ----------------------------------------------------------------------------------
@@ -493,8 +730,63 @@ void game_thread() {
 
 }  // namespace
 
+#ifdef NX_CONFIG_ENV
+// AP_LINUX_PLATFORM: the NX_* lines of <data root>/config.txt become environment variables before anything reads
+// them, as AP_CONFIG_ENV on Windows (the launcher writes that file; it can be edited by hand). A variable already set
+// wins (terminal, shortcut, launch options). Comments with ; or #. An empty value sets nothing, and so does 0 for the
+// switches that are only tested for existence. Read once: a change needs the game started again.
+static void load_config_env() {
+    const std::string path = nx::plat::data_root() + "/config.txt";
+    FILE* f = nx::plat::fopen_utf8(path, "rb");
+    if (!f) return;
+    std::string text;
+    char buf[4096];
+    for (size_t n; (n = std::fread(buf, 1, sizeof buf, f)) > 0;) text.append(buf, n);
+    std::fclose(f);
+    if (text.compare(0, 3, "\xEF\xBB\xBF") == 0) text.erase(0, 3);
+    auto trim = [](const std::string& s) {
+        size_t a = s.find_first_not_of(" \t\r"), b = s.find_last_not_of(" \t\r");
+        return a == std::string::npos ? std::string() : s.substr(a, b - a + 1);
+    };
+    static const char* const kExistence[] = {"NX_HANDHELD", "NX_MUTE", "NX_FIFO", "NX_NO_FRAME_LIMIT"};
+    std::string set, kept;
+    size_t pos = 0;
+    while (pos < text.size()) {
+        size_t end = text.find('\n', pos);
+        std::string line = text.substr(pos, end == std::string::npos ? std::string::npos : end - pos);
+        pos = end == std::string::npos ? text.size() : end + 1;
+        if (size_t c = line.find_first_of(";#"); c != std::string::npos) line.erase(c);
+        size_t eq = line.find('=');
+        if (eq == std::string::npos) continue;
+        const std::string name = trim(line.substr(0, eq)), value = trim(line.substr(eq + 1));
+        if (name.size() < 4 || name.compare(0, 3, "NX_") != 0 || value.empty() || name == "NX_DATA_ROOT") continue;
+        if (name.find_first_not_of("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_") != std::string::npos) continue;
+        bool existence = false;
+        for (const char* k : kExistence) existence |= name == k;
+        if (existence && value == "0") continue;
+        if (std::getenv(name.c_str())) {
+            kept += " " + name;
+            continue;
+        }
+        if (setenv(name.c_str(), value.c_str(), 0) == 0) set += " " + name;
+    }
+    nx::log("config: %s:%s%s%s", path.c_str(), set.empty() ? " nothing set" : set.c_str(),
+            kept.empty() ? "" : "; already in the environment (kept):", kept.c_str());
+}
+#endif
+
 int main() {
     nx::plat::g_main_thread = pthread_self();
+#ifdef NX_CONFIG_ENV
+    load_config_env();  // AP_LINUX_PLATFORM: first, so every NX_* of config.txt is seen (the log, the memory guard...)
+#endif
+    // AP_LINUX_PLATFORM: the application id (Wayland app_id, X11 WM_CLASS) is the binary's name, the same as the .desktop
+    // file of tools/linux/make_desktop_entry.py: the desktop takes the icon of the window and the taskbar from it.
+    {
+        std::error_code ec;
+        const std::string id = std::filesystem::read_symlink("/proc/self/exe", ec).stem().string();
+        if (!ec && !id.empty()) SDL_SetHint(SDL_HINT_APP_ID, id.c_str());
+    }
 
     // The crash handler runs on its own stack: a guest stack overflow would leave it none.
     static std::vector<uint8_t> alt(1 << 20);
@@ -510,10 +802,13 @@ int main() {
     sigaction(SIGILL, &sa, nullptr);
     sigaction(SIGFPE, &sa, nullptr);
 
-    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_AUDIO)) {
+    // AP_LINUX_AUDIO_OPT (apply_linux_audio_opt.py): audio is optional; without a device the game runs silent
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
         std::fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
         return 1;
     }
+    if (!SDL_InitSubSystem(SDL_INIT_AUDIO))
+        std::fprintf(stderr, "SDL audio: %s (the game runs without sound)\n", SDL_GetError());
 
     nx::plat::start_memory_guard();  // before anything can grow: a leak must never freeze the machine
 
@@ -525,6 +820,8 @@ int main() {
     for (;;) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
+            input_event(e);  // AP_LINUX_INPUT: keyboard and mouse state; then the game's own reader of SDL events
+            if (sdl_event_hook) sdl_event_hook(&e);
             switch (e.type) {
             case SDL_EVENT_QUIT:
                 nx::log("platform: quit requested (window closed)");
@@ -544,11 +841,21 @@ int main() {
                 if ((e.key.scancode == SDL_SCANCODE_F11 ||
                      (e.key.scancode == SDL_SCANCODE_RETURN && (e.key.mod & SDL_KMOD_ALT))) && g_window)
                     SDL_SetWindowFullscreen(g_window, !(SDL_GetWindowFlags(g_window) & SDL_WINDOW_FULLSCREEN));
+#ifdef NX_TITLE_LIVE  // AP_LINUX_PLATFORM: F5 / F6 change the title video and music (title_bg.cpp)
+                if ((e.key.scancode == SDL_SCANCODE_F5 || e.key.scancode == SDL_SCANCODE_F6) && !e.key.repeat)
+                    tsuki_title::hotkey(e.key.scancode == SDL_SCANCODE_F6 ? 1 : -1);
+#endif
+#ifdef NX_FIXED_ASPECT  // AP_LINUX_PLATFORM: Ctrl+1/2/3, the window at 50/75/100% of 1920 px wide
+                if ((e.key.mod & SDL_KMOD_CTRL) && !e.key.repeat && e.key.scancode >= SDL_SCANCODE_1 &&
+                    e.key.scancode <= SDL_SCANCODE_3)
+                    set_window_width(e.key.scancode == SDL_SCANCODE_1 ? 50 : e.key.scancode == SDL_SCANCODE_2 ? 75 : 100);
+#endif
                 break;
             default:
                 break;
             }
         }
+        if (sdl_event_hook) sdl_event_hook(nullptr);  // AP_LINUX_INPUT: a round of events is over
         std::deque<std::function<void()>> work;
         {
             std::lock_guard lk(g_main_lock);

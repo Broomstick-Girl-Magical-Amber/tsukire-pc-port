@@ -27,6 +27,13 @@ if (-not (Get-Command git -ErrorAction SilentlyContinue)) { throw 'git is requir
 $exe = Join-Path $Root 'tsukihime_launcher.exe'
 if (-not (Test-Path -LiteralPath $exe)) { throw 'tsukihime_launcher.exe not found in the root: run tools\dev\build_launcher.ps1 first.' }
 
+# AP_LINUX_PACK (apply_linux_pack.py): the prebuilt Linux launcher of tools/linux/package_gui.sh travels too.
+$extra = @('tsukihime_launcher.exe')
+$linuxBin = Join-Path $Root 'tools\linux\bin'
+if (Test-Path -LiteralPath (Join-Path $linuxBin 'tsukihime_launcher')) {
+    $extra += @(Get-ChildItem -LiteralPath $linuxBin -Recurse -File | ForEach-Object { $_.FullName.Substring($Root.Length + 1) -replace '\\', '/' })
+} else { Write-Warning 'tools\linux\bin\tsukihime_launcher not found: the zip carries no prebuilt Linux launcher (run tools/linux/package_gui.sh in the Ubuntu 22.04 container).' }
+
 Push-Location $Root
 try {
     [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -50,7 +57,7 @@ if (Test-Path -LiteralPath $Out) { Remove-Item -LiteralPath $Out -Force }
 $zip = [System.IO.Compression.ZipFile]::Open($Out, 'Create')
 $n = 0
 try {
-    foreach ($f in $files + @('tsukihime_launcher.exe')) {
+    foreach ($f in $files + $extra) {
         $p = Join-Path $Root ($f -replace '/', '\')
         [void][System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $p, $f, [System.IO.Compression.CompressionLevel]::Optimal)
         $n++

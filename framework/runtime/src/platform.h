@@ -177,4 +177,25 @@ const char* vulkan_surface_extension();
 // Creates the platform surface for `native_window` (VkInstance, VkSurfaceKHR*), returns a VkResult.
 int vulkan_create_surface(void* instance, void* native_window, uint64_t* surface, void* gipa);
 
+#if defined(__linux__) && !defined(__ANDROID__)  // AP_LINUX_PLATFORM (apply_linux_platform.py)
+// A blocking error box (SDL, on the main thread) with UTF-8 text, for a message that ends the game; also on stderr.
+void message_box(const char* title, const char* text);
+#endif
+
+#if defined(__linux__) && !defined(__ANDROID__)  // AP_LINUX_INPUT (apply_linux_input.py)
+// The keyboard by Windows virtual-key code ('A'-'Z', '0'-'9', 0x20 Space, 0x0D Enter...; 0x10/0x11/0x12 Shift/Ctrl/Alt
+// are either side), for a game that reads it itself (Tsukihime: input.ini). held: down now; downs: presses so far (it
+// wraps). Released when the window loses focus. platform_linux.cpp, any thread.
+struct KeyState {
+    uint8_t held[256];
+    uint8_t downs[256];
+};
+void read_keys(KeyState& k);
+void read_pointer(PointerState& p);  // the mouse over the window (PointerState above), client pixels
+// Every SDL event the main thread takes (const SDL_Event*), and a null one after each round of events: for a game that
+// reads SDL itself (Tsukihime: the controllers of pad_sdl.cpp). Main thread only. Null (the default): nothing.
+using SdlEventHook = void (*)(const void* event);
+extern SdlEventHook sdl_event_hook;
+#endif
+
 }  // namespace nx::plat

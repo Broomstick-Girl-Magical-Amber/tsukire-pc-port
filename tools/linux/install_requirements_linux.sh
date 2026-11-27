@@ -17,9 +17,18 @@ set -euo pipefail
 [ "$(uname -s)" = Linux ] || { echo "ERROR: this is for Linux (on Windows: tools\\install_requirements.ps1)"; exit 1; }
 [ "$(uname -m)" = x86_64 ] || { echo "ERROR: x86_64 is needed (this is $(uname -m))"; exit 1; }
 check=0; for a in "$@"; do case "${a,,}" in -check) check=1 ;; esac; done
+# AP_LINUX_VULKAN (apply_linux_vulkan.py): no Vulkan loader or driver -> shows the command and asks before running it
+# (tools/linux/vulkan_check.sh).
+. "$HERE/vulkan_check.sh"
+vulkan_check "$@"
 if [ "$check" = 1 ] && ! pwsh_ok; then
     echo "MISSING: PowerShell $PWSH_VER in $PWSH_DIR (without -Check it installs itself). Cannot check the rest without it."
     exit 1
 fi
+# AP_LINUX_PREFLIGHT (apply_linux_preflight.py): OpenSSL 3 for .NET and the leftovers of an interrupted run, before
+# anything is installed (tools/linux/preflight.sh).
+. "$HERE/preflight.sh"
+preflight_openssl
+[ "$check" = 1 ] || preflight_tmp
 install_pwsh
 run_ps1 "$ROOT/tools/install_requirements.ps1" "$@"

@@ -54,7 +54,11 @@ KeysAt FindKeys() {
 }
 
 bool ToolsReady(std::wstring* detail) {
-    bool venv = FileExists(Join(g.root, L"framework\\private\\venv\\Scripts\\python.exe"));
+    // The venv counts only with its packages: python.exe alone says nothing (the venv can exist without lz4, which
+    // nso2bin.py needs). requirements.txt has more packages; these two are the ones step 6 of install_requirements.ps1 imports.
+    bool venv = FileExists(Join(g.root, L"framework\\private\\venv\\Scripts\\python.exe")) &&
+                DirExists(Join(g.root, L"framework\\private\\venv\\Lib\\site-packages\\lz4")) &&
+                DirExists(Join(g.root, L"framework\\private\\venv\\Lib\\site-packages\\capstone"));
     bool xwin = FileExists(Join(g.root, L"_prepare\\toolchain.json"));
     bool local = FileExists(Join(g.root, L"tools\\dev.local.ps1")) || FileExists(Join(g.root, L"framework\\dev.local.ps1"));
     if (detail) *detail = xwin ? L"xwin" : local ? L"dev.local.ps1" : L"";

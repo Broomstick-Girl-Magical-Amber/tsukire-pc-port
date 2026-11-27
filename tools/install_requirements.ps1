@@ -75,7 +75,10 @@ param(
     [switch]$Worker,
     # AP_TOOLCHAIN_XWIN: auto | xwin | vs (see above); -Chain is internal (one chain of step 1 in the xwin flow)
     [ValidateSet('auto', 'xwin', 'vs')][string]$Toolchain = 'auto',
-    [string]$Chain = ''
+    [string]$Chain = '',
+    # AP_LINUX_TARGET (apply_linux_target.py), Linux only: what step 9 of recomp builds. windows (the default) = the exe,
+    # cross-compiled with clang-cl + xwin and played with Proton; linux = a native x86_64 binary (no xwin, no Microsoft license)
+    [ValidateSet('windows', 'linux')][string]$Target = 'windows'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -138,6 +141,34 @@ $WingetStore = 'https://apps.microsoft.com/detail/9NBLGGH4NNS1'   # App Installe
 $Sep = [IO.Path]::DirectorySeparatorChar
 $OnWindows = ($env:OS -eq 'Windows_NT')
 $OnLinux = [bool]((Test-Path variable:IsLinux) -and $IsLinux)   # PowerShell 7 on Linux (in 5.1 the variable does not exist)
+# AP_LINUX_TARGET: -Target linux = native Linux build: FFmpeg of BtbN for linux64 and vcpkg x64-linux (static, Release
+# only), no xwin. The FFmpeg folder has another name than the Windows one: both can be in _prepare/ffmpeg.
+$NativeLinux = $OnLinux -and $Target -eq 'linux'
+if ($Target -eq 'linux' -and -not $OnLinux) { Write-Host 'ERROR: -Target linux is for Linux (tools/linux/install_requirements_linux.sh)' -ForegroundColor Red; exit 1 }
+if ($NativeLinux) {
+    # same BtbN autobuild and FFmpeg version as Windows; SHA-256 of its checksums.sha256 (also measured on the file)
+    $FfmpegUrl = 'https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-30-13-08/ffmpeg-n9.0.2-17-g2a571b6068-linux64-lgpl-shared-9.0.tar.xz'
+    $FfmpegSha256 = '7A1BA2AF36E5BEEB98151E766A903B1D115F2206A86571F17F873CD7292C424F'
+    $FfmpegDirName = 'ffmpeg-n9.0.2-17-g2a571b6068-linux64-lgpl-shared-9.0'
+    # SDL3 with its Vulkan surface (SDL_Vulkan_*), X11 and Wayland; without the default ibus feature (it builds dbus)
+    $VcpkgPorts = @('opus', 'libjpeg-turbo', 'libpng', 'zlib', 'sdl3[core,vulkan,x11,wayland]')
+}
+function VcpkgTriplet { if ($NativeLinux) { 'x64-linux' } else { 'x64-windows' } }
+# The overlay triplet of -Target linux (_prepare/triplets-linux/x64-linux.cmake): the stock x64-linux (static) with Release
+# only and, for sdl3, back on what its port turns off on purpose ("prevent host-installed Unix libraries from changing
+# SDL's capabilities"): without PipeWire/PulseAudio SDL has no audio device at all (ALSA is not built either), without
+# udev no controller hotplug, without libdecor no window frame on GNOME Wayland, without the X11 extensions no
+# fullscreen modes, raw mouse or screensaver control. All of them are loaded at run time (SDL_DEPS_SHARED). The triplet
+# options come after the port's ones: they win.
+function NativeTripletText {
+    $base = PathOf $Vcpkg 'triplets/x64-linux.cmake'
+    if (-not (Test-Path -LiteralPath $base)) { Fail "$base does not exist" }
+    $sdl = @('SDL_PIPEWIRE', 'SDL_PULSEAUDIO', 'SDL_LIBUDEV', 'SDL_WAYLAND_LIBDECOR', 'SDL_X11_XCURSOR', 'SDL_X11_XDBE', 'SDL_X11_XFIXES',
+             'SDL_X11_XINPUT', 'SDL_X11_XRANDR', 'SDL_X11_XSHAPE', 'SDL_X11_XSCRNSAVER', 'SDL_X11_XSYNC', 'SDL_X11_XTEST') | ForEach-Object { "-D$_=ON" }
+    return [IO.File]::ReadAllText($base).TrimEnd() + "`n`n# tsukihime (install_requirements.ps1 -Target linux): Release only`nset(VCPKG_BUILD_TYPE release)`n" +
+           "# sdl3: audio (PipeWire, PulseAudio), udev, libdecor and the X11 extensions, which the port turns off`n" +
+           "if(PORT STREQUAL `"sdl3`")`n    list(APPEND VCPKG_CMAKE_CONFIGURE_OPTIONS $($sdl -join ' '))`nendif()`n"
+}
 function PathOf([string]$base, [string]$rel) { Join-Path $base ($rel -replace '[\\/]', $Sep) }
 
 $script:Problems = New-Object System.Collections.Generic.List[string]
@@ -187,12 +218,23 @@ function ParseVersion([string]$s) {
     return [version]$m.Value
 }
 function Sha256([string]$p) { (Get-FileHash -Algorithm SHA256 -LiteralPath $p).Hash }
-function Download([string]$url, [string]$dst) {
+function Download([string]$url, [string]$dst, [int]$Retries = 0, [int]$TimeoutSec = 0) {   # AP_LINUX_POLISH: optional retries and timeout
     if ($OnWindows) { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 }
     Info "downloading $url"
     $tmp = "$dst.partial"
     if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force }
-    Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $tmp
+    for ($attempt = 0; ; $attempt++) {
+        try {
+            if ($TimeoutSec -gt 0) { Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $tmp -TimeoutSec $TimeoutSec }
+            else { Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $tmp }
+            break
+        } catch {
+            if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+            if ($attempt -ge $Retries) { throw }
+            Warn "download failed: $($_.Exception.Message). Attempt $($attempt + 2) of $($Retries + 1) in 5 s"
+            Start-Sleep -Seconds 5
+        }
+    }
     Move-Item -LiteralPath $tmp -Destination $dst -Force
 }
 # AP_CLEAN_DOWNLOADS (apply_clean_downloads.py): an installer or archive kept in <root>\_prepare only to be reused is deleted once its
@@ -871,12 +913,19 @@ function MissingPorts {
     if (-not (Test-Path -LiteralPath (VcpkgExe))) { return $VcpkgPorts }
     $r = RunCapture (VcpkgExe) @('list')
     $have = @{}
-    foreach ($l in $r.Output) { if ($l -match '^([a-z0-9-]+)(\[[^\]]*\])?:x64-windows\s') { $have[$Matches[1]] = 1 } }
-    return @($VcpkgPorts | Where-Object { -not $have.ContainsKey($_) })
+    # AP_LINUX_TARGET: the triplet of -Target; a port asked with [features] also needs each one (vcpkg list: a line per feature)
+    $tri = [regex]::Escape((VcpkgTriplet))
+    foreach ($l in $r.Output) { if ($l -match "^([a-z0-9-]+)(\[[^\]]*\])?:$tri\s") { $have[$Matches[1] + $Matches[2]] = 1; $have[$Matches[1]] = 1 } }
+    return @($VcpkgPorts | Where-Object {
+        $name = $_ -replace '\[.*$', ''
+        $feats = @(if ($_ -match '\[(.*)\]') { $Matches[1] -split ',' | Where-Object { $_ -and $_ -ne 'core' } })
+        (-not $have.ContainsKey($name)) -or (@($feats | Where-Object { -not $have.ContainsKey("$name[$_]") }).Count -gt 0)
+    })
 }
 # AP_FFMPEG_PREBUILT: the prebuilt FFmpeg is complete if it has the headers, the five import libraries and the five DLLs.
 function FfmpegReady([string]$dir) {
     $files = @('include\libavcodec\avcodec.h', 'include\libavformat\avformat.h') + @($FfmpegLibs | ForEach-Object { "lib\$_.lib" }) + @($FfmpegDlls | ForEach-Object { "bin\$_" })
+    if ($NativeLinux) { $files = @('include\libavcodec\avcodec.h', 'include\libavformat\avformat.h') + @($FfmpegLibs | ForEach-Object { "lib\lib$_.so" }) }   # AP_LINUX_TARGET
     foreach ($f in $files) { if (-not (Test-Path -LiteralPath (PathOf $dir $f) -PathType Leaf)) { return $false } }
     return $true
 }
@@ -888,7 +937,7 @@ function EnsureFfmpeg {
     if ($Check) { Problem "prebuilt FFmpeg is missing ($dir): step 5 downloads it from BtbN ($FfmpegUrl)"; return }
     $parent = Split-Path $dir -Parent
     New-Item -ItemType Directory -Path $parent -Force | Out-Null
-    $zip = PathOf $parent 'ffmpeg_prebuilt.zip'
+    $zip = PathOf $parent $(if ($NativeLinux) { 'ffmpeg_prebuilt.tar.xz' } else { 'ffmpeg_prebuilt.zip' })   # AP_LINUX_TARGET
     $tmp = "$dir.tmp"
     if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Recurse -Force }
     if (-not ((Test-Path -LiteralPath $zip) -and (Sha256 $zip) -eq $FfmpegSha256)) {
@@ -898,7 +947,8 @@ function EnsureFfmpeg {
     }
     Info 'FFmpeg zip: SHA-256 OK; unpacking'
     try {
-        Unzip $zip $tmp   # AP_INSTALL_IO
+        if ($NativeLinux) { New-Item -ItemType Directory -Path $tmp -Force | Out-Null; Run 'tar' @('-xJf', $zip, '-C', $tmp) 'tar (FFmpeg)' }   # AP_LINUX_TARGET
+        else { Unzip $zip $tmp }   # AP_INSTALL_IO
         $inner = PathOf $tmp $FfmpegDirName
         if (-not (FfmpegReady $inner)) { Fail "the FFmpeg zip does not have the expected files in $FfmpegDirName\ (headers, lib\*.lib, bin\*.dll)" }
         if (Test-Path -LiteralPath $dir) { Remove-Item -LiteralPath $dir -Recurse -Force }
@@ -913,10 +963,10 @@ function Step5 {
     $env:VCPKG_DISABLE_METRICS = '1'
     EnsureFfmpeg
     $missing = @(MissingPorts)
-    if (-not $missing.Count) { Info "x64-windows libraries present: $($VcpkgPorts -join ', ')"; $script:Done.Add('vcpkg libraries'); return }
+    if (-not $missing.Count) { Info "$(VcpkgTriplet) libraries present: $($VcpkgPorts -join ', ')"; $script:Done.Add('vcpkg libraries'); return }   # AP_LINUX_TARGET
     if ($Check) { Problem "vcpkg libraries missing: $($missing -join ', ')"; return }
     if (-not (Test-Path -LiteralPath (VcpkgExe))) { Fail "vcpkg is missing (step 4)" }
-    $a = @('install') + $missing + @('--triplet', 'x64-windows', '--clean-after-build')
+    $a = @('install') + $missing + @('--triplet', (VcpkgTriplet), '--clean-after-build')   # AP_LINUX_TARGET
     if ($OnWindows) {
         try {
             $mp = Get-MpPreference -ErrorAction Stop
@@ -926,7 +976,15 @@ function Step5 {
             }
         } catch { }
     }
-    if ($OnLinux) {
+    if ($NativeLinux) {
+        # AP_LINUX_TARGET: native: the stock x64-linux triplet of vcpkg (static libraries) with VCPKG_BUILD_TYPE release, in
+        # its own overlay folder (the cross build keeps _prepare/triplets, whose host triplet is the stock x64-linux)
+        if ($VcpkgWithDebug) { Warn '-VcpkgWithDebug is ignored with -Target linux (Release only)' }
+        $ov = PathOf $WorkDir 'triplets-linux'
+        New-Item -ItemType Directory -Path $ov -Force | Out-Null
+        [IO.File]::WriteAllText((PathOf $ov 'x64-linux.cmake'), (NativeTripletText), (New-Object Text.UTF8Encoding($false)))
+        $a += @("--overlay-triplets=$ov", '--host-triplet', 'x64-linux')
+    } elseif ($OnLinux) {
         # Cross build: x64-windows overlay triplet with the clang-cl + xwin toolchain (TripletLinux, in
         # tools/linux/install_requirements_linux.ps1). Always Release only: xwin does not have the Debug CRT.
         if ($VcpkgWithDebug) { Warn '-VcpkgWithDebug does not apply on Linux (xwin does not download the Debug CRT): Release only' }
@@ -1070,7 +1128,7 @@ function Step8 {
         else {
             $dl = PathOf $WorkDir 'downloads'; New-Item -ItemType Directory -Path $dl -Force | Out-Null
             $tgz = PathOf $dl 'ryubing-a82350bb77.tar.gz'
-            if (-not (Test-Path -LiteralPath $tgz)) { Download $RyubingUrl $tgz }
+            if (-not (Test-Path -LiteralPath $tgz)) { Download $RyubingUrl $tgz -Retries 3 -TimeoutSec 60 }   # AP_LINUX_POLISH
             $tmp = PathOf $WorkDir 'ryubing.tmp'
             if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Recurse -Force }
             New-Item -ItemType Directory -Path $tmp | Out-Null
@@ -1291,6 +1349,7 @@ function RunRecomp([string]$ed, [int]$from, [int]$to) {
     if ($Keys) { $a += @('-Keys', $Keys) }
     if ($Extract) { $a += '-Extract' }   # AP_ROMFS_DIRECT
     if ($TrimXci) { $a += '-TrimXci' }   # AP_ROMFS_DIRECT
+    if ($OnLinux) { $a += @('-Target', $Target) }   # AP_LINUX_TARGET
     $script:InRecomp = "recomp_tsukihime.ps1 -Edition $ed -From $from -To $to"
     Info $script:InRecomp
     $env:NX_VCPKG = $Vcpkg                  # dev_env.ps1 reads it (the recomp process must use the same vcpkg)
@@ -1304,7 +1363,7 @@ function PhaseR2 {
     foreach ($ed in (Editions)) {
         RunRecomp $ed 9 10
         $g = if ($ed -eq 'global') { 'tsukihime_global' } else { 'tsukihime' }
-        $exe = PathOf $Framework "build/$g/$g.exe"
+        $exe = PathOf $Framework "build/$g/$g$(if ($NativeLinux) { '' } else { '.exe' })"   # AP_LINUX_TARGET
         if (Test-Path -LiteralPath $exe) { $script:RecompBuilt += $exe }
     }
 }
@@ -1322,6 +1381,7 @@ function StartVcpkgWorker {
     if ($VcpkgWithDebug) { $a += '-VcpkgWithDebug' }
     if ($VcpkgCache) { $a += @('-VcpkgCache', $VcpkgCache) }
     if ($OnLinux) { $a += @('-XwinCrt', $XwinCrt, '-XwinSdk', $XwinSdk) }
+    if ($OnLinux) { $a += @('-Target', $Target) }   # AP_LINUX_TARGET
     $p = Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList (($a | ForEach-Object { Quote $_ }) -join ' ') -NoNewWindow -PassThru `
          -RedirectStandardOutput $out -RedirectStandardError "$out.err"
     $null = $p.Handle   # without this ExitCode can stay empty in PowerShell 5.1
@@ -1468,6 +1528,35 @@ function Main {
     }
     if ($code -eq 0) { Write-Host ''; Write-Host 'Done.' -ForegroundColor Green }
     return $code
+}
+
+# AP_LINUX_TARGET: -Target linux needs no Windows CRT/SDK, so the questions asked first (AskFirst) leave out its
+# Microsoft license: for that call only it is taken as not needed (XWIN_ACCEPT_LICENSE); nothing of xwin is downloaded.
+if ($NativeLinux) {
+    $script:AskFirstBase = ${function:AskFirst}
+    function AskFirst {
+        $prev = $env:XWIN_ACCEPT_LICENSE
+        $env:XWIN_ACCEPT_LICENSE = 'true'
+        try { & $script:AskFirstBase } finally { $env:XWIN_ACCEPT_LICENSE = $prev }
+    }
+    # vcpkg does not build again a port that is already installed when the triplet changes: if the overlay triplet that
+    # was used is not the current one (NativeTripletText; e.g. an sdl3 built without audio before 2026-11-18), sdl3 is
+    # removed first so step 5 builds it again with the current options.
+    $script:Step5Base = ${function:Step5}
+    function Step5 {
+        $tri = PathOf $WorkDir 'triplets-linux/x64-linux.cmake'
+        $have = @()
+        if (Test-Path -LiteralPath (VcpkgExe)) { $have = @((RunCapture (VcpkgExe) @('list', 'sdl3')).Output | Where-Object { $_ -match '^sdl3(\[[^\]]*\])?:x64-linux\s' }) }
+        $old = if (Test-Path -LiteralPath $tri) { [IO.File]::ReadAllText($tri) } else { '' }
+        if ($have.Count -and $old -ne (NativeTripletText)) {
+            if ($Check) { Problem 'sdl3 (x64-linux) was built with other options (no audio, udev, ...): step 5 builds it again' }
+            else {
+                Info 'sdl3 (x64-linux) was built with other options than the current triplet (no audio, udev, ...): removing it so it is built again'
+                Run (VcpkgExe) @('remove', 'sdl3:x64-linux', '--recurse') 'vcpkg remove sdl3'
+            }
+        }
+        & $script:Step5Base
+    }
 }
 
 # AP_QUICKEDIT (apply_quickedit_off.py): QuickEdit off while the script runs, so a click in the console does not pause it.

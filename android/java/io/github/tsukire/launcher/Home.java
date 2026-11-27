@@ -273,8 +273,40 @@ public class Home extends Activity {
         if (!cfg.isFile() && dumpPath == null) return;
         StringBuilder sb = new StringBuilder();
         for (String l : lines) sb.append(l).append('\n');
-        try (FileOutputStream o = new FileOutputStream(cfg)) {
-            o.write(sb.toString().getBytes(StandardCharsets.UTF_8));
+        byte[] bytes = sb.toString().getBytes(StandardCharsets.UTF_8);
+        // Nothing to change: do not touch the file (a config.txt made by another app or copied from a PC can refuse writes)
+        if (cfg.isFile() && sameContent(cfg, bytes)) return;
+        try {
+            writeBytes(cfg, bytes);
+        } catch (java.io.IOException first) {
+            // Some phones refuse to write over a file they did not create (EPERM on close): write a new file next to it
+            // and put it in place of the old one.
+            File tmp = new File(cfg.getPath() + ".tmp");
+            try {
+                writeBytes(tmp, bytes);
+                if (cfg.exists() && !cfg.delete()) throw new java.io.IOException("cannot replace " + cfg + " (" + first.getMessage() + ")");
+                if (!tmp.renameTo(cfg)) throw new java.io.IOException("cannot rename to " + cfg);
+            } catch (java.io.IOException second) {
+                tmp.delete();
+                throw second;
+            }
+        }
+    }
+
+    static boolean sameContent(File f, byte[] bytes) {
+        try (FileInputStream in = new FileInputStream(f)) {
+            byte[] cur = new byte[(int) Math.min(f.length(), Integer.MAX_VALUE)];
+            int n = 0;
+            for (int k; n < cur.length && (k = in.read(cur, n, cur.length - n)) > 0; ) n += k;
+            return n == cur.length && java.util.Arrays.equals(cur, bytes);
+        } catch (java.io.IOException e) {
+            return false;
+        }
+    }
+
+    static void writeBytes(File f, byte[] bytes) throws java.io.IOException {
+        try (FileOutputStream o = new FileOutputStream(f)) {
+            o.write(bytes);
         }
     }
 

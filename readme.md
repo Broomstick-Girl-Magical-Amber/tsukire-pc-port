@@ -6,7 +6,7 @@
    <img src="./media/intro.gif" width="80%" />
 </p>
 
-An unofficial PC port of *Tsukihime -A piece of blue glass moon-*, the remake of the original novel (I hope Red Garden/Far Side routes comes out soon), from Nintendo Switch, made by statically recompiling the game's own executable. It supports two editions, the Japanese one and the global one. On Windows you build the `.exe` yourself; on Linux the same `.exe` is cross-compiled and played with Proton. There is a launcher for Windows to play.
+An unofficial PC port of *Tsukihime -A piece of blue glass moon-*, the remake of the original novel (I hope Red Garden/Far Side routes comes out soon), from Nintendo Switch, made by statically recompiling the game's own executable. It supports two editions, the Japanese one and the global one. On Windows you build the `.exe` yourself; on Linux there is a native build (ELF, Vulkan and SDL3), or the same `.exe` can be cross-compiled and played with Proton. There are launchers for Windows and for Linux to play.
 
 **This project was heavily AI-assisted using Claude (Anthropic).** See [How this was made](#how-this-was-made).
 
@@ -17,7 +17,7 @@ This project is a fork of [SuperMarioWonderRecomp](https://github.com/BelmanteGu
 **Works**
 
 - Both editions are playable. Scenes from the middle of the Arcueid and Ciel routes were played in each edition, including the final scene, and both routes were fast-forwarded from the prologue to their endings with no errors. The game has not been played through in full. All of the "Teach Me, Ciel-sensei" sections were tried.
-- **A Windows launcher (`tsukihime_launcher.exe`) to play**, manage saves and edit controls. On Linux (tested with Proton), the recompilation is still done from the console. [Get it from Releases](https://github.com/Broomstick-Girl-Magical-Amber/tsukire-pc-port/releases).
+- **A Windows launcher (`tsukihime_launcher.exe`) to play**, manage saves and edit controls. **On Linux there is a launcher too** (`bash tools/linux/launcher.sh gui`), see [readme_linux.md](readme_linux.md). [Get it from Releases](https://github.com/Broomstick-Girl-Magical-Amber/tsukire-pc-port/releases).
 - **The port reads your dump directly.** The `.xci` / `.nsp` stays in the repository root and the game reads its files from it. Nothing is extracted.
 - Android port is supported on phones. See the [Android readme](./readme_android.md) for the installation steps.
 - Community patches in `.nsp` format (tested with translation patches on the Japanese edition, on Windows and Linux). See [Updates and patches](#updates-and-patches).
@@ -53,11 +53,10 @@ This project is a fork of [SuperMarioWonderRecomp](https://github.com/BelmanteGu
 
 - You need a GPU and driver with **Vulkan 1.1** or newer. If the game says the driver is too old: **update your GPU drivers**. Without a GPU, software rendering (`llvmpipe`) works on Linux but is slow.
 - Discord Rich Presence shows the wrong route if you jump into the middle of a day of the other route.
-- On Linux the build is the same Windows `.exe`, played with Proton. Plain Wine is not supported.
 
 **To do (also open for the community)**
 
-- Native Linux build.
+- Test the native Linux build on real GPUs and controllers. The build itself is done: [readme_linux.md](readme_linux.md).
 
 ## Screenshots
 
@@ -127,6 +126,8 @@ powershell -ExecutionPolicy Bypass -File .\tools\recomp_tsukihime.ps1 -Edition j
 ```
 
 ## Rebuild on Linux and play with Proton
+
+This section is the Proton route. For the native Linux build see [readme_linux.md](readme_linux.md).
 
 The Linux scripts bring PowerShell 7 and run the same scripts as Windows, so the options are the same. Call them with `bash`, from the repository root.
 

@@ -1,8 +1,9 @@
 // install.cpp - the "Install and recompile" tab: runs the port's scripts and shows their progress.
 //
-// - First time (requirements ticked): tools\install_requirements.ps1 -Recomp -Edition japan|global|both -AcceptLicense
-//   -NonInteractive -Root <root>. It installs the tools (xwin flow: per user, no administrator) and recompiles.
-// - Later: tools\recomp_tsukihime.ps1 -Edition <edition> -Root <root>, once per edition (it skips what is done).
+// - Always: tools\install_requirements.ps1 -Recomp -Edition japan|global|both -AcceptLicense -NonInteractive -Root <root>.
+//   There is no "install the requirements" checkbox: that script checks every tool and the venv packages (lz4 included)
+//   each time, installs only what is missing or different (xwin flow: per user, no administrator) and then recompiles,
+//   skipping the recompile steps that are already done. With everything in place the check takes a few seconds.
 // - Windows PowerShell 5.1 (System32), -ExecutionPolicy Bypass (scripts from a downloaded zip are not blocked).
 // - Progress comes from the lines the scripts already print: "== step <id>: <name>" (install_requirements.ps1 TimedStep
 //   and recomp_tsukihime.ps1 Step), "recomp_tsukihime: edition <e>, steps <a>..<b>, ..." (start of a recompile), "Done
@@ -205,31 +206,22 @@ bool WantsAssumeYes() {
 std::vector<Task> BuildTasks(bool forConsole) {
     std::vector<Task> out;
     bool jp = IsDlgButtonChecked(s.dlg, IDC_INS_JP) == BST_CHECKED, gl = IsDlgButtonChecked(s.dlg, IDC_INS_GL) == BST_CHECKED;
-    if (IsDlgButtonChecked(s.dlg, IDC_INS_REQ) == BST_CHECKED) {
-        Task t;
-        t.script = L"tools\\install_requirements.ps1";
-        t.install = true;
-        t.editions = (jp && gl) ? 2 : 1;
-        t.args = {L"-Recomp", L"-Edition", jp && gl ? L"both" : jp ? L"japan" : L"global", L"-AcceptLicense"};
-        if (WantsAssumeYes()) t.args.push_back(L"-AssumeYes");   // every question but the Microsoft license is answered yes
-        if (!forConsole) t.args.push_back(L"-NonInteractive");   // a question fails with its message instead of waiting
-        t.args.push_back(L"-Root");
-        t.args.push_back(g.root);
-        out.push_back(t);
-        return out;
-    }
-    for (int ed = 0; ed < 2; ed++) {
-        if (!(ed == 0 ? jp : gl)) continue;
-        Task t;
-        t.script = L"tools\\recomp_tsukihime.ps1";
-        t.args = {L"-Edition", kEditions[ed].key, L"-Root", g.root};
-        out.push_back(t);
-    }
+    // Always the full script: it verifies everything (tools, venv packages such as lz4) and installs what is missing.
+    Task t;
+    t.script = L"tools\\install_requirements.ps1";
+    t.install = true;
+    t.editions = (jp && gl) ? 2 : 1;
+    t.args = {L"-Recomp", L"-Edition", jp && gl ? L"both" : jp ? L"japan" : L"global", L"-AcceptLicense"};
+    if (WantsAssumeYes()) t.args.push_back(L"-AssumeYes");   // every question but the Microsoft license is answered yes
+    if (!forConsole) t.args.push_back(L"-NonInteractive");   // a question fails with its message instead of waiting
+    t.args.push_back(L"-Root");
+    t.args.push_back(g.root);
+    out.push_back(t);
     return out;
 }
 
 void SetBusyUi(bool busy) {
-    for (int id : {IDC_INS_START, IDC_INS_CONSOLE, IDC_INS_REQ}) EnableWindow(GetDlgItem(s.dlg, id), !busy && !g.wine);
+    for (int id : {IDC_INS_START, IDC_INS_CONSOLE}) EnableWindow(GetDlgItem(s.dlg, id), !busy && !g.wine);
     EnableWindow(GetDlgItem(s.dlg, IDC_INS_YES), !busy && !g.wine && ScriptHasAssumeYes());
     for (int id : {IDC_INS_JP, IDC_INS_GL}) EnableWindow(GetDlgItem(s.dlg, id), !busy);   // under Wine they pick the commands shown
     EnableWindow(GetDlgItem(s.dlg, IDC_INS_CANCEL), busy);
@@ -265,7 +257,6 @@ void Finish(bool ok, const std::wstring& text) {
     } else {
         SendDlgItemMessageW(s.dlg, IDC_INS_PROGRESS, PBM_SETSTATE, PBST_ERROR, 0);
     }
-    CheckDlgButton(s.dlg, IDC_INS_REQ, ToolsReady(nullptr) ? BST_UNCHECKED : BST_CHECKED);
     RefreshAll();
     FLASHWINFO fi{sizeof fi, g.main, FLASHW_ALL | FLASHW_TIMERNOFG, 3, 0};
     FlashWindowEx(&fi);
@@ -325,8 +316,7 @@ void Start() {
             return;
         }
     }
-    bool req = IsDlgButtonChecked(s.dlg, IDC_INS_REQ) == BST_CHECKED;
-    if (req && !LicenseAccepted(g.main)) return;
+    if (!LicenseAccepted(g.main)) return;   // asked once (launcher.ini); the script may need it to install what is missing
 
     s.tasks = BuildTasks(false);
     s.current = 0;
@@ -348,7 +338,7 @@ void OpenConsole() {
         Message(s.dlg, MB_ICONINFORMATION, L2(L"Tick the edition(s) to compile.", L"Marca la(s) edici\u00f3n(es) que quieres compilar."));
         return;
     }
-    if (IsDlgButtonChecked(s.dlg, IDC_INS_REQ) == BST_CHECKED && !LicenseAccepted(g.main)) return;
+    if (!LicenseAccepted(g.main)) return;
     std::wstring ps;
     for (const Task& t : BuildTasks(true)) {
         std::wstring one = L"& " + PsArg(Join(g.root, t.script));
@@ -411,8 +401,8 @@ void RefreshInstall() {
     std::wstring detail;
     bool tools = ToolsReady(&detail);
     SetDlgItemTextW(d, IDC_INS_TOOLS, tools ? Format(L2(L"Tools: installed.", L"Herramientas: instaladas."), detail.c_str()).c_str()
-                                            : L2(L"Tools: not installed yet; the first run installs them (about 5 GB).",
-                                                 L"Herramientas: no instaladas; la primera vez se instalan (unos 5 GB)."));
+                                            : L2(L"Tools: not installed or incomplete; the next run installs what is missing (about 5 GB the first time).",
+                                                 L"Herramientas: no instaladas o incompletas; la pr\u00f3xima vez se instala lo que falte (unos 5 GB la primera vez)."));
     for (int ed = 0; ed < 2; ed++) {
         FILETIME ft{};
         std::wstring st;
@@ -421,14 +411,13 @@ void RefreshInstall() {
         else st = L2(L"not compiled", L"sin compilar");
         SetDlgItemTextW(d, ed == 0 ? IDC_INS_JP_STATE : IDC_INS_GL_STATE, st.c_str());
     }
-    bool req = IsDlgButtonChecked(d, IDC_INS_REQ) == BST_CHECKED;
     bool yes = ScriptHasAssumeYes();
     SetDlgItemTextW(d, IDC_INS_YES, yes ? L2(L"Answer yes to the install questions.",
                                               L"Responder s\u00ed a las preguntas de la instalaci\u00f3n.")
                                         : L2(L"Answer yes to the questions: needs tools\\patches\\apply_install_yes.py",
                                               L"Responder s\u00ed a las preguntas: falta aplicar tools\\patches\\apply_install_yes.py"));
     EnableWindow(GetDlgItem(d, IDC_INS_YES), yes && !RunnerBusy() && !g.wine);
-    SetDlgItemTextW(d, IDC_INS_START, req ? L2(L"Install and compile", L"Instalar y compilar") : L2(L"Recompile", L"Recompilar"));
+    SetDlgItemTextW(d, IDC_INS_START, !tools ? L2(L"Install and compile", L"Instalar y compilar") : L2(L"Recompile", L"Recompilar"));
     if (g.wine) {
         SetBusyUi(false);
         ShowLinuxCommands();
@@ -450,7 +439,6 @@ INT_PTR CALLBACK InstallProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
         SendDlgItemMessageW(dlg, IDC_INS_LOG, EM_SETLIMITTEXT, 0, 0);   // no 32K limit
         SendDlgItemMessageW(dlg, IDC_INS_PROGRESS, PBM_SETRANGE32, 0, 1000);
         CheckDlgButton(dlg, g.edition == 0 ? IDC_INS_JP : IDC_INS_GL, BST_CHECKED);
-        CheckDlgButton(dlg, IDC_INS_REQ, ToolsReady(nullptr) ? BST_UNCHECKED : BST_CHECKED);
         CheckDlgButton(dlg, IDC_INS_YES, IniGet(L"auto_yes", L"1") == L"0" ? BST_UNCHECKED : BST_CHECKED);   // on by default
         SetDlgItemTextW(dlg, IDC_INS_STEP, L2(L"Not started.", L"Sin iniciar."));
         SetBusyUi(false);
@@ -469,7 +457,6 @@ INT_PTR CALLBACK InstallProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
                 RunnerCancel();
             return TRUE;
         case IDC_INS_YES: IniSet(L"auto_yes", IsDlgButtonChecked(dlg, IDC_INS_YES) == BST_CHECKED ? L"1" : L"0"); return TRUE;
-        case IDC_INS_REQ:
         case IDC_INS_JP:
         case IDC_INS_GL: RefreshInstall(); return TRUE;
         case IDC_INS_COPY: CopyToClipboard(dlg, GetDlgText(dlg, IDC_INS_LOG)); return TRUE;

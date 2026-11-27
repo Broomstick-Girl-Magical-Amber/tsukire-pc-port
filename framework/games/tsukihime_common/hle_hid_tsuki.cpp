@@ -88,7 +88,7 @@ void GetNpadControllerColorLR(CPU& c) {  // (NpadControllerColor* left, NpadCont
 }
 
 // ---- Mouse -> botones del mando (plat::pad_hook) ----------------------------------------------------------------
-#if defined(_WIN32)
+#if defined(_WIN32) || (defined(__linux__) && !defined(__ANDROID__))  // AP_LINUX_INPUT: native Linux too
 constexpr uint64_t kMs = 1000000;
 
 extern "C" bool nx_help_bar_visible();  // AP_MOUSE_BACK (nvn_draw.cpp)
@@ -221,6 +221,9 @@ void tsuki_pad_hook(plat::PadState& p) {
 #if defined(__ANDROID__)
     touch_pad(p);  // AP_ANDROID_INPUT: the touch gestures
 #endif
+#if defined(__linux__) && !defined(__ANDROID__)
+    mouse_pad(p);  // AP_LINUX_INPUT: right / middle buttons and wheel (input.ini [mouse]), as on Windows
+#endif
 #if defined(__ANDROID__)
     tsuki::keyboard_pad(p);  // AP_ANDROID_KEYBOARD: the physical keyboard (input.ini)
 #endif
@@ -281,6 +284,31 @@ bool title_logo_click(const ScreenPoint& pt) {
 }
 #endif
 
+#if defined(__linux__) && !defined(__ANDROID__)  // AP_LINUX_INPUT: the same as on Windows (picture only, no bars)
+struct ScreenPoint {
+    bool inside;
+    int32_t x, y;
+};
+ScreenPoint to_screen(const plat::PointerState& p) {
+    if (!p.w || !p.h) return {false, 0, 0};
+    const plat::PictureRect r = plat::picture_rect(p.w, p.h);
+    if (!r.w || !r.h) return {false, 0, 0};
+    const double u = double(p.x - r.x) / r.w, v = double(p.y - r.y) / r.h;
+    return {u >= 0 && u < 1 && v >= 0 && v < 1, std::clamp(int32_t(u * kTouchW), 0, kTouchW - 1),
+            std::clamp(int32_t(v * kTouchH), 0, kTouchH - 1)};
+}
+
+// True if title_bg.cpp took this click (the logo of the title menu): the game does not get it.
+bool title_logo_click(const ScreenPoint& pt) {
+#ifdef NX_TITLE_CLICK
+    return tsuki_title::logo_click((pt.x + 0.5f) / kTouchW, (pt.y + 0.5f) / kTouchH);
+#else
+    (void)pt;
+    return false;
+#endif
+}
+#endif
+
 std::mutex g_touch_m;
 std::deque<TouchSample> g_touch_history;  // la mas nueva primero, como las devuelve hid
 bool g_touching = false;
@@ -298,7 +326,7 @@ TouchSample next_touch_sample() {
     const uint64_t now = plat::monotonic_ns();
     s.delta = g_touch_last_ns ? int64_t(now - g_touch_last_ns) : 0;
     g_touch_last_ns = now;
-#if defined(_WIN32)
+#if defined(_WIN32) || (defined(__linux__) && !defined(__ANDROID__))  // AP_LINUX_INPUT: native Linux too
     if (!mouse_on()) return s;
     plat::PointerState p;
     plat::read_pointer(p);

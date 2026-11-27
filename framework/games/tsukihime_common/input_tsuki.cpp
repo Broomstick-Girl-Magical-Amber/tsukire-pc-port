@@ -222,6 +222,11 @@ void bind(std::vector<PadBind>& v, const char* target, uint32_t mask) {
     parse_target(target, t);
     v.push_back({mask, t});
 }
+// AP_LINUX_INPUT: with libstdc++ (Linux) <functional> comes in through other headers, and bind(v, "A", 0x2000) with an
+// int literal found std::bind by argument-dependent lookup (std::vector): an exact match that beat the uint32_t one,
+// so the call made a bind object and dropped it, and the default controller mapping was only ZL and ZR. An int
+// overload is an exact match too and, not being a template, wins.
+void bind(std::vector<PadBind>& v, const char* target, int mask) { bind(v, target, uint32_t(mask)); }
 
 // Mapeo por defecto del teclado: el layout de Fate/stay night [Realta Nua] (el mismo que input.ini.fsn).
 //   Espacio / Enter = A (avanza)   Abajo = DOWN (avanza en el texto)   Arriba = UP (mini menu)
@@ -270,6 +275,12 @@ std::vector<std::filesystem::path> ini_candidates() {
 #if defined(_WIN32)
     wchar_t exe[MAX_PATH] = {};
     if (GetModuleFileNameW(nullptr, exe, MAX_PATH)) v.push_back(std::filesystem::path(exe).parent_path() / "input.ini");
+#elif defined(__linux__) && !defined(__ANDROID__)  // AP_LINUX_PLATFORM: next to the binary too
+    {
+        std::error_code ec;
+        const std::filesystem::path exe = std::filesystem::read_symlink("/proc/self/exe", ec);
+        if (!ec) v.push_back(exe.parent_path() / "input.ini");
+    }
 #endif
     v.push_back(std::filesystem::u8path(plat::data_root()) / "input.ini");
     return v;
@@ -438,6 +449,62 @@ int first_key(const std::string& npad_name) {
             return k.vk;
     return 0;
 }
+
+// ---- AP_LINUX_INPUT (apply_linux_input.py): keyboard and controllers on native Linux -------------------------------
+// platform_linux.cpp keeps the keys by Windows virtual-key code (plat::read_keys), so [teclado] and the defaults work as
+// on Windows, keyboard_tiles.bin included. A held key presses its button; a key that goes down presses it for at least
+// 50 ms (a tap shorter than a frame still reaches the game) and, if it is assigned, switches the HUD to the keyboard
+// icons. Controllers: pad_sdl.cpp (the SDL events of the main thread) through [mando], as on Windows.
+#if defined(__linux__) && !defined(__ANDROID__)
+void keyboard_pad(plat::PadState& p) {
+    constexpr uint64_t kMinPress = 50000000;  // ns
+    static std::mutex m;
+    std::lock_guard lk(m);
+    const Config& c = config();
+    plat::KeyState k;
+    plat::read_keys(k);
+    static uint8_t seen[256];    // downs of the last read
+    static uint64_t until[256];  // a new press holds its button until then
+    const uint64_t now = plat::monotonic_ns();
+    bool fresh[256] = {};
+    for (int vk = 0; vk < 256; vk++)
+        if (k.downs[vk] != seen[vk]) fresh[vk] = true, until[vk] = now + kMinPress;
+    std::memcpy(seen, k.downs, sizeof seen);
+    bool note = false;
+    for (const KeyBind& b : c.keys) {
+        const int vk = b.vk & 0xFF;
+        if (k.held[vk] || now < until[vk]) press(p, b.t);
+        note = note || fresh[vk];
+    }
+#ifdef NX_HUD_GLYPHS
+    if (note) hud::note_input(hud::Device::kKeyboard);
+#else
+    (void)note;
+#endif
+}
+
+namespace {
+int32_t linux_dead_zone(int v) { return (v > -7849 && v < 7849) ? 0 : std::max(-kStickMax, std::min(kStickMax, int32_t(v))); }
+
+void linux_pad_source(plat::PadState& p) {
+    const Config& c = config();
+    SdlPad s;
+    if (sdl_pad_mode() == SdlPadMode::kSdl && sdl_pad_read(s)) {
+        const uint32_t held = s.buttons | (s.lt > 100 ? kSrcLT : 0) | (s.rt > 100 ? kSrcRT : 0);
+        p.lx = linux_dead_zone(s.lx), p.ly = linux_dead_zone(s.ly);
+        p.rx = linux_dead_zone(s.rx), p.ry = linux_dead_zone(s.ry);
+        for (const PadBind& b : c.pad)
+            if (held & b.mask) press(p, b.t);
+    }
+    keyboard_pad(p);
+}
+
+const bool g_linux_pad_source_set = [] {
+    plat::pad_source = linux_pad_source;  // read_pad of platform_linux.cpp calls it instead of its fixed mapping
+    return true;
+}();
+}  // namespace
+#endif
 
 // ---- lectura (Windows) -----------------------------------------------------------------------------------------
 #if defined(_WIN32)

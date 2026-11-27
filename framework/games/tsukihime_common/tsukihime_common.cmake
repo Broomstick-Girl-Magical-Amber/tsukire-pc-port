@@ -35,6 +35,53 @@ target_compile_definitions(${NX_GAME} PRIVATE NX_ROMFS_DIRECT)
 # (platform_win.cpp); the launcher's Controls and title tab writes that file
 target_compile_definitions(${NX_GAME} PRIVATE NX_CONFIG_ENV)
 
+# AP_LINUX_BUILD (apply_linux_build.py): native Linux (x86_64 ELF). FFmpeg is the LGPL "shared" build of BtbN for
+# linux64 (NX_FFMPEG_ROOT: include/, lib/lib*.so; install_requirements.ps1 -Target linux, step 5); each library is
+# copied next to the binary under its soname (the binary finds them through DT_RPATH $ORIGIN, CMakeLists.txt). opus,
+# libjpeg-turbo, libpng and zlib are the static ones of vcpkg (x64-linux, CMAKE_TOOLCHAIN_FILE); SDL3 is linked by
+# CMakeLists.txt. No Windows resources. Android and Windows follow: return() ends this file here on Linux.
+if(UNIX AND NOT APPLE AND NOT ANDROID)
+    set_source_files_properties("${NX_TSUKI_COMMON}/tsukihime.rc" PROPERTIES HEADER_FILE_ONLY ON)
+    set(NX_FFMPEG_ROOT "" CACHE PATH "Prebuilt FFmpeg for Linux (include, lib/lib*.so)")
+    if(NOT EXISTS "${NX_FFMPEG_ROOT}/include/libavcodec/avcodec.h")
+        message(FATAL_ERROR "NX_FFMPEG_ROOT (${NX_FFMPEG_ROOT}) has no include/libavcodec/avcodec.h "
+                            "(tools/linux/install_requirements_linux.sh -Target linux, step 5)")
+    endif()
+    target_include_directories(${NX_GAME} PRIVATE "${NX_FFMPEG_ROOT}/include")
+    foreach(nx_ff_name avcodec avformat avutil swscale swresample)
+        set(nx_ff_lib "${NX_FFMPEG_ROOT}/lib/lib${nx_ff_name}.so")
+        if(NOT EXISTS "${nx_ff_lib}")
+            message(FATAL_ERROR "${nx_ff_lib} does not exist (install_requirements.ps1 -Target linux, step 5)")
+        endif()
+        target_link_libraries(${NX_GAME} PRIVATE "${nx_ff_lib}")
+        # lib<name>.so.<major>: the soname the binary asks for (a link to the real file: copy_if_different copies the file)
+        file(GLOB nx_ff_so "${NX_FFMPEG_ROOT}/lib/lib${nx_ff_name}.so.*")
+        list(FILTER nx_ff_so INCLUDE REGEX "\\.so\\.[0-9]+$")
+        list(LENGTH nx_ff_so nx_ff_so_count)
+        if(NOT nx_ff_so_count EQUAL 1)
+            message(FATAL_ERROR "${NX_FFMPEG_ROOT}/lib/lib${nx_ff_name}.so.<major>: ${nx_ff_so_count} files (1 expected)")
+        endif()
+        add_custom_command(TARGET ${NX_GAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${nx_ff_so}" "$<TARGET_FILE_DIR:${NX_GAME}>")
+    endforeach()
+    find_package(Opus CONFIG REQUIRED)
+    find_package(JPEG REQUIRED)
+    find_package(PNG REQUIRED)
+    find_package(ZLIB REQUIRED)
+    target_link_libraries(${NX_GAME} PRIVATE Opus::opus JPEG::JPEG PNG::PNG ZLIB::ZLIB)
+    # std::filesystem::u8path is deprecated in C++20 (the Windows build silences it with
+    # _SILENCE_CXX20_U8PATH_DEPRECATION_WARNING, which libstdc++ does not read)
+    target_compile_options(${NX_GAME} PRIVATE -Wno-deprecated-declarations)
+    # hle_codec.cpp includes <opus.h> (the Windows block adds include/opus the same way)
+    get_target_property(nx_opus_inc Opus::opus INTERFACE_INCLUDE_DIRECTORIES)
+    foreach(nx_dir IN LISTS nx_opus_inc)
+        if(EXISTS "${nx_dir}/opus/opus.h")
+            target_include_directories(${NX_GAME} PRIVATE "${nx_dir}/opus")
+        endif()
+    endforeach()
+    return()
+endif()
+
 # AP_ANDROID_BUILD (apply_android_build.py): Android (arm64-v8a, NDK). The libraries come built for arm64-android
 # (static) from NX_ANDROID_DEPS, the prefix tools/android/android_deps.ps1 leaves in <root>/_prepare/android-deps
 # (vcpkg, triplet arm64-android). The rest of this file is for Windows: return() ends it here on Android.

@@ -549,6 +549,12 @@ std::string find_dump(Source& s) {  // AP_ANY_CONTAINER: sets s.nca_off for the 
                        L"Put the .xci or the .nsp of that same game back there (either one, with any name)\n"  // AP_ANY_CONTAINER
                        L"and start the game again.";
     ::MessageBoxW(nullptr, msg.c_str(), L"Game data not found", 0x10 | 0x10000 | 0x40000);
+#elif defined(__linux__) && !defined(__ANDROID__)  // AP_LINUX_PLATFORM: the same message in a window (SDL)
+    nx::plat::message_box("Game data not found",
+                          ("The game reads its files straight from your dump (" + s.hint + "),\n"
+                           "and it is not in the root of the port (the folder with framework, tools and data).\n\n"
+                           "Put the .xci or the .nsp of that same game back there (either one, with any name)\n"
+                           "and start the game again.").c_str());
 #endif
     std::_Exit(7);
 }

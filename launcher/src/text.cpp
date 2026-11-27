@@ -46,7 +46,6 @@ const Item kSpanish[] = {
     {IDD_INSTALL, IDC_INS_RUN_GROUP, L"Compilar"},
     {IDD_INSTALL, IDC_INS_JP, L"Edici\u00f3n japonesa"},
     {IDD_INSTALL, IDC_INS_GL, L"Edici\u00f3n global"},
-    {IDD_INSTALL, IDC_INS_REQ, L"Instalar o comprobar antes los requisitos (necesario la primera vez)"},
     {IDD_INSTALL, IDC_INS_YES, L"Responder s\u00ed a las preguntas de la instalaci\u00f3n."},
     {IDD_INSTALL, IDC_INS_CONSOLE, L"Recompilar en una consola"},
     {IDD_INSTALL, IDC_INS_CANCEL, L"Cancelar"},

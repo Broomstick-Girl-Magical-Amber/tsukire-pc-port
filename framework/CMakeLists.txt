@@ -204,6 +204,32 @@ elseif(UNIX)
     # Linux: SDL3 (window, input, audio) and the system Vulkan loader, as on macOS. SDL3 from the distribution or a
     # local build (-DCMAKE_PREFIX_PATH=<its install prefix>).
     find_package(SDL3 REQUIRED CONFIG)
+    # AP_LINUX_PREFLIGHT (apply_linux_preflight.py): a static SDL3 (vcpkg) built without the Wayland / X11 headers has
+    # no window driver and the game stops with "SDL_Init: No available video device": stop here and say what is
+    # missing. A shared SDL3 of the distribution (no libSDL3.a next to its CMake files) is not checked.
+    find_file(NX_SDL3_STATIC libSDL3.a PATHS "${SDL3_DIR}/../.." "${SDL3_DIR}/../../lib" NO_DEFAULT_PATH)
+    if(NX_SDL3_STATIC AND CMAKE_AR)
+        execute_process(COMMAND "${CMAKE_AR}" t "${NX_SDL3_STATIC}" OUTPUT_VARIABLE nx_sdl_members
+                        RESULT_VARIABLE nx_sdl_rc ERROR_QUIET)
+        if(nx_sdl_rc EQUAL 0)
+            string(FIND "${nx_sdl_members}" "SDL_waylandvideo" nx_sdl_wl)
+            string(FIND "${nx_sdl_members}" "SDL_x11video" nx_sdl_x11)
+            if(nx_sdl_wl EQUAL -1 AND nx_sdl_x11 EQUAL -1)
+                message(FATAL_ERROR
+                    "${NX_SDL3_STATIC} has neither the Wayland nor the X11 video driver: the game would stop with "
+                    "'SDL_Init: No available video device'. SDL3 was built without the system -dev packages "
+                    "(step 1 of install_requirements_linux.sh installs them; -From 2 or later skips it). Fix: run step 1 "
+                    "(tools/linux/install_requirements_linux.sh -Target linux -From 1), then 'vcpkg remove "
+                    "sdl3:x64-linux', delete the vcpkg binary cache (~/.cache/vcpkg/archives) and install again.")
+            elseif(nx_sdl_wl EQUAL -1)
+                message(WARNING "SDL3 has no Wayland video driver (only X11: it runs through XWayland). "
+                                "Missing: wayland-devel, wayland-protocols, libxkbcommon at the time SDL3 was built.")
+            elseif(nx_sdl_x11 EQUAL -1)
+                message(WARNING "SDL3 has no X11 video driver (only Wayland). Missing: the X11 -dev packages at the "
+                                "time SDL3 was built.")
+            endif()
+        endif()
+    endif()
     find_package(Threads REQUIRED)
     find_path(NX_VULKAN_INCLUDE vulkan/vulkan.h HINTS "${NX_VULKAN_SDK}/include" /usr/include /usr/local/include)
     add_executable(${NX_GAME} ${NX_RUNTIME_SOURCES} runtime/src/platform_linux.cpp runtime/src/memguard_linux.cpp)
@@ -212,6 +238,26 @@ elseif(UNIX)
     target_compile_options(${NX_GAME} PRIVATE -fvisibility=hidden -march=x86-64-v3 -ffp-contract=off)
     # The executable (PIE) loads near 0x55_5555_0000_0000, far above the guest ranges (0x40_0000_0000 and up). The
     # game runs on its own thread with a 64 MiB stack (platform_linux.cpp).
+    # AP_LINUX_BUILD (apply_linux_build.py): NX_OUTPUT_DIR = the folder of the binary when it is not the build folder
+    # (recomp_tsukihime.ps1 -Target linux: next to the Windows exe); the shared libraries next to it are found through
+    # DT_RPATH $ORIGIN (DT_RPATH, not RUNPATH: it also applies to the dependencies of those libraries).
+    set(NX_OUTPUT_DIR "" CACHE PATH "Folder of the binary (empty: the build folder)")
+    if(NX_OUTPUT_DIR)
+        set_target_properties(${NX_GAME} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${NX_OUTPUT_DIR}")
+    endif()
+    # BUILD_WITH_INSTALL_RPATH: exactly $ORIGIN (no absolute folder of the libraries of this PC in the binary)
+    set_target_properties(${NX_GAME} PROPERTIES BUILD_WITH_INSTALL_RPATH ON INSTALL_RPATH "$ORIGIN")
+    target_link_options(${NX_GAME} PRIVATE "LINKER:--disable-new-dtags")
+    # games/<game>/game.cmake enables the resource compiler for the Windows icon (tsukihime.rc, never compiled here:
+    # tsukihime_common.cmake marks it HEADER_FILE_ONLY on Linux); a Linux PC has no rc.exe: llvm-rc of the same LLVM
+    if(NOT CMAKE_RC_COMPILER)
+        get_filename_component(nx_cc_dir "${CMAKE_CXX_COMPILER}" DIRECTORY)
+        find_program(NX_LLVM_RC NAMES llvm-rc llvm-windres windres HINTS "${nx_cc_dir}")
+        set(CMAKE_RC_COMPILER "${NX_LLVM_RC}")
+        if(NOT NX_LLVM_RC)
+            set(CMAKE_RC_COMPILER "${CMAKE_COMMAND}")  # only so enable_language(RC) works: no .rc is compiled on Linux
+        endif()
+    endif()
 else()
     add_executable(${NX_GAME} ${NX_RUNTIME_SOURCES} runtime/src/platform_win.cpp runtime/src/memguard_win.cpp)
     target_include_directories(${NX_GAME} PRIVATE runtime/include runtime/src "${NX_GAME_DIR}" "${NX_VULKAN_SDK}/Include")
@@ -226,3 +272,26 @@ else()
 endif()
 
 include("${NX_GAME_DIR}/game.cmake" OPTIONAL)  # dependencias propias del juego (local)
+
+# AP_LINUX_PLATFORM (apply_linux_platform.py): native Linux window icon. The .ico of the game (games/<game>/*.ico, or the
+# shared folder of the game.cmake: NX_TSUKI_COMMON) is embedded as bytes; platform_linux.cpp takes its largest PNG image.
+if(UNIX AND NOT APPLE AND NOT ANDROID)
+    file(GLOB nx_icons "${NX_GAME_DIR}/*.ico")
+    if(NOT nx_icons AND NX_TSUKI_COMMON)
+        file(GLOB nx_icons "${NX_TSUKI_COMMON}/*.ico")
+    endif()
+    if(nx_icons)
+        list(GET nx_icons 0 nx_icon)
+        get_filename_component(nx_icon_name "${nx_icon}" NAME)
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${nx_icon}")
+        file(READ "${nx_icon}" nx_icon_hex HEX)
+        string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," nx_icon_hex "${nx_icon_hex}")
+        file(WRITE "${CMAKE_BINARY_DIR}/nx_window_icon.cpp.new"
+             "// Generated by CMakeLists.txt from ${nx_icon_name} (AP_LINUX_PLATFORM)\n#include <cstddef>\n"
+             "extern \"C\" const unsigned char nx_window_icon[] = {${nx_icon_hex}};\n"
+             "extern \"C\" const size_t nx_window_icon_size = sizeof nx_window_icon;\n")
+        file(COPY_FILE "${CMAKE_BINARY_DIR}/nx_window_icon.cpp.new" "${CMAKE_BINARY_DIR}/nx_window_icon.cpp" ONLY_IF_DIFFERENT)
+        target_sources(${NX_GAME} PRIVATE "${CMAKE_BINARY_DIR}/nx_window_icon.cpp")
+        target_compile_definitions(${NX_GAME} PRIVATE NX_LINUX_WINDOW_ICON)
+    endif()
+endif()

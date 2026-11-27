@@ -21,6 +21,7 @@
 //   mando y lo que tardo SDL_Init.
 #include "pad_sdl.h"
 #include "hud_glyphs.h"  // AP_HUD_GLYPHS
+#include "platform.h"    // AP_LINUX_INPUT: sdl_event_hook
 
 #if defined(_WIN32)
 #ifndef NOMINMAX
@@ -293,6 +294,75 @@ void hilo() {
     }
 }
 
+#if defined(__linux__) && !defined(__ANDROID__)
+// AP_LINUX_INPUT (apply_linux_input.py): on native Linux SDL already runs on the main thread (platform_linux.cpp: the
+// window, the gamepads, its event loop), so there is no thread of our own: the main thread hands every SDL event to
+// Mandos (plat::sdl_event_hook) and a null one after each round, to publish the snapshot. The controllers already
+// connected arrive as SDL_EVENT_GAMEPAD_ADDED with the first events.
+// NX_INPUT_TRACE=1: every controller button as SDL sees it (raw joystick and mapped gamepad) and every stick or
+// trigger past half, to tell a controller that sends nothing from one that is read but mapped wrong.
+void traza_linux(const SDL_Event& e) {
+    switch (e.type) {
+    case SDL_EVENT_JOYSTICK_BUTTON_DOWN:
+    case SDL_EVENT_JOYSTICK_BUTTON_UP:
+        log("input: SDL joystick id %u, boton %d %s", unsigned(e.jbutton.which), int(e.jbutton.button),
+            e.jbutton.down ? "abajo" : "arriba");
+        break;
+    case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+    case SDL_EVENT_GAMEPAD_BUTTON_UP: {
+        const char* n = SDL_GetGamepadStringForButton(SDL_GamepadButton(e.gbutton.button));
+        log("input: SDL mando id %u, boton %s %s", unsigned(e.gbutton.which), n ? n : "?", e.gbutton.down ? "abajo" : "arriba");
+        break;
+    }
+    case SDL_EVENT_GAMEPAD_AXIS_MOTION: {
+        static int8_t lado[64][SDL_GAMEPAD_AXIS_COUNT];  // -1, 0 or 1 by id (mod 64) and axis
+        const int v = e.gaxis.value;
+        const int8_t ahora = v > 16384 ? 1 : v < -16384 ? -1 : 0;
+        int8_t& antes = lado[e.gaxis.which % 64][e.gaxis.axis % SDL_GAMEPAD_AXIS_COUNT];
+        if (ahora != antes) {
+            const char* n = SDL_GetGamepadStringForAxis(SDL_GamepadAxis(e.gaxis.axis));
+            log("input: SDL mando id %u, eje %s %d", unsigned(e.gaxis.which), n ? n : "?", v);
+        }
+        antes = ahora;
+        break;
+    }
+    default:
+        break;
+    }
+}
+
+void evento_linux(const void* e) {
+    static Mandos* mandos = [] {
+        const int v = SDL_GetVersion();
+        log("input: mandos por SDL %d.%d.%d (eventos del hilo principal; NX_SDL_PAD=0 los apaga)", SDL_VERSIONNUM_MAJOR(v),
+            SDL_VERSIONNUM_MINOR(v), SDL_VERSIONNUM_MICRO(v));
+        return new Mandos;  // never destroyed, like Estado
+    }();
+    if (e) {
+        const SDL_Event& ev = *static_cast<const SDL_Event*>(e);
+        if (trace_on()) traza_linux(ev);
+        mandos->evento(ev);
+    } else {
+        mandos->publicar();
+        if (trace_on()) {  // what the game will read: the buttons of the active controller when they change
+            static uint32_t antes = 0;
+            Estado& s = st();
+            std::lock_guard lk(s.m);
+            const uint32_t ahora = s.hay ? s.pad.buttons : 0;
+            if (ahora != antes) log("input: mando activo, botones %#x (hay %d)", unsigned(ahora), int(s.hay));
+            antes = ahora;
+        }
+    }
+}
+
+const bool g_evento_linux_set = [] {
+    SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");  // before SDL_Init (main): read without focus too
+    st().mode = int(SdlPadMode::kSdl);
+    plat::sdl_event_hook = evento_linux;
+    return true;
+}();
+#endif
+
 }  // namespace
 
 SdlPadMode sdl_pad_mode() {
@@ -303,7 +373,11 @@ SdlPadMode sdl_pad_mode() {
             st().mode = int(SdlPadMode::kXInput);
             return;
         }
+#if defined(__linux__) && !defined(__ANDROID__)
+        (void)&hilo;  // AP_LINUX_INPUT: no thread of its own on native Linux (evento_linux, above)
+#else
         std::thread(hilo).detach();
+#endif
     });
     return SdlPadMode(st().mode.load());
 }
