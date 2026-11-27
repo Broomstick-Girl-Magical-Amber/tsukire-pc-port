@@ -8,6 +8,7 @@
 #include <cstring>
 #include <mutex>
 #include <atomic>  // AP_MOVIE_HW
+#include <thread>  // AP_MOVIE_HW_WAIT
 
 #include <nx/runtime.h>  // AP_MOVIE_HW: nx::log
 
@@ -464,6 +465,22 @@ size_t pending_limit() {
     return n;
 }
 
+// AP_MOVIE_AUDIO_QUEUE: audio decoders queue up to NX_MOVIE_AUDIO_PENDING samples (default 1024, 64..8192). At the
+// start of a movie the game holds every audio output until the video gives its first picture, and the leading audio
+// block of the mp4 has to be queued before the feeder reaches the first video sample; with the video limit (64) the
+// audio filled up first and the movie stood still until the game's ~5 s timeout.
+size_t pending_limit_for(DecoderKind kind) {
+    if (kind != DecoderKind::Audio) return pending_limit();
+    static const size_t n = [] {
+        const char* e = std::getenv("NX_MOVIE_AUDIO_PENDING");
+        long v = e && *e ? std::strtol(e, nullptr, 10) : 1024;
+        if (v < 64 || v > 8192) v = 1024;
+        if (e && *e) std::fprintf(stderr, "movie: NX_MOVIE_AUDIO_PENDING = %ld\n", v);
+        return size_t(v);
+    }();
+    return n;
+}
+
 // AP_TITLE_SMOOTH (apply_title_smooth.py): one closed H.264 decoder kept (flushed) for the next start() with the same
 // parameters, so the game's stop / configure / start of the title video does not call avcodec_open2 again.
 static std::mutex g_park_m;
@@ -490,6 +507,34 @@ static bool movie_hw_wanted() {
     }();
     return on;
 }
+// AP_MOVIE_HW_WAIT: how long one call may wait for a MediaCodec picture (NX_MOVIE_HW_WAIT_MS, 0..200, default 40).
+static int movie_hw_wait_ms() {
+    static const int ms = [] {
+        const char* e = std::getenv("NX_MOVIE_HW_WAIT_MS");
+        long v = e && *e ? std::strtol(e, nullptr, 10) : 40;
+        if (v < 0 || v > 200) v = 40;
+        if (e && *e) nx::log("movie: NX_MOVIE_HW_WAIT_MS = %ld", v);
+        return int(v);
+    }();
+    return ms;
+}
+static bool movie_hw_stats() {  // AP_MOVIE_HW_WAIT: NX_MOVIE_TIMING=1 also logs MediaCodec once a second
+    static const bool on = [] {
+        const char* e = std::getenv("NX_MOVIE_TIMING");
+        return e && std::strcmp(e, "0") != 0;
+    }();
+    return on;
+}
+// AP_MOVIE_HW_SOLO: NX_MOVIE_HW_PARK=1 keeps parking MediaCodec decoders (default: freed, one alive at a time).
+static bool movie_hw_park() {
+    static const bool on = [] {
+        const char* e = std::getenv("NX_MOVIE_HW_PARK");
+        bool v = e && std::strcmp(e, "0") != 0;
+        if (v) nx::log("movie: NX_MOVIE_HW_PARK=1 (MediaCodec decoders are parked)");
+        return v;
+    }();
+    return on;
+}
 static bool is_hw_ctx(const AVCodecContext* c) {
     return c && c->codec && c->codec->name && std::strcmp(c->codec->name, "h264_mediacodec") == 0;
 }
@@ -507,6 +552,7 @@ static AVCodecContext* open_hw_h264(const AVCodecParameters* par) {
         return nullptr;
     }
     c->pkt_timebase = kMicros;
+    c->flags |= AV_CODEC_FLAG_LOW_DELAY;  // AP_MOVIE_HW_WAIT: "low-latency" where MediaCodec has it
     AVDictionary* opts = nullptr;
     av_dict_set(&opts, "ndk_codec", "1", 0);  // NDK AMediaCodec, no Java VM needed
     const int r = avcodec_open2(c, hc, &opts);
@@ -556,6 +602,45 @@ struct Decoder::Impl {
     bool hw = false;                // AP_MOVIE_HW: ctx is the hardware decoder
     bool hw_out = false;            // AP_MOVIE_HW: it already gave a picture
     std::deque<AVPacket*> hw_sent;  // AP_MOVIE_HW: packets it took before its first picture (sent again on a fallback)
+    int hw_inflight = 0;   // AP_MOVIE_HW_WAIT: packets given to MediaCodec whose picture has not come out yet
+    int hw_lat = -1;       // AP_MOVIE_HW_WAIT: packets it keeps before giving a picture (-1: not known yet)
+    uint64_t hw_open_ns = 0, hw_rep_ns = 0;  // AP_MOVIE_HW_WAIT: when it was opened; last stats line
+    int hw_n_in = 0, hw_n_out = 0, hw_n_wait = 0, hw_n_gaveup = 0, hw_tot_in = 0, hw_pre_gaveup = 0;
+    uint64_t hw_wait_ns = 0;
+    // AP_MOVIE_HW_WAIT: MediaCodec finishes a picture a few ms after taking the packet, outside the game's calls, and the
+    // game is only told from inside them. If it holds more than its latency, a picture is on its way: wait for it here,
+    // 1 ms at a time, up to movie_hw_wait_ms() per call. Before the first picture the latency is unknown: wait too.
+    bool hw_should_wait() const {  // before the first picture: at most 3 waits that give up (then it needs input)
+        return hw_inflight > 0 && (hw_lat < 0 ? hw_pre_gaveup < 3 : (hw_inflight > hw_lat || drain_sent));
+    }
+    bool hw_wait(uint64_t& deadline) {
+        const uint64_t now = now_ns();
+        if (!deadline) {
+            deadline = now + uint64_t(movie_hw_wait_ms()) * 1000000ull;
+            hw_n_wait++;
+        }
+        if (now >= deadline) {
+            hw_n_gaveup++;
+            if (hw_lat < 0) hw_pre_gaveup++;
+            if (hw_lat >= 0) hw_inflight = hw_lat;  // what is left is its latency: do not wait for it again
+            return false;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        hw_wait_ns += now_ns() - now;
+        return true;
+    }
+    void hw_report() {  // NX_MOVIE_TIMING: once a second
+        if (!movie_hw_stats()) return;
+        const uint64_t now = now_ns();
+        if (!hw_rep_ns) hw_rep_ns = now;
+        if (now - hw_rep_ns < 1000000000ull) return;
+        nx::log("movie/hw: %.1f s: %d packets in, %d pictures out, %d waits (%.0f ms, %d gave up), in flight %d, latency %d, pending %zu",
+                double(now - hw_rep_ns) / 1e9, hw_n_in, hw_n_out, hw_n_wait, double(hw_wait_ns) / 1e6, hw_n_gaveup,
+                hw_inflight, hw_lat, pending.size());
+        hw_rep_ns = now;
+        hw_n_in = hw_n_out = hw_n_wait = hw_n_gaveup = 0;
+        hw_wait_ns = 0;
+    }
     void hw_forget() {
         for (auto* q : hw_sent) av_packet_free(&q);
         hw_sent.clear();
@@ -576,6 +661,7 @@ struct Decoder::Impl {
     void close() {
         hw_forget();  // AP_MOVIE_HW
         if (ctx && is_hw_ctx(ctx) && g_hw_bad) avcodec_free_context(&ctx);  // AP_MOVIE_HW: not kept
+        if (ctx && is_hw_ctx(ctx) && !movie_hw_park()) avcodec_free_context(&ctx);  // AP_MOVIE_HW_SOLO: not parked
         if (ctx && kind == DecoderKind::Video && ctx->codec_id == AV_CODEC_ID_H264 && avcodec_is_open(ctx)) {  // AP_TITLE_SMOOTH
             avcodec_flush_buffers(ctx);
             std::lock_guard<std::mutex> lk(g_park_m);
@@ -596,6 +682,7 @@ struct Decoder::Impl {
         for (auto& i : in) i.free = true;
         for (auto& o : out) o.free = true;
         hw_forget();  // AP_MOVIE_HW
+        hw_inflight = 0;  // AP_MOVIE_HW_WAIT
         eos_in = drain_sent = eos_out = false;
     }
     int free_output() const {
@@ -616,6 +703,7 @@ struct Decoder::Impl {
             }
         }
         hw = hw_out = false;  // AP_MOVIE_HW
+        hw_inflight = 0, hw_lat = -1, hw_tot_in = 0, hw_pre_gaveup = 0, hw_open_ns = now_ns(), hw_rep_ns = 0;  // AP_MOVIE_HW_WAIT
         if (ctx && is_hw_ctx(ctx) && g_hw_bad) avcodec_free_context(&ctx);  // AP_MOVIE_HW
         if (ctx) {
             ctx->pkt_timebase = kMicros;
@@ -624,7 +712,16 @@ struct Decoder::Impl {
             return kOk;
         }
         if (kind == DecoderKind::Video && par->codec_id == AV_CODEC_ID_H264 && movie_hw_wanted() && !g_hw_bad) {  // AP_MOVIE_HW
+            {  // AP_MOVIE_HW_SOLO: one MediaCodec video decoder at a time
+                std::lock_guard<std::mutex> lk(g_park_m);
+                if (g_parked && is_hw_ctx(g_parked)) {
+                    avcodec_free_context(&g_parked);
+                    if (movie_hw_stats()) nx::log("movie/hw: freed the parked MediaCodec decoder before opening a new one");
+                }
+            }
+            const uint64_t hw_t0 = now_ns();  // AP_MOVIE_HW_SOLO
             ctx = open_hw_h264(par);
+            if (movie_hw_stats()) nx::log("movie/hw: opening MediaCodec took %.0f ms", (now_ns() - hw_t0) / 1e6);  // AP_MOVIE_HW_SOLO
             if (ctx) {
                 hw = true;
                 started = true;
@@ -721,6 +818,8 @@ struct Decoder::Impl {
     // Avanza la decodificacion hasta tener una salida lista (o no poder mas por ahora).
     Status produce() {
         if (!ctx || !started) return kInvalidState;
+        uint64_t hw_deadline = 0;  // AP_MOVIE_HW_WAIT: one wait per call
+        if (hw) hw_report();
         while (ready.empty()) {
             int o = free_output();
             if (o < 0) return kTryAgain;  // el juego todavia no libera salidas
@@ -733,6 +832,15 @@ struct Decoder::Impl {
                 if (s != kOk) {
                     if (hw && hw_fallback("its frames could not be converted")) continue;  // AP_MOVIE_HW
                     return s;
+                }
+                if (hw) {  // AP_MOVIE_HW_WAIT
+                    if (hw_lat < 0) {
+                        hw_lat = hw_inflight > 0 ? hw_inflight - 1 : 0;
+                        nx::log("movie/hw: first picture after %d packets, %.0f ms after opening; latency %d", hw_tot_in,
+                                double(now_ns() - hw_open_ns) / 1e6, hw_lat);
+                    }
+                    if (hw_inflight > 0) hw_inflight--;
+                    hw_n_out++;
                 }
                 if (hw && !hw_out) {  // AP_MOVIE_HW: it works, nothing to send again any more
                     hw_out = true;
@@ -747,11 +855,15 @@ struct Decoder::Impl {
                     int sr = avcodec_send_packet(ctx, q);
                     work_ns += now_ns() - t1;
                     if (sr == AVERROR(EAGAIN)) {  // primero hay que sacar frames
-                        if (hw) return kTryAgain;  // AP_MOVIE_HW: full and no picture yet: the game asks again
+                        if (hw) {  // AP_MOVIE_HW: full and no picture yet
+                            if (hw_should_wait() && hw_wait(hw_deadline)) continue;  // AP_MOVIE_HW_WAIT
+                            return kTryAgain;  // the game asks again
+                        }
                         continue;
                     }
                     if (sr < 0 && sr != AVERROR_EOF && hw && hw_fallback("it refused a packet")) continue;  // AP_MOVIE_HW
                     pending.pop_front();
+                    if (hw && sr >= 0) hw_inflight++, hw_n_in++, hw_tot_in++;  // AP_MOVIE_HW_WAIT
                     if (hw && !hw_out && sr >= 0) {  // AP_MOVIE_HW: kept until its first picture
                         hw_sent.push_back(q);
                         if (hw_sent.size() >= 120 && hw_fallback("no picture after 120 packets")) continue;
@@ -765,6 +877,7 @@ struct Decoder::Impl {
                     drain_sent = true;
                     continue;
                 }
+                if (hw && hw_should_wait() && hw_wait(hw_deadline)) continue;  // AP_MOVIE_HW_WAIT
                 return kTryAgain;
             }
             if (r == AVERROR_EOF) {
@@ -858,7 +971,7 @@ Status Decoder::reset() {
 Status Decoder::acquire_input_index(int* index) {
     std::lock_guard<std::recursive_mutex> lk(p_->m);
     if (!p_->started) return kInvalidState;
-    if (p_->eos_in || p_->pending.size() >= pending_limit()) return kTryAgain;
+    if (p_->eos_in || p_->pending.size() >= pending_limit_for(p_->kind)) return kTryAgain;  // AP_MOVIE_AUDIO_QUEUE
     for (int i = 0; i < kInputSlots; i++)
         if (p_->in[i].free) {
             p_->in[i].free = false;
@@ -947,6 +1060,7 @@ void Decoder::drop_pending() {
     if (p_->ctx) avcodec_flush_buffers(p_->ctx);
     p_->drain_sent = false;
     p_->hw_forget();  // AP_MOVIE_HW
+    p_->hw_inflight = 0;  // AP_MOVIE_HW_WAIT
 }
 bool Decoder::is_video() const { return p_->kind == DecoderKind::Video; }
 int64_t Decoder::last_output_us() const {
@@ -956,7 +1070,7 @@ int64_t Decoder::last_output_us() const {
 
 bool Decoder::has_free_input() const {
     std::lock_guard<std::recursive_mutex> lk(p_->m);
-    if (!p_->started || p_->eos_in || p_->pending.size() >= pending_limit()) return false;
+    if (!p_->started || p_->eos_in || p_->pending.size() >= pending_limit_for(p_->kind)) return false;  // AP_MOVIE_AUDIO_QUEUE
     for (const auto& i : p_->in)
         if (i.free) return true;
     return false;
@@ -977,7 +1091,7 @@ std::string Decoder::debug_state() const {
 
 int Decoder::free_input_count() const {
     std::lock_guard<std::recursive_mutex> lk(p_->m);
-    if (!p_->started || p_->eos_in || p_->pending.size() >= pending_limit()) return 0;
+    if (!p_->started || p_->eos_in || p_->pending.size() >= pending_limit_for(p_->kind)) return 0;  // AP_MOVIE_AUDIO_QUEUE
     int n = 0;
     for (const auto& i : p_->in) n += i.free ? 1 : 0;
     return n;
