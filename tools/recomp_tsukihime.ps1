@@ -239,6 +239,7 @@ $Markers = @(
     @('both', 'framework\games\tsukihime_common\movie_core.cpp', 'AP_MOVIE_HW_WAIT', 'apply_movie_hw_wait.py', $false),
     @('both', 'framework\games\tsukihime_common\movie_core.cpp', 'AP_MOVIE_HW_SOLO', 'apply_movie_hw_solo.py', $false),
     @('both', 'framework\games\tsukihime_common\movie_core.cpp', 'AP_MOVIE_AUDIO_QUEUE', 'apply_movie_audio_queue.py', $false),
+    @('both', 'framework\games\tsukihime_common\movie_core.cpp', 'AP_MOVIE_CONV_THREADS', 'apply_movie_conv_threads.py', $false),
     @('both', 'framework\runtime\src\nvn\nvn_vk.cpp', 'AP_VK_REQ', 'apply_vk_requirements.py', $false),
     @('both', 'framework\runtime\src\nvn\nvn_vk.cpp', 'AP_VK_FAIL', 'apply_vk_fail.py', $false),
     @('both', 'framework\runtime\src\nvn\nvn_vk.cpp', 'AP_VK11', 'apply_vk11.py', $false),

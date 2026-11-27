@@ -9,6 +9,9 @@
 #include <mutex>
 #include <atomic>  // AP_MOVIE_HW
 #include <thread>  // AP_MOVIE_HW_WAIT
+#include <vector>  // AP_MOVIE_CONV_THREADS
+#include <condition_variable>  // AP_MOVIE_CONV_THREADS
+#include <functional>  // AP_MOVIE_CONV_THREADS
 
 #include <nx/runtime.h>  // AP_MOVIE_HW: nx::log
 
@@ -19,6 +22,7 @@ extern "C" {
 #include <libavutil/opt.h>
 #include <libswresample/swresample.h>
 #include <libswscale/swscale.h>
+#include <libavutil/pixdesc.h>  // AP_MOVIE_CONV_THREADS
 }
 
 namespace movie_host {
@@ -535,6 +539,65 @@ static bool movie_hw_park() {
     }();
     return on;
 }
+// AP_MOVIE_CONV_THREADS: threads for the YUV -> game format conversion of a video picture (NX_MOVIE_CONV_THREADS,
+// 1..8; default 3 on Android with >= 6 CPUs, 2 with fewer, 1 elsewhere).
+static int movie_conv_threads() {
+    static const int n = [] {
+        const char* e = std::getenv("NX_MOVIE_CONV_THREADS");
+        long v = 1;
+#if defined(__ANDROID__)
+        v = std::thread::hardware_concurrency() >= 6 ? 3 : 2;
+#endif
+        if (e && *e) {
+            long x = std::strtol(e, nullptr, 10);
+            if (x >= 1 && x <= 8) v = x;
+        }
+        nx::log("movie: video pictures converted on %ld thread(s) (NX_MOVIE_CONV_THREADS)", v);
+        return int(v);
+    }();
+    return n;
+}
+// AP_MOVIE_CONV_THREADS: workers started once and kept; run(job) calls job(0) here and job(1..workers) on them,
+// and returns when all are done. One run at a time (busy() lets a second caller convert the old way).
+struct MovieConvPool {
+    std::mutex use, m;
+    std::condition_variable go, done;
+    const std::function<void(int)>* job = nullptr;
+    uint64_t gen = 0;
+    int workers = 0, left = 0;
+    explicit MovieConvPool(int n) : workers(n) {
+        for (int i = 0; i < n; i++) std::thread([this, i] { loop(i + 1); }).detach();
+    }
+    void loop(int idx) {
+        uint64_t seen = 0;
+        std::unique_lock<std::mutex> lk(m);
+        for (;;) {
+            go.wait(lk, [&] { return gen != seen; });
+            seen = gen;
+            const std::function<void(int)>* j = job;
+            lk.unlock();
+            (*j)(idx);
+            lk.lock();
+            if (--left == 0) done.notify_one();
+        }
+    }
+    void run(const std::function<void(int)>& j) {
+        {
+            std::lock_guard<std::mutex> lk(m);
+            job = &j;
+            left = workers;
+            gen++;
+        }
+        go.notify_all();
+        j(0);
+        std::unique_lock<std::mutex> lk(m);
+        done.wait(lk, [&] { return left == 0; });
+    }
+};
+static MovieConvPool* movie_conv_pool() {
+    static MovieConvPool* p = movie_conv_threads() > 1 ? new MovieConvPool(movie_conv_threads() - 1) : nullptr;
+    return p;  // never freed: the workers live as long as the process
+}
 static bool is_hw_ctx(const AVCodecContext* c) {
     return c && c->codec && c->codec->name && std::strcmp(c->codec->name, "h264_mediacodec") == 0;
 }
@@ -575,6 +638,57 @@ struct Decoder::Impl {
     AVCodecParameters* par = nullptr;  // de configure()
     AVCodecContext* ctx = nullptr;
     SwsContext* sws = nullptr;
+    std::vector<SwsContext*> sws_bands;  // AP_MOVIE_CONV_THREADS: one context per band
+    std::vector<std::vector<uint8_t>> conv_tmp;  // AP_MOVIE_CONV_THREADS: one buffer per band
+    // AP_MOVIE_CONV_THREADS: converts f into planes/strides in bands on the pool; false = not done (the caller
+    // converts the whole picture the old way).
+    bool conv_bands(const AVFrame* f, int w, int h, AVPixelFormat target, uint8_t* const planes[4], const int strides[4]) {
+        const int n = movie_conv_threads();
+        const AVPixelFormat sf = AVPixelFormat(f->format);
+        const AVPixFmtDescriptor* sd = av_pix_fmt_desc_get(sf);
+        if (n < 2 || target != AV_PIX_FMT_RGBA || !sd || (sd->flags & (AV_PIX_FMT_FLAG_RGB | AV_PIX_FMT_FLAG_PAL)) ||
+            h < 64 * n)
+            return false;  // NV12 output is a cheap copy; RGBA is the expensive one (and the game's)
+        MovieConvPool* pool = movie_conv_pool();
+        if (!pool) return false;
+        std::unique_lock<std::mutex> use(pool->use, std::try_to_lock);
+        if (!use.owns_lock()) return false;  // another picture is being converted on the pool
+        const int band = ((h + n - 1) / n + 15) / 16 * 16;
+        const int nb = std::min((h + band - 1) / band, pool->workers + 1);
+        if (nb * band < h) return false;
+        if (int(sws_bands.size()) < nb) sws_bands.resize(size_t(nb), nullptr);
+        if (int(conv_tmp.size()) < nb) conv_tmp.resize(size_t(nb));
+        // Everything that allocates is done here, on the calling thread: each band covers rows y0..y0+hb, read
+        // with 16 rows of context above and below (the scaler's chroma filter reads neighbouring rows).
+        for (int b = 0; b < nb; b++) {
+            const int y0 = b * band, hb = std::min(band, h - y0);
+            const int s0 = std::max(0, y0 - 16), sh = std::min(h, y0 + hb + 16) - s0;
+            SwsContext*& c = sws_bands[size_t(b)];
+            c = sws_getCachedContext(c, w, sh, sf, w, sh, target, SWS_BILINEAR, nullptr, nullptr, nullptr);
+            if (!c) return false;
+            std::vector<uint8_t>& tmp = conv_tmp[size_t(b)];
+            if (tmp.size() < size_t(strides[0]) * size_t(sh)) tmp.resize(size_t(strides[0]) * size_t(sh));
+        }
+        const int sp = av_pix_fmt_count_planes(sf);
+        std::atomic<bool> ok{true};
+        const std::function<void(int)> one = [&](int b) {
+            if (b >= nb) return;
+            const int y0 = b * band, hb = std::min(band, h - y0);
+            const int s0 = std::max(0, y0 - 16), sh = std::min(h, y0 + hb + 16) - s0;
+            const uint8_t* src[4] = {};
+            for (int p = 0; p < sp && p < 4; p++)
+                src[p] = f->data[p] + ptrdiff_t(s0 >> ((p == 1 || p == 2) ? sd->log2_chroma_h : 0)) * f->linesize[p];
+            uint8_t* t[4] = {conv_tmp[size_t(b)].data()};
+            if (sws_scale(sws_bands[size_t(b)], src, f->linesize, 0, sh, t, strides) != sh) {
+                ok = false;
+                return;
+            }
+            std::memcpy(planes[0] + ptrdiff_t(y0) * strides[0], t[0] + ptrdiff_t(y0 - s0) * strides[0],
+                        size_t(hb) * size_t(strides[0]));
+        };
+        pool->run(one);
+        return ok;
+    }
     SwrContext* swr = nullptr;
     AVFrame* frame = av_frame_alloc();
     AVPacket* pkt = av_packet_alloc();
@@ -672,6 +786,9 @@ struct Decoder::Impl {
         avcodec_free_context(&ctx);
         sws_freeContext(sws);
         sws = nullptr;
+        for (SwsContext*& c : sws_bands) sws_freeContext(c);  // AP_MOVIE_CONV_THREADS
+        sws_bands.clear();
+        conv_tmp.clear();
         swr_free(&swr);
         started = false;
     }
@@ -794,7 +911,8 @@ struct Decoder::Impl {
                 planes[0] = dst.mem.data();
                 strides[0] = w * 4;
             }
-            sws_scale(sws, frame->data, frame->linesize, 0, h, planes, strides);
+            if (!conv_bands(frame, w, h, target, planes, strides))  // AP_MOVIE_CONV_THREADS
+                sws_scale(sws, frame->data, frame->linesize, 0, h, planes, strides);
             dst.convert_ns = now_ns() - t_store;
         } else {
             if (!swr) {
