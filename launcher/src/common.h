@@ -70,7 +70,7 @@ struct DumpFile {
 std::vector<DumpFile> FindDumps();                          // .xci (HEAD at 0x100) / .nsp (PFS0) in the root
 enum class KeysAt { None, Data, Root };
 KeysAt FindKeys();
-bool ToolsReady(std::wstring* detail);                      // venv + toolchain.json (xwin) or dev.local.ps1
+bool ToolsReady(std::wstring* detail);                      // venv (with lz4, capstone) + toolchain.json (xwin) or dev.local.ps1
 std::wstring ExePath(int ed);                               // framework\build\<game>\<game>.exe
 std::wstring DataDir(int ed);                               // data\<data>
 bool GameDataReady(int ed);                                 // romfs_source.bin (read from the dump) or extract\romfs

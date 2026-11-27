@@ -86,7 +86,6 @@
 #define IDC_INS_JP_STATE        1212
 #define IDC_INS_GL              1213
 #define IDC_INS_GL_STATE        1214
-#define IDC_INS_REQ             1215
 #define IDC_INS_START           1216
 #define IDC_INS_CONSOLE         1217
 #define IDC_INS_CANCEL          1218
