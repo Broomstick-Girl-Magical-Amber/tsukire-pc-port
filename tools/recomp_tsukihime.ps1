@@ -316,6 +316,8 @@ $Markers = @(
     @('both', 'framework\runtime\src\platform_linux.cpp', 'AP_LINUX_AUDIO_OPT', 'apply_linux_audio_opt.py', $false),
     @('global', 'tools\internal\regen_tsuki_global.ps1', 'AP_RELR', 'apply_relr.py', $true),
     @('both', 'tools\recomp_tsukihime.ps1', 'AP_LINUX_INSTALL', 'apply_linux_install.py', $false),
+    @('both', 'tools\recomp_tsukihime.ps1', 'AP_VENV_AUTO', 'apply_venv_auto.py', $false),
+    @('both', 'tools\recomp_tsukihime.ps1', 'AP_NO_FORMAT_PREF', 'apply_no_format_pref.py', $false),
     @('global', 'tools\internal\regen_tsuki_global.ps1', 'AP_JT_MOV', 'apply_jt_mov.py', $true)
 )
 
@@ -592,8 +594,8 @@ function ContainerType([string]$p) {
 }
 
 # Inputs to try: -InputFile, or the .xci/.nsp in the ROOT (that level only). If there are several they are tried in
-# order and the one of the requested edition is kept (step 1 compares the program ID); first the usual extension of
-# the edition (global: .nsp, japan: .xci) to avoid reading too much, but any of them works for either.
+# name order and the one of the requested edition is kept (step 1 compares the program ID). The format says nothing
+# about the edition (AP_NO_FORMAT_PREF): an .xci or an .nsp works for either one.
 function FindInputs {
     if ($InputFile) {
         $e = [IO.Path]::GetFullPath($InputFile)
@@ -601,9 +603,7 @@ function FindInputs {
         if (-not (ContainerType $e)) { Fail "$e is neither an NSP (PFS0) nor an XCI (HEAD)" }
         return $e   # AP_FIND_INPUTS: was "return , $e" (the callers wrap it in @(...))
     }
-    $pref = if ($Edition -eq 'global') { '.nsp' } else { '.xci' }
-    $all = @(Get-ChildItem -LiteralPath $Root -File | Where-Object { $_.Extension -in '.xci', '.nsp' } |
-             Sort-Object @{ Expression = { if ($_.Extension -eq $pref) { 0 } else { 1 } } }, Name)
+    $all = @(Get-ChildItem -LiteralPath $Root -File | Where-Object { $_.Extension -in '.xci', '.nsp' } | Sort-Object Name)
     $ok = @()
     foreach ($f in $all) {
         if (ContainerType $f.FullName) { $ok += $f.FullName } else { Warn "$($f.Name): neither NSP (PFS0) nor XCI (HEAD): ignored" }
@@ -681,7 +681,16 @@ function Step0 {
     if ($To -ge 9 -and -not (Get-Command cmake -ErrorAction SilentlyContinue)) { $missing += 'cmake' }
     if ($missing.Count) { Fail ("missing tools:`n  " + ($missing -join "`n  ")) }
     $r = RunCapture $Python @('-c', 'import lz4.block')
-    if ($r.Code -ne 0) { Fail "the project python does not have lz4 (nso2bin.py needs it)" }
+    if ($r.Code -ne 0) {   # AP_VENV_AUTO: the venv exists but its packages are not installed: install them (same as step 6 of install_requirements)
+        $reqTxt = Under $Tools 'requirements.txt'
+        if (-not (Test-Path -LiteralPath $reqTxt)) { Fail "the project python does not have lz4 (nso2bin.py needs it) and $reqTxt is missing (it comes with the repo)" }
+        Warn 'the project python does not have lz4 (nso2bin.py needs it): installing tools\requirements.txt in its venv (pip; no administrator needed)'
+        $pip = RunCapture $Python @('-m', 'pip', 'install', '--disable-pip-version-check', '-r', $reqTxt)
+        foreach ($l in $pip.Output) { Info "  $l" }
+        $r = RunCapture $Python @('-c', 'import lz4.block')
+        if ($r.Code -ne 0) { Fail "the project python does not have lz4 (nso2bin.py needs it) and pip could not install it (code $($pip.Code); network?). By hand: `"$Python`" -m pip install -r `"$reqTxt`"" }
+        Info 'lz4 installed in the venv'
+    }
     Info "tools OK (python, nso2bin, containers/exefs_shaders, harness, cmake)"
 
     CheckMarkers $false
